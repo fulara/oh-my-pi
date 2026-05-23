@@ -668,6 +668,7 @@ export function requestRpcSelect(
 export interface RpcFuraRuntimeState {
 	planPreviousTools?: string[];
 	planHasEntered: boolean;
+	goalPreviousTools?: string[];
 }
 
 function successResponse<T extends RpcCommand["type"]>(
@@ -774,6 +775,78 @@ export function createFuraRpcRuntime(
 		if (state.planPreviousTools !== undefined) {
 			await session.setActiveToolsByName(state.planPreviousTools);
 			state.planPreviousTools = undefined;
+		}
+	};
+
+	const restoreGoalTools = async (): Promise<void> => {
+		if (state.goalPreviousTools !== undefined) {
+			await session.setActiveToolsByName(state.goalPreviousTools);
+			state.goalPreviousTools = undefined;
+		}
+	};
+
+	const activateGoalTools = async (): Promise<void> => {
+		if (state.goalPreviousTools === undefined) {
+			state.goalPreviousTools = session.getActiveToolNames().filter(name => name !== "goal");
+		}
+		const previousTools = state.goalPreviousTools;
+		const hasGoalTool = session.getToolByName("goal") !== undefined;
+		const goalTools = hasGoalTool ? [...previousTools, "goal"] : previousTools;
+		await session.setActiveToolsByName([...new Set(goalTools)]);
+		if (session.isStreaming) {
+			await session.sendGoalModeContext({ deliverAs: "steer" });
+		}
+	};
+
+	const handleGoalMode = async (command: Extract<RpcCommand, { type: "goal_mode" }>): Promise<RpcResponse> => {
+		if (!session.settings.get("goal.enabled")) {
+			return errorResponse(command.id, "goal_mode", "Goal mode is disabled. Enable it in settings (goal.enabled).");
+		}
+		if (session.getPlanModeState()?.enabled) {
+			return errorResponse(command.id, "goal_mode", "Exit plan mode first.");
+		}
+
+		switch (command.op) {
+			case "create": {
+				const goalMode = await session.goalRuntime.createGoal({
+					objective: command.objective,
+					tokenBudget: command.tokenBudget,
+				});
+				await activateGoalTools();
+				return successResponse(command.id, "goal_mode", { goalMode });
+			}
+			case "pause": {
+				if (!session.getGoalModeState()?.enabled) {
+					return errorResponse(command.id, "goal_mode", "No active goal to pause.");
+				}
+				const goalMode = (await session.goalRuntime.pauseGoal()) ?? null;
+				await restoreGoalTools();
+				return successResponse(command.id, "goal_mode", { goalMode });
+			}
+			case "resume": {
+				const current = session.getGoalModeState();
+				if (current?.enabled || current?.goal.status !== "paused") {
+					return errorResponse(command.id, "goal_mode", "No paused goal to resume.");
+				}
+				const goalMode = await session.goalRuntime.resumeGoal();
+				await activateGoalTools();
+				return successResponse(command.id, "goal_mode", { goalMode });
+			}
+			case "drop": {
+				if (!session.getGoalModeState()?.goal) {
+					return errorResponse(command.id, "goal_mode", "No goal to drop.");
+				}
+				await session.goalRuntime.dropGoal();
+				await restoreGoalTools();
+				return successResponse(command.id, "goal_mode", { goalMode: null });
+			}
+			case "set_budget": {
+				if (!session.getGoalModeState()?.enabled) {
+					return errorResponse(command.id, "goal_mode", "No active goal.");
+				}
+				const goalMode = (await session.goalRuntime.onBudgetMutated(command.tokenBudget)) ?? null;
+				return successResponse(command.id, "goal_mode", { goalMode });
+			}
 		}
 	};
 
@@ -984,6 +1057,9 @@ export function createFuraRpcRuntime(
 				}
 				case "approve_plan_mode": {
 					return approvePlanMode(command);
+				}
+				case "goal_mode": {
+					return handleGoalMode(command);
 				}
 				default:
 					return undefined;
