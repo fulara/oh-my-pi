@@ -1,0 +1,6 @@
+{
+  "type": "host_uri_request",
+  "id": "uri-read-1",
+  "operation": "read",
+  "url": "notion://page/abc123"
+}

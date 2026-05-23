@@ -1,0 +1,6 @@
+{
+  "id": "cmd-goal-budget-1",
+  "type": "goal_mode",
+  "op": "set_budget",
+  "tokenBudget": 75000
+}

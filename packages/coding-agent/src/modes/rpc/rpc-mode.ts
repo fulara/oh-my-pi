@@ -2293,6 +2293,8 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 					slowModeScope: session.getSlowModeScope(),
 					usageLimit: session.getUsageLimitState(),
 					messageCount: session.messages.length,
+					planMode: session.getPlanModeState() ?? null,
+					goalMode: session.getGoalModeState() ?? null,
 					systemPrompt: session.systemPrompt,
 					dumpTools: session.agent.state.tools.map(tool => ({
 						name: tool.name,

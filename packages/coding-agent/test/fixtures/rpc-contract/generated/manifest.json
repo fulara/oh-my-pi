@@ -1,0 +1,212 @@
+[
+  {
+    "name": "command-approve-plan-mode",
+    "category": "command",
+    "file": "command-approve-plan-mode.json"
+  },
+  {
+    "name": "command-discuss-plan-mode",
+    "category": "command",
+    "file": "command-discuss-plan-mode.json"
+  },
+  {
+    "name": "command-fork",
+    "category": "command",
+    "file": "command-fork.json"
+  },
+  {
+    "name": "command-get-state",
+    "category": "command",
+    "file": "command-get-state.json"
+  },
+  {
+    "name": "command-goal-mode-create",
+    "category": "command",
+    "file": "command-goal-mode-create.json"
+  },
+  {
+    "name": "command-goal-mode-set-budget",
+    "category": "command",
+    "file": "command-goal-mode-set-budget.json"
+  },
+  {
+    "name": "command-set-active-tools",
+    "category": "command",
+    "file": "command-set-active-tools.json"
+  },
+  {
+    "name": "command-set-host-uri-schemes",
+    "category": "command",
+    "file": "command-set-host-uri-schemes.json"
+  },
+  {
+    "name": "command-set-plan-mode",
+    "category": "command",
+    "file": "command-set-plan-mode.json"
+  },
+  {
+    "name": "event-agent-end",
+    "category": "event",
+    "file": "event-agent-end.json"
+  },
+  {
+    "name": "event-agent-start",
+    "category": "event",
+    "file": "event-agent-start.json"
+  },
+  {
+    "name": "event-message-end-text",
+    "category": "event",
+    "file": "event-message-end-text.json"
+  },
+  {
+    "name": "event-message-end-thinking",
+    "category": "event",
+    "file": "event-message-end-thinking.json"
+  },
+  {
+    "name": "event-message-end-tool-call",
+    "category": "event",
+    "file": "event-message-end-tool-call.json"
+  },
+  {
+    "name": "event-message-end-tool-result",
+    "category": "event",
+    "file": "event-message-end-tool-result.json"
+  },
+  {
+    "name": "event-message-update-text",
+    "category": "event",
+    "file": "event-message-update-text.json"
+  },
+  {
+    "name": "event-plan-review",
+    "category": "event",
+    "file": "event-plan-review.json"
+  },
+  {
+    "name": "event-tool-execution-end",
+    "category": "event",
+    "file": "event-tool-execution-end.json"
+  },
+  {
+    "name": "event-tool-execution-start",
+    "category": "event",
+    "file": "event-tool-execution-start.json"
+  },
+  {
+    "name": "event-tool-execution-update",
+    "category": "event",
+    "file": "event-tool-execution-update.json"
+  },
+  {
+    "name": "extension-ui-request-confirm",
+    "category": "extension",
+    "file": "extension-ui-request-confirm.json"
+  },
+  {
+    "name": "host-tool-call",
+    "category": "host-tool",
+    "file": "host-tool-call.json"
+  },
+  {
+    "name": "host-tool-cancel",
+    "category": "host-tool",
+    "file": "host-tool-cancel.json"
+  },
+  {
+    "name": "host-tool-result",
+    "category": "host-tool",
+    "file": "host-tool-result.json"
+  },
+  {
+    "name": "host-tool-update",
+    "category": "host-tool",
+    "file": "host-tool-update.json"
+  },
+  {
+    "name": "host-uri-cancel",
+    "category": "host-uri",
+    "file": "host-uri-cancel.json"
+  },
+  {
+    "name": "host-uri-request-read",
+    "category": "host-uri",
+    "file": "host-uri-request-read.json"
+  },
+  {
+    "name": "host-uri-request-write",
+    "category": "host-uri",
+    "file": "host-uri-request-write.json"
+  },
+  {
+    "name": "host-uri-result-error",
+    "category": "host-uri",
+    "file": "host-uri-result-error.json"
+  },
+  {
+    "name": "host-uri-result-success",
+    "category": "host-uri",
+    "file": "host-uri-result-success.json"
+  },
+  {
+    "name": "ready",
+    "category": "lifecycle",
+    "file": "ready.json"
+  },
+  {
+    "name": "response-approve-plan-mode",
+    "category": "response",
+    "file": "response-approve-plan-mode.json"
+  },
+  {
+    "name": "response-discuss-plan-mode",
+    "category": "response",
+    "file": "response-discuss-plan-mode.json"
+  },
+  {
+    "name": "response-error",
+    "category": "response",
+    "file": "response-error.json"
+  },
+  {
+    "name": "response-fork",
+    "category": "response",
+    "file": "response-fork.json"
+  },
+  {
+    "name": "response-get-available-models",
+    "category": "response",
+    "file": "response-get-available-models.json"
+  },
+  {
+    "name": "response-get-messages",
+    "category": "response",
+    "file": "response-get-messages.json"
+  },
+  {
+    "name": "response-get-session-stats",
+    "category": "response",
+    "file": "response-get-session-stats.json"
+  },
+  {
+    "name": "response-get-state",
+    "category": "response",
+    "file": "response-get-state.json"
+  },
+  {
+    "name": "response-goal-mode",
+    "category": "response",
+    "file": "response-goal-mode.json"
+  },
+  {
+    "name": "response-set-active-tools",
+    "category": "response",
+    "file": "response-set-active-tools.json"
+  },
+  {
+    "name": "response-set-plan-mode",
+    "category": "response",
+    "file": "response-set-plan-mode.json"
+  }
+]

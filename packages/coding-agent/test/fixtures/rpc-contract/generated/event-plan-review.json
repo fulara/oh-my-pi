@@ -1,0 +1,8 @@
+{
+  "type": "plan_review",
+  "sessionId": "session-123",
+  "planFilePath": "local://PLAN.md",
+  "finalPlanFilePath": "local://Fura_RPC_Protocol_Plan.md",
+  "title": "Fura_RPC_Protocol_Plan",
+  "content": "# Plan\n\nImplement the approved design."
+}

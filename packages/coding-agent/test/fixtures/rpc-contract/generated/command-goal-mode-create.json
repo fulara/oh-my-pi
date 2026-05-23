@@ -1,0 +1,7 @@
+{
+  "id": "cmd-goal-create-1",
+  "type": "goal_mode",
+  "op": "create",
+  "objective": "Ship goal-mode projection",
+  "tokenBudget": 50000
+}

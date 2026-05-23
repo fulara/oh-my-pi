@@ -1,0 +1,15 @@
+{
+  "type": "host_tool_update",
+  "id": "host-call-1",
+  "partialResult": {
+    "content": [
+      {
+        "type": "text",
+        "text": "Loading page…"
+      }
+    ],
+    "details": {
+      "progress": 50
+    }
+  }
+}

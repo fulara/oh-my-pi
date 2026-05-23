@@ -1,0 +1,7 @@
+{
+  "type": "host_uri_request",
+  "id": "uri-write-1",
+  "operation": "write",
+  "url": "db://records/42",
+  "content": "{\"status\":\"done\"}"
+}
