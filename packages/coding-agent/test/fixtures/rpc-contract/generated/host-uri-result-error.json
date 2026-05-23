@@ -1,0 +1,6 @@
+{
+  "type": "host_uri_result",
+  "id": "uri-write-1",
+  "isError": true,
+  "error": "Permission denied for db://records/42"
+}
