@@ -11,6 +11,8 @@ import type { BashResult } from "../../exec/bash-executor";
 import type { ContextUsage } from "../../extensibility/extensions/types";
 import type { AgentSessionEvent, SessionStats } from "../../session/agent-session";
 import type { CacheWarmingMode } from "../../session/cache-warmer";
+import type { GoalModeState } from "../../goals/state";
+import type { PlanModeState } from "../../plan-mode/state";
 import type { FileEntry, SessionEntry, SessionTreeNode } from "../../session/session-entries";
 import type { AvailableSlashCommandSource } from "../../slash-commands/available-commands";
 import type { AgentProgress } from "@oh-my-pi/pi-tui/tools/task";
@@ -19,6 +21,15 @@ import type { TodoPhase } from "@oh-my-pi/pi-tui/tools/todo";
 import type { RpcMessagesPage } from "./rpc-messages";
 import type { GoalModeState } from "../../goals/state";
 import type { RpcGoalOp, RpcGoalResult } from "./rpc-goal";
+
+export interface RpcPlanReviewEvent {
+	type: "plan_review";
+	sessionId: string | null;
+	planFilePath: string;
+	finalPlanFilePath: string;
+	title?: string;
+	content: string;
+}
 
 // ============================================================================
 // RPC Commands (stdin)
@@ -41,6 +52,7 @@ export type RpcCommand =
 	| { id?: string; type: "abort_and_prompt"; message: string; images?: ImageContent[] }
 	| { id?: string; type: "new_session"; parentSession?: string }
 	| { id?: string; type: "open_session"; sessionDir: string }
+	| { id?: string; type: "fork" }
 
 	// State
 	| { id?: string; type: "get_state" }
@@ -57,7 +69,24 @@ export type RpcCommand =
 	| { id?: string; type: "get_entries"; since?: string }
 	| { id?: string; type: "get_tree" }
 	| { id?: string; type: "set_todos"; phases: TodoPhase[] }
+	| {
+			id?: string;
+			type: "set_plan_mode";
+			enabled: boolean;
+			planFilePath?: string;
+			workflow?: PlanModeState["workflow"];
+	  }
+	| {
+			id?: string;
+			type: "approve_plan_mode";
+			planFilePath?: string;
+			finalPlanFilePath: string;
+			preserveContext?: boolean;
+			compactBeforeExecute?: boolean;
+	  }
+	| { id?: string; type: "discuss_plan_mode" }
 	| { id?: string; type: "set_host_tools"; tools: RpcHostToolDefinition[] }
+	| { id?: string; type: "set_active_tools"; toolNames: string[] }
 	| { id?: string; type: "set_host_uri_schemes"; schemes: RpcHostUriSchemeDefinition[] }
 	| { id?: string; type: "set_subagent_subscription"; level: RpcSubagentSubscriptionLevel }
 	| { id?: string; type: "set_event_filter"; events: string[] | null; messageUpdates?: RpcMessageUpdates }
@@ -65,6 +94,19 @@ export type RpcCommand =
 	| { id?: string; type: "get_subagent_messages"; subagentId?: string; sessionFile?: string; fromByte?: number }
 	| { id?: string; type: "cancel_subagent"; subagentId: string }
 	| { id?: string; type: "steer_subagent"; subagentId: string; message: string }
+	| {
+			id?: string;
+			type: "goal_mode";
+			op: "create";
+			objective: string;
+			tokenBudget?: number;
+	  }
+	| {
+			id?: string;
+			type: "goal_mode";
+			op: "pause" | "resume" | "drop" | "set_budget";
+			tokenBudget?: number;
+	  }
 
 	// Model
 	| { id?: string; type: "set_model"; provider: string; modelId: string }
@@ -156,6 +198,8 @@ export interface RpcSessionState {
 	 *  (and the `queue_update` event) instead of tracking chips independently. */
 	queuedMessages: { steering: string[]; followUp: string[] };
 	todoPhases: TodoPhase[];
+	planMode: PlanModeState | null;
+	goalMode: GoalModeState | null;
 	/** For session dump / export (plain-text parity with /dump). */
 	systemPrompt?: string[];
 	dumpTools?: Array<{ name: string; description: string; parameters: unknown; examples?: readonly ToolExample[] }>;
@@ -304,6 +348,7 @@ export type RpcResponse =
 	| { id?: string; type: "response"; command: "abort_and_prompt"; success: true }
 	| { id?: string; type: "response"; command: "new_session"; success: true; data: { cancelled: boolean } }
 	| { id?: string; type: "response"; command: "open_session"; success: true; data: RpcOpenSessionResult }
+	| { id?: string; type: "response"; command: "fork"; success: true; data: { cancelled: boolean } }
 
 	// State
 	| { id?: string; type: "response"; command: "get_state"; success: true; data: RpcSessionState }
@@ -338,7 +383,22 @@ export type RpcResponse =
 			data: { tree: SessionTreeNode[]; leafId: string | null };
 	  }
 	| { id?: string; type: "response"; command: "set_todos"; success: true; data: { todoPhases: TodoPhase[] } }
+	| { id?: string; type: "response"; command: "set_plan_mode"; success: true; data: { planMode: PlanModeState | null } }
+	| {
+			id?: string;
+			type: "response";
+			command: "approve_plan_mode";
+			success: true;
+			data: {
+				finalPlanFilePath: string;
+				contextPreserved: boolean;
+				compactionOutcome?: "ok" | "cancelled" | "failed";
+				executionDispatched: boolean;
+			};
+	  }
+	| { id?: string; type: "response"; command: "discuss_plan_mode"; success: true; data: { planMode: PlanModeState } }
 	| { id?: string; type: "response"; command: "set_host_tools"; success: true; data: { toolNames: string[] } }
+	| { id?: string; type: "response"; command: "set_active_tools"; success: true; data: { toolNames: string[] } }
 	| { id?: string; type: "response"; command: "set_host_uri_schemes"; success: true; data: { schemes: string[] } }
 	| {
 			id?: string;
@@ -376,6 +436,7 @@ export type RpcResponse =
 			data: { cancelled: boolean };
 	  }
 	| { id?: string; type: "response"; command: "steer_subagent"; success: true }
+	| { id?: string; type: "response"; command: "goal_mode"; success: true; data: { goalMode: GoalModeState | null } }
 
 	// Model
 	| {

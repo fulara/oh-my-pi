@@ -1,0 +1,10 @@
+{
+  "type": "host_uri_result",
+  "id": "uri-read-1",
+  "content": "# Document\n\nFetched over host URI.",
+  "contentType": "text/markdown",
+  "notes": [
+    "resolved from remote workspace"
+  ],
+  "immutable": true
+}

@@ -1,0 +1,16 @@
+{
+  "type": "host_tool_result",
+  "id": "host-call-1",
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "Opened https://example.com"
+      }
+    ],
+    "details": {
+      "url": "https://example.com"
+    }
+  },
+  "isError": false
+}

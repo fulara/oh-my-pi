@@ -1,0 +1,14 @@
+{
+  "id": "rpc-plan-discuss-1",
+  "type": "response",
+  "command": "discuss_plan_mode",
+  "success": true,
+  "data": {
+    "planMode": {
+      "enabled": true,
+      "planFilePath": "local://PLAN.md",
+      "workflow": "parallel",
+      "reentry": false
+    }
+  }
+}

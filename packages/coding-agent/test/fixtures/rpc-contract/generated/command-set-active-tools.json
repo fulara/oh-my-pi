@@ -1,0 +1,9 @@
+{
+  "id": "cmd-tools-1",
+  "type": "set_active_tools",
+  "toolNames": [
+    "read",
+    "todo_write",
+    "task"
+  ]
+}

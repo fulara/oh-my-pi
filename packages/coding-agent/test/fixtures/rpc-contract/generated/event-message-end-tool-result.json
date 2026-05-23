@@ -1,0 +1,19 @@
+{
+  "type": "message_end",
+  "message": {
+    "role": "toolResult",
+    "toolCallId": "toolu_read_1",
+    "toolName": "read",
+    "content": [
+      {
+        "type": "text",
+        "text": "fn main() {}"
+      }
+    ],
+    "details": {
+      "path": "src/main.rs"
+    },
+    "isError": false,
+    "timestamp": 1770000004000
+  }
+}
