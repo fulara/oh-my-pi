@@ -1,0 +1,22 @@
+{
+  "type": "tool_execution_update",
+  "toolCallId": "toolu_read_1",
+  "toolName": "read",
+  "args": {
+    "path": "src/main.rs",
+    "sel": "1-80"
+  },
+  "partialResult": {
+    "content": [
+      {
+        "type": "text",
+        "text": "partial output"
+      }
+    ],
+    "details": {
+      "async": {
+        "state": "running"
+      }
+    }
+  }
+}
