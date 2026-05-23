@@ -1,0 +1,24 @@
+{
+  "id": "rpc-stats-1",
+  "type": "response",
+  "command": "get_session_stats",
+  "success": true,
+  "data": {
+    "sessionFile": "/tmp/omp/session.jsonl",
+    "sessionId": "session-1",
+    "userMessages": 1,
+    "assistantMessages": 2,
+    "toolCalls": 1,
+    "toolResults": 1,
+    "totalMessages": 4,
+    "tokens": {
+      "input": 100,
+      "output": 50,
+      "cacheRead": 10,
+      "cacheWrite": 5,
+      "total": 165
+    },
+    "premiumRequests": 1,
+    "cost": 0.00123
+  }
+}

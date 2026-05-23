@@ -1,0 +1,17 @@
+{
+  "type": "tool_execution_end",
+  "toolCallId": "toolu_read_1",
+  "toolName": "read",
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "fn main() {}"
+      }
+    ],
+    "details": {
+      "path": "src/main.rs"
+    }
+  },
+  "isError": false
+}

@@ -532,7 +532,8 @@
 		"gen:bundle": "bun scripts/bundle-dist.ts",
 		"gen:rpc": "bun scripts/gen-rpc/index.ts",
 		"prepack": "bun run gen:tool-views && bun run gen:bundle",
-		"bench:guard": "bun scripts/bench-guard.ts"
+		"bench:guard": "bun scripts/bench-guard.ts",
+		"generate-rpc-contract-fixtures": "bun scripts/generate-rpc-contract-fixtures.ts"
 	},
 	"dependencies": {
 		"@babel/parser": "catalog:",

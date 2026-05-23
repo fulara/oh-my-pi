@@ -1,0 +1,8 @@
+{
+  "type": "extension_ui_request",
+  "id": "dialog-1",
+  "method": "confirm",
+  "title": "Continue?",
+  "message": "Approve the operation?",
+  "timeout": 30000
+}

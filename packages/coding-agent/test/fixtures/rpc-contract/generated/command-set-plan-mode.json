@@ -1,0 +1,7 @@
+{
+  "id": "cmd-plan-1",
+  "type": "set_plan_mode",
+  "enabled": true,
+  "planFilePath": "local://PLAN.md",
+  "workflow": "parallel"
+}
