@@ -1,0 +1,41 @@
+{
+  "type": "message_end",
+  "message": {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "text",
+        "text": "Reading file."
+      },
+      {
+        "type": "toolCall",
+        "id": "toolu_read_1",
+        "name": "read",
+        "arguments": {
+          "path": "src/main.rs",
+          "sel": "1-80"
+        },
+        "intent": "Reading entrypoint"
+      }
+    ],
+    "api": "anthropic-messages",
+    "provider": "anthropic",
+    "model": "claude-sonnet-4-5",
+    "usage": {
+      "input": 120,
+      "output": 45,
+      "cacheRead": 10,
+      "cacheWrite": 5,
+      "totalTokens": 180,
+      "cost": {
+        "input": 0.00036,
+        "output": 0.000675,
+        "cacheRead": 0.00003,
+        "cacheWrite": 0.000075,
+        "total": 0.00114
+      }
+    },
+    "stopReason": "toolUse",
+    "timestamp": 1770000003000
+  }
+}

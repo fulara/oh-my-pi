@@ -1,0 +1,16 @@
+{
+  "id": "cmd-uri-schemes-1",
+  "type": "set_host_uri_schemes",
+  "schemes": [
+    {
+      "scheme": "notion",
+      "description": "Remote markdown pages",
+      "immutable": true
+    },
+    {
+      "scheme": "db",
+      "description": "Writable database records",
+      "writable": true
+    }
+  ]
+}

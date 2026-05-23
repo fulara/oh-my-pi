@@ -1,0 +1,5 @@
+{
+  "type": "host_uri_cancel",
+  "id": "uri-cancel-1",
+  "targetId": "uri-read-1"
+}

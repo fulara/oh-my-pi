@@ -1,0 +1,64 @@
+{
+  "type": "message_update",
+  "message": {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "text",
+        "text": "Hello from OMP RPC."
+      }
+    ],
+    "api": "anthropic-messages",
+    "provider": "anthropic",
+    "model": "claude-sonnet-4-5",
+    "usage": {
+      "input": 120,
+      "output": 45,
+      "cacheRead": 10,
+      "cacheWrite": 5,
+      "totalTokens": 180,
+      "cost": {
+        "input": 0.00036,
+        "output": 0.000675,
+        "cacheRead": 0.00003,
+        "cacheWrite": 0.000075,
+        "total": 0.00114
+      }
+    },
+    "stopReason": "stop",
+    "timestamp": 1770000000000
+  },
+  "assistantMessageEvent": {
+    "type": "text_delta",
+    "contentIndex": 0,
+    "delta": "Hello from OMP RPC.",
+    "partial": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "Hello from OMP RPC."
+        }
+      ],
+      "api": "anthropic-messages",
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-5",
+      "usage": {
+        "input": 120,
+        "output": 45,
+        "cacheRead": 10,
+        "cacheWrite": 5,
+        "totalTokens": 180,
+        "cost": {
+          "input": 0.00036,
+          "output": 0.000675,
+          "cacheRead": 0.00003,
+          "cacheWrite": 0.000075,
+          "total": 0.00114
+        }
+      },
+      "stopReason": "stop",
+      "timestamp": 1770000000000
+    }
+  }
+}

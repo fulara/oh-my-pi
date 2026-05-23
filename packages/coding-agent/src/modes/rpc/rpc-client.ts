@@ -825,6 +825,15 @@ export class RpcClient {
 	}
 
 	/**
+	 * Fork the current persisted session.
+	 * @returns Object with `cancelled: true` if the fork could not be created or an extension cancelled it.
+	 */
+	async fork(): Promise<{ cancelled: boolean }> {
+		const response = await this.#send({ type: "fork" });
+		return this.#getData(response);
+	}
+
+	/**
 	 * Get current session state.
 	 */
 	async getState(): Promise<RpcSessionState> {
@@ -1419,6 +1428,15 @@ export class RpcClient {
 			readsSkillUris: tool.readsSkillUris,
 		}));
 		const response = await this.#send({ type: "set_host_tools", tools: definitions });
+		return this.#getData<{ toolNames: string[] }>(response).toolNames;
+	}
+
+	/**
+	 * Replace the active tool allowlist for the RPC session.
+	 * Changes take effect before the next model call.
+	 */
+	async setActiveTools(toolNames: string[]): Promise<string[]> {
+		const response = await this.#send({ type: "set_active_tools", toolNames });
 		return this.#getData<{ toolNames: string[] }>(response).toolNames;
 	}
 

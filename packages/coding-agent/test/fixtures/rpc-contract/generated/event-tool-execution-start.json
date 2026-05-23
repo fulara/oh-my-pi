@@ -1,0 +1,10 @@
+{
+  "type": "tool_execution_start",
+  "toolCallId": "toolu_read_1",
+  "toolName": "read",
+  "args": {
+    "path": "src/main.rs",
+    "sel": "1-80"
+  },
+  "intent": "Reading entrypoint"
+}
