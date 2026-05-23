@@ -1,0 +1,8 @@
+{
+  "id": "cmd-plan-approve-1",
+  "type": "approve_plan_mode",
+  "planFilePath": "local://PLAN.md",
+  "finalPlanFilePath": "local://Fura_RPC_Protocol_Plan.md",
+  "preserveContext": true,
+  "compactBeforeExecute": false
+}
