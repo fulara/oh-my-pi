@@ -1,0 +1,111 @@
+{
+  "id": "rpc-messages-1",
+  "type": "response",
+  "command": "get_messages",
+  "success": true,
+  "data": {
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "Please inspect the repo."
+          }
+        ],
+        "timestamp": 1770000002000
+      },
+      {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "Reading file."
+          },
+          {
+            "type": "toolCall",
+            "id": "toolu_read_1",
+            "name": "read",
+            "arguments": {
+              "path": "src/main.rs",
+              "sel": "1-80"
+            },
+            "intent": "Reading entrypoint"
+          }
+        ],
+        "api": "anthropic-messages",
+        "provider": "anthropic",
+        "model": "claude-sonnet-4-5",
+        "usage": {
+          "input": 120,
+          "output": 45,
+          "cacheRead": 10,
+          "cacheWrite": 5,
+          "totalTokens": 180,
+          "cost": {
+            "input": 0.00036,
+            "output": 0.000675,
+            "cacheRead": 0.00003,
+            "cacheWrite": 0.000075,
+            "total": 0.00114
+          }
+        },
+        "stopReason": "toolUse",
+        "timestamp": 1770000003000
+      },
+      {
+        "role": "toolResult",
+        "toolCallId": "toolu_read_1",
+        "toolName": "read",
+        "content": [
+          {
+            "type": "text",
+            "text": "fn main() {}"
+          }
+        ],
+        "details": {
+          "path": "src/main.rs"
+        },
+        "isError": false,
+        "timestamp": 1770000004000
+      },
+      {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "thinking",
+            "thinking": "Reasoning summary",
+            "thinkingSignature": "sig-1"
+          },
+          {
+            "type": "redactedThinking",
+            "data": "encrypted-redacted-thinking"
+          },
+          {
+            "type": "text",
+            "text": "Final answer."
+          }
+        ],
+        "api": "anthropic-messages",
+        "provider": "anthropic",
+        "model": "claude-sonnet-4-5",
+        "usage": {
+          "input": 120,
+          "output": 45,
+          "cacheRead": 10,
+          "cacheWrite": 5,
+          "totalTokens": 180,
+          "cost": {
+            "input": 0.00036,
+            "output": 0.000675,
+            "cacheRead": 0.00003,
+            "cacheWrite": 0.000075,
+            "total": 0.00114
+          }
+        },
+        "stopReason": "stop",
+        "timestamp": 1770000001000
+      }
+    ]
+  }
+}

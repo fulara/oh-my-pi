@@ -1,0 +1,13 @@
+{
+  "id": "rpc-tools-1",
+  "type": "response",
+  "command": "set_active_tools",
+  "success": true,
+  "data": {
+    "toolNames": [
+      "read",
+      "todo_write",
+      "task"
+    ]
+  }
+}
