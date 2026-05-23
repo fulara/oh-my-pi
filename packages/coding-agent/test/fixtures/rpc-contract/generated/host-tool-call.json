@@ -1,0 +1,9 @@
+{
+  "type": "host_tool_call",
+  "id": "host-call-1",
+  "toolCallId": "toolu_host_1",
+  "toolName": "browser.open",
+  "arguments": {
+    "url": "https://example.com"
+  }
+}

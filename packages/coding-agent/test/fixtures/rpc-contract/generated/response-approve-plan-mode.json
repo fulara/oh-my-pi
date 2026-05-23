@@ -1,0 +1,12 @@
+{
+  "id": "rpc-plan-approve-1",
+  "type": "response",
+  "command": "approve_plan_mode",
+  "success": true,
+  "data": {
+    "finalPlanFilePath": "local://Fura_RPC_Protocol_Plan.md",
+    "contextPreserved": true,
+    "compactionOutcome": "ok",
+    "executionDispatched": true
+  }
+}
