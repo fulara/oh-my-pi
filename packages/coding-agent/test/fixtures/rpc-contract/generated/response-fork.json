@@ -1,0 +1,9 @@
+{
+  "id": "rpc-fork-1",
+  "type": "response",
+  "command": "fork",
+  "success": true,
+  "data": {
+    "cancelled": false
+  }
+}

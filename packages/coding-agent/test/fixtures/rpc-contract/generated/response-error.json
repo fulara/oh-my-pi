@@ -1,0 +1,7 @@
+{
+  "id": "rpc-error-1",
+  "type": "response",
+  "command": "prompt",
+  "success": false,
+  "error": "Agent is already processing"
+}
