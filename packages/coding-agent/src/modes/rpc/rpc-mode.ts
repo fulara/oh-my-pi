@@ -13,7 +13,11 @@
 import { once } from "node:events";
 import { getOAuthProviders } from "@oh-my-pi/pi-ai/oauth";
 import { toolWireSchema } from "@oh-my-pi/pi-ai/utils/schema";
-import { $env, isRecord, Snowflake } from "@oh-my-pi/pi-utils";
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
+import type { AgentToolResult } from "@oh-my-pi/pi-agent-core";
+import { CompactionCancelledError } from "@oh-my-pi/pi-agent-core/compaction";
+import { $env, isEnoent, isRecord, prompt, readJsonl, readLines, Snowflake } from "@oh-my-pi/pi-utils";
 import { reset as resetCapabilities } from "../../capability";
 import { clearPluginRootsAndCaches, resolveActiveProjectRegistryPath } from "../../discovery/helpers";
 import {
@@ -30,12 +34,21 @@ import {
 	type Skill,
 } from "../../extensibility/skills";
 import { loadSlashCommands } from "../../extensibility/slash-commands";
+import { resolveLocalUrlToPath } from "../../internal-urls";
 import { type Theme, theme } from "../../modes/theme/theme";
-import type { AgentSession } from "../../session/agent-session";
+import { type PlanApprovalDetails, resolvePlanTitle } from "../../plan-mode/approved-plan";
+import planModeApprovedPrompt from "../../prompts/system/plan-mode-approved.md" with { type: "text" };
+import planModeCompactInstructionsPrompt from "../../prompts/system/plan-mode-compact-instructions.md" with {
+	type: "text",
+};
+import type { AgentSession, AgentSessionEvent } from "../../session/agent-session";
 import { SKILL_PROMPT_MESSAGE_TYPE, USER_INTERRUPT_LABEL } from "../../session/messages";
 import { executeAcpBuiltinSlashCommand } from "../../slash-commands/acp-builtins";
 import { buildAvailableSlashCommands } from "../../slash-commands/available-commands";
 import { defaultLoadModeForToolName } from "../../tools/essential-tools";
+import { normalizeLocalScheme, resolveToCwd } from "../../tools/path-utils";
+import { type ResolveToolDetails, runResolveInvocation } from "../../tools/resolve";
+import { ToolError } from "../../tools/tool-errors";
 import type { EventBus } from "../../utils/event-bus";
 import { calculateTokensPerSecond } from "../../utils/token-rate";
 import { initializeExtensions } from "../runtime-init";
@@ -58,6 +71,7 @@ import type {
 	RpcHostUriCancelRequest,
 	RpcHostUriRequest,
 	RpcHostUriResult,
+	RpcPlanReviewEvent,
 	RpcResponse,
 	RpcSessionState,
 	RpcSubagentSubscriptionLevel,
@@ -97,6 +111,7 @@ export class RpcPendingExtensionRequests extends Map<string, PendingExtensionReq
 type RpcOutput = (
 	obj:
 		| RpcResponse
+		| RpcPlanReviewEvent
 		| RpcExtensionUIRequest
 		| RpcHostToolCallRequest
 		| RpcHostToolCancelRequest
@@ -650,6 +665,357 @@ export function requestRpcSelect(
 		response => parseValueDialogResponse(response, dialogOptions),
 	);
 }
+export interface RpcFuraRuntimeState {
+	planPreviousTools?: string[];
+	planHasEntered: boolean;
+}
+
+function successResponse<T extends RpcCommand["type"]>(
+	id: string | undefined,
+	command: T,
+	data?: object | null,
+): RpcResponse {
+	if (data === undefined) {
+		return { id, type: "response", command, success: true } as RpcResponse;
+	}
+	return { id, type: "response", command, success: true, data } as RpcResponse;
+}
+
+function errorResponse(id: string | undefined, command: string, message: string): RpcResponse {
+	return { id, type: "response", command, success: false, error: message };
+}
+
+function getRpcLocalOptions(session: AgentSession) {
+	return {
+		getArtifactsDir: () => session.sessionManager.getArtifactsDir(),
+		getSessionId: () => session.sessionManager.getSessionId(),
+	};
+}
+
+export function resolveRpcPlanPath(session: AgentSession, planFilePath: string): string {
+	const normalized = normalizeLocalScheme(planFilePath);
+	if (normalized.startsWith("local:")) {
+		return resolveLocalUrlToPath(normalized, getRpcLocalOptions(session));
+	}
+	return resolveToCwd(normalized, session.sessionManager.getCwd());
+}
+
+export async function readRpcPlanFile(session: AgentSession, planFilePath: string): Promise<string | null> {
+	try {
+		return await fs.readFile(resolveRpcPlanPath(session, planFilePath), "utf8");
+	} catch (error) {
+		if (isEnoent(error)) return null;
+		throw error;
+	}
+}
+
+export async function buildRpcPlanApprovalDetails(
+	session: AgentSession,
+	input: { planFilePath: string; suppliedTitle?: unknown; finalPlanFilePath?: string },
+): Promise<PlanApprovalDetails & { content: string }> {
+	const content = await readRpcPlanFile(session, input.planFilePath);
+	if (content === null) {
+		throw new ToolError(
+			`Plan file not found at ${input.planFilePath}. Write the finalized plan before requesting approval.`,
+		);
+	}
+	const normalized = resolvePlanTitle({
+		suppliedTitle: input.suppliedTitle,
+		planContent: content,
+		planFilePath: input.planFilePath,
+	});
+	return {
+		planFilePath: input.planFilePath,
+		finalPlanFilePath: input.finalPlanFilePath ?? `local://${normalized.fileName}`,
+		title: normalized.title,
+		planExists: true,
+		content,
+	};
+}
+
+function isLocalPlanPath(planFilePath: string): boolean {
+	return normalizeLocalScheme(planFilePath).startsWith("local:");
+}
+
+function isBlockingGoalModeState(session: AgentSession): boolean {
+	const goalMode = session.getGoalModeState();
+	if (!goalMode?.goal) return false;
+	return goalMode.goal.status !== "complete" && goalMode.goal.status !== "dropped";
+}
+
+function extractRpcPlanReviewDetails(result: unknown): PlanApprovalDetails | undefined {
+	const details =
+		typeof result === "object" && result !== null ? (result as { details?: unknown }).details : undefined;
+	if (typeof details !== "object" || details === null) return undefined;
+
+	const resolveDetails = details as ResolveToolDetails;
+	if (resolveDetails.sourceToolName !== "plan_approval" || resolveDetails.action !== "apply") return undefined;
+
+	const sourceDetails = resolveDetails.sourceResultDetails as PlanApprovalDetails | undefined;
+	if (
+		typeof sourceDetails?.planFilePath !== "string" ||
+		typeof sourceDetails.finalPlanFilePath !== "string" ||
+		typeof sourceDetails.title !== "string"
+	) {
+		return undefined;
+	}
+	return sourceDetails;
+}
+
+export function createFuraRpcRuntime(
+	session: AgentSession,
+	output: RpcOutput = () => {},
+	state: RpcFuraRuntimeState = { planHasEntered: false },
+): {
+	handleCommand(command: RpcCommand): Promise<RpcResponse | undefined>;
+	handleSessionEvent(event: AgentSessionEvent): Promise<void>;
+} {
+	const restorePlanTools = async (): Promise<void> => {
+		if (state.planPreviousTools !== undefined) {
+			await session.setActiveToolsByName(state.planPreviousTools);
+			state.planPreviousTools = undefined;
+		}
+	};
+
+	const exitPlanMode = async (): Promise<null> => {
+		if (session.getPlanModeState()?.enabled) {
+			await restorePlanTools();
+			session.setStandingResolveHandler?.(null);
+			session.setPlanModeState(undefined);
+			session.sessionManager.appendModeChange("none");
+		}
+		return null;
+	};
+
+	const runRpcPlanApprovalResolve = (input: unknown): Promise<AgentToolResult<ResolveToolDetails>> =>
+		runResolveInvocation(input as Parameters<typeof runResolveInvocation>[0], {
+			sourceToolName: "plan_approval",
+			label: "Plan ready for approval",
+			apply: async (_reason, extra) => {
+				const planMode = session.getPlanModeState();
+				if (!planMode?.enabled) {
+					throw new ToolError("Plan mode is not active.");
+				}
+				const details = await buildRpcPlanApprovalDetails(session, {
+					planFilePath: planMode.planFilePath,
+					suppliedTitle: extra?.title,
+				});
+				return {
+					content: [{ type: "text" as const, text: "Plan ready for approval." }],
+					details: {
+						planFilePath: details.planFilePath,
+						finalPlanFilePath: details.finalPlanFilePath,
+						title: details.title,
+						planExists: details.planExists,
+					},
+				};
+			},
+		});
+
+	const enterPlanMode = async (command: Extract<RpcCommand, { type: "set_plan_mode" }>): Promise<RpcResponse> => {
+		if (isBlockingGoalModeState(session)) {
+			return errorResponse(command.id, "set_plan_mode", "Exit goal mode first.");
+		}
+		const previousPlanMode = session.getPlanModeState();
+		const planFilePath = command.planFilePath?.trim() || "local://PLAN.md";
+
+		if (!previousPlanMode?.enabled && state.planPreviousTools === undefined) {
+			state.planPreviousTools = session.getActiveToolNames();
+		}
+
+		const previousTools = state.planPreviousTools ?? session.getActiveToolNames();
+		const hasResolveTool = session.getToolByName("resolve") !== undefined;
+		const activeTools = hasResolveTool ? [...previousTools, "resolve"] : previousTools;
+		await session.setActiveToolsByName([...new Set(activeTools)]);
+
+		const planMode = {
+			enabled: true,
+			planFilePath,
+			workflow: command.workflow ?? "parallel",
+			reentry: state.planHasEntered || previousPlanMode !== undefined,
+		};
+		session.setPlanModeState(planMode);
+		session.setStandingResolveHandler?.(input => runRpcPlanApprovalResolve(input));
+		if (session.isStreaming) {
+			await session.sendPlanModeContext({ deliverAs: "steer" });
+		}
+		state.planHasEntered = true;
+		session.sessionManager.appendModeChange("plan", { planFilePath });
+		return successResponse(command.id, "set_plan_mode", { planMode });
+	};
+
+	const discussPlanMode = async (command: Extract<RpcCommand, { type: "discuss_plan_mode" }>): Promise<RpcResponse> => {
+		const planMode = session.getPlanModeState();
+		if (!planMode?.enabled) {
+			return errorResponse(command.id, "discuss_plan_mode", "Plan mode is not active.");
+		}
+		return successResponse(command.id, "discuss_plan_mode", { planMode });
+	};
+
+	const maybeRenameApprovedPlan = async (planFilePath: string, finalPlanFilePath: string): Promise<void> => {
+		if (planFilePath === finalPlanFilePath) return;
+		if (!isLocalPlanPath(planFilePath) || !isLocalPlanPath(finalPlanFilePath)) return;
+		const localOptions = getRpcLocalOptions(session);
+		const resolvedSource = resolveLocalUrlToPath(normalizeLocalScheme(planFilePath), localOptions);
+		const resolvedDestination = resolveLocalUrlToPath(normalizeLocalScheme(finalPlanFilePath), localOptions);
+		if (resolvedSource === resolvedDestination) return;
+		try {
+			const destinationStat = await fs.stat(resolvedDestination);
+			if (destinationStat.isFile()) {
+				throw new ToolError(
+					`Plan destination already exists at ${finalPlanFilePath}. Choose a different title and submit the plan for approval again.`,
+				);
+			}
+			throw new ToolError(`Plan destination exists but is not a file: ${finalPlanFilePath}`);
+		} catch (error) {
+			if (!isEnoent(error)) throw error;
+		}
+		await fs.rename(resolvedSource, resolvedDestination);
+	};
+
+	const approvePlanMode = async (
+		command: Extract<RpcCommand, { type: "approve_plan_mode" }>,
+	): Promise<RpcResponse> => {
+		const activePlanMode = session.getPlanModeState();
+		if (!activePlanMode?.enabled && !command.planFilePath) {
+			return errorResponse(command.id, "approve_plan_mode", "Plan mode is not active.");
+		}
+
+		const planFilePath = command.planFilePath ?? activePlanMode?.planFilePath ?? "local://PLAN.md";
+		const details = await buildRpcPlanApprovalDetails(session, {
+			planFilePath,
+			finalPlanFilePath: command.finalPlanFilePath,
+		});
+		const { content: planContent, finalPlanFilePath } = details;
+
+		await maybeRenameApprovedPlan(planFilePath, finalPlanFilePath);
+
+		const contextPreserved = command.preserveContext === true;
+		const compactBeforeExecute = contextPreserved && command.compactBeforeExecute === true;
+		if (compactBeforeExecute) {
+			session.markPlanCompactAbortPending();
+		}
+
+		let compactionOutcome: "ok" | "cancelled" | "failed" | undefined;
+		try {
+			await exitPlanMode();
+
+			if (!contextPreserved) {
+				const previousSessionFile = session.sessionFile;
+				const started = await session.newSession(
+					previousSessionFile ? { parentSession: previousSessionFile } : undefined,
+				);
+				if (!started) {
+					return successResponse(command.id, "approve_plan_mode", {
+						finalPlanFilePath,
+						contextPreserved: false,
+						executionDispatched: false,
+					});
+				}
+				const newPlanPath = resolveRpcPlanPath(session, finalPlanFilePath);
+				await fs.mkdir(path.dirname(newPlanPath), { recursive: true });
+				await fs.writeFile(newPlanPath, planContent);
+			} else if (compactBeforeExecute) {
+				session.setPlanReferencePath(finalPlanFilePath);
+				const compactionPrompt = prompt.render(planModeCompactInstructionsPrompt, {
+					planFilePath: finalPlanFilePath,
+				});
+				try {
+					await session.compact(compactionPrompt);
+					compactionOutcome = "ok";
+				} catch (error) {
+					compactionOutcome = error instanceof CompactionCancelledError ? "cancelled" : "failed";
+				}
+			}
+		} finally {
+			session.clearPlanCompactAbortPending();
+		}
+
+		await restorePlanTools();
+		session.setStandingResolveHandler?.(null);
+		session.setPlanModeState(undefined);
+		session.setPlanReferencePath(finalPlanFilePath);
+
+		if (compactionOutcome === "cancelled") {
+			return successResponse(command.id, "approve_plan_mode", {
+				finalPlanFilePath,
+				contextPreserved,
+				compactionOutcome,
+				executionDispatched: false,
+			});
+		}
+
+		session.markPlanReferenceSent();
+		const planModePrompt = prompt.render(planModeApprovedPrompt, {
+			planContent,
+			finalPlanFilePath,
+			contextPreserved,
+		});
+		session.prompt(planModePrompt, { synthetic: true }).catch(error => {
+			output(errorResponse(undefined, "approve_plan_mode", error instanceof Error ? error.message : String(error)));
+		});
+
+		return successResponse(command.id, "approve_plan_mode", {
+			finalPlanFilePath,
+			contextPreserved,
+			...(compactionOutcome ? { compactionOutcome } : {}),
+			executionDispatched: true,
+		});
+	};
+
+	const handleCommand = async (command: RpcCommand): Promise<RpcResponse | undefined> => {
+		try {
+			switch (command.type) {
+				case "fork": {
+					const cancelled = !(await session.fork());
+					return successResponse(command.id, "fork", { cancelled });
+				}
+				case "set_active_tools": {
+					await session.setActiveToolsByName(command.toolNames);
+					return successResponse(command.id, "set_active_tools", { toolNames: session.getActiveToolNames() });
+				}
+				case "set_plan_mode": {
+					return command.enabled
+						? enterPlanMode(command)
+						: successResponse(command.id, "set_plan_mode", { planMode: await exitPlanMode() });
+				}
+				case "discuss_plan_mode": {
+					return discussPlanMode(command);
+				}
+				case "approve_plan_mode": {
+					return approvePlanMode(command);
+				}
+				default:
+					return undefined;
+			}
+		} catch (error) {
+			return errorResponse(command.id, command.type, error instanceof Error ? error.message : String(error));
+		}
+	};
+
+	const handleSessionEvent = async (event: AgentSessionEvent): Promise<void> => {
+		if (event.type !== "tool_execution_end" || event.toolName !== "resolve" || event.isError) return;
+		const details = extractRpcPlanReviewDetails(event.result);
+		if (!details) return;
+
+		const planContent = await readRpcPlanFile(session, details.planFilePath);
+		if (planContent === null) {
+			output(errorResponse(undefined, "resolve", `Plan file not found at ${details.planFilePath}`));
+			return;
+		}
+		await session.abort();
+		output({
+			type: "plan_review",
+			sessionId: session.sessionId ?? null,
+			planFilePath: details.planFilePath,
+			finalPlanFilePath: details.finalPlanFilePath,
+			title: details.title,
+			content: planContent,
+		} satisfies RpcPlanReviewEvent);
+	};
+
+	return { handleCommand, handleSessionEvent };
+}
 
 export function requestRpcEditor(
 	pendingRequests: Map<string, PendingExtensionRequest>,
@@ -834,6 +1200,7 @@ export async function runRpcMode(
 	const hostToolBridge = new RpcHostToolBridge(output);
 	const hostUriBridge = new RpcHostUriBridge(output);
 	const subagentRegistry = subagentEventBus ? new RpcSubagentRegistry(subagentEventBus, output) : undefined;
+	const furaRuntime = createFuraRpcRuntime(session, output);
 
 	// Shutdown request flag (wrapped in object to allow mutation with const)
 	const shutdownState = { requested: false };
@@ -1050,6 +1417,9 @@ export async function runRpcMode(
 	// Output all agent events as JSON
 	session.subscribe(event => {
 		output(event);
+		void furaRuntime.handleSessionEvent(event).catch(err => {
+			output(error(undefined, "resolve", err instanceof Error ? err.message : String(err)));
+		});
 	});
 
 	const getAvailableCommands = async () => buildAvailableSlashCommands(session);
@@ -1078,6 +1448,9 @@ export async function runRpcMode(
 	// Handle a single command
 	const handleCommand = async (command: RpcCommand): Promise<RpcResponse> => {
 		const id = command.id;
+
+		const furaResponse = await furaRuntime.handleCommand(command);
+		if (furaResponse) return furaResponse;
 
 		switch (command.type) {
 			case "negotiate_protocol": {
