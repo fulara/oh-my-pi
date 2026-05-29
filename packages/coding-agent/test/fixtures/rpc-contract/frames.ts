@@ -72,6 +72,11 @@ const planMode = {
 	reentry: false,
 } satisfies NonNullable<Extract<RpcResponse, { command: "set_plan_mode"; success: true }>["data"]["planMode"]>;
 
+const discussionPlanMode = {
+	...planMode,
+	discussion: true,
+} satisfies NonNullable<Extract<RpcResponse, { command: "discuss_plan_mode"; success: true }>["data"]["planMode"]>;
+
 const goalMode = {
 	enabled: true,
 	mode: "active",
@@ -565,7 +570,7 @@ export const rpcContractFixtures = [
 			type: "response",
 			command: "discuss_plan_mode",
 			success: true,
-			data: { planMode },
+			data: { planMode: discussionPlanMode },
 		} satisfies Extract<RpcResponse, { command: "discuss_plan_mode"; success: true }>,
 	},
 	{
