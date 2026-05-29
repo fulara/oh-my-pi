@@ -906,6 +906,7 @@ export function createFuraRpcRuntime(
 			planFilePath,
 			workflow: command.workflow ?? "parallel",
 			reentry: state.planHasEntered || previousPlanMode !== undefined,
+			discussion: false,
 		};
 		session.setPlanModeState(planMode);
 		session.setStandingResolveHandler?.(input => runRpcPlanApprovalResolve(input));
@@ -922,7 +923,9 @@ export function createFuraRpcRuntime(
 		if (!planMode?.enabled) {
 			return errorResponse(command.id, "discuss_plan_mode", "Plan mode is not active.");
 		}
-		return successResponse(command.id, "discuss_plan_mode", { planMode });
+		const discussionMode = { ...planMode, discussion: true };
+		session.setPlanModeState(discussionMode);
+		return successResponse(command.id, "discuss_plan_mode", { planMode: discussionMode });
 	};
 
 	const maybeRenameApprovedPlan = async (planFilePath: string, finalPlanFilePath: string): Promise<void> => {
@@ -1078,6 +1081,10 @@ export function createFuraRpcRuntime(
 		if (planContent === null) {
 			output(errorResponse(undefined, "resolve", `Plan file not found at ${details.planFilePath}`));
 			return;
+		}
+		const planMode = session.getPlanModeState();
+		if (planMode?.enabled && planMode.discussion) {
+			session.setPlanModeState({ ...planMode, discussion: false });
 		}
 		await session.abort();
 		output({

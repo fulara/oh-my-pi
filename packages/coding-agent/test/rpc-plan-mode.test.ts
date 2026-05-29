@@ -108,7 +108,12 @@ describe("Fura RPC plan-mode runtime", () => {
 			type: "response",
 			command: "discuss_plan_mode",
 			success: true,
-			data: { planMode: { enabled: true, planFilePath: "local://PLAN.md" } },
+			data: { planMode: { enabled: true, planFilePath: "local://PLAN.md", discussion: true } },
+		});
+		expect(session.getPlanModeState()).toMatchObject({
+			enabled: true,
+			planFilePath: "local://PLAN.md",
+			discussion: true,
 		});
 
 		const resolveHandler = session.peekStandingResolveHandler();
@@ -136,6 +141,11 @@ describe("Fura RPC plan-mode runtime", () => {
 			finalPlanFilePath: "local://Reviewed-Runtime-Plan.md",
 			title: "Reviewed-Runtime-Plan",
 			content: "# Runtime Plan\n\n- ship safely\n",
+		});
+		expect(session.getPlanModeState()).toMatchObject({
+			enabled: true,
+			planFilePath: "local://PLAN.md",
+			discussion: false,
 		});
 
 		const agentEnded = Promise.withResolvers<void>();
