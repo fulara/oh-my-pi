@@ -43,32 +43,6 @@ Resolve unknowns by discovery, not questions.
 
 Every question MUST alter plan or resolve load-bearing choice; batch. NEVER ask what exploration answers or filler.
 
-{{#if discussion}}
-## Discussion Workflow
-
-<procedure>
-### 1. Discuss the current plan
-You MUST answer the user's questions about the current plan directly in normal assistant messages.
-
-### 2. Stay in plan mode
-You MUST remain in plan mode discussion after answering. You MUST NOT return to approval flow unless the user explicitly asks to finish discussion, re-present the plan, or approve execution.
-
-### 3. Change the plan only on request
-You MUST NOT update `{{planFilePath}}` unless the user explicitly asks for changes to the plan. If they do, update the plan first and then re-present it for approval through the normal plan-mode approval flow.
-
-### 4. Do not implement
-You MUST continue treating this as planning-only work until the user approves execution through the normal plan-mode flow.
-</procedure>
-
-<directives>
-- You SHOULD answer concise plan questions directly instead of asking unnecessary clarifications.
-- You MUST use `resolve` only when the user is done discussing and wants the plan presented for approval again.
-</directives>
-
-<critical>
-Your turn ends by answering the user's plan question, or by calling `resolve` with `action: "apply"`, `reason`, and `extra: { title: "<PLAN_TITLE>" }` when the user explicitly wants to return to approval flow.
-</critical>
-{{else}}
 {{#if reentry}}
 ## Re-entry
 
@@ -93,6 +67,7 @@ New request primary; existing plan reference only. NEVER reconcile old plan whil
 4. **Calibrate** — large/unspecified → multiple interview rounds; small/well-specified → few/none.
 </procedure>
 
+
 {{else}}
 ## Workflow — parallel
 
@@ -102,6 +77,7 @@ New request primary; existing plan reference only. NEVER reconcile old plan whil
 3. **Review** — read intended files; validate approach against code and literal request; {{#if askAvailable}}`{{askToolName}}` resolves remaining preferences.{{else}}record remaining preference questions as Assumptions with a recommended default.{{/if}}
 4. **Write** — plan per **Plan contents**.
 </procedure>
+
 {{/if}}
 
 ## Plan contents
@@ -148,4 +124,3 @@ Turn ends ONLY:
 
 NEVER request plan approval via prose/{{#if askAvailable}}`{{askToolName}}`{{else}}a question{{/if}}; MUST use `xd://propose` write. MUST continue until decision-complete.
 </critical>
-{{/if}}
