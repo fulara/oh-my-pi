@@ -5,11 +5,6 @@
     "file": "command-approve-plan-mode.json"
   },
   {
-    "name": "command-discuss-plan-mode",
-    "category": "command",
-    "file": "command-discuss-plan-mode.json"
-  },
-  {
     "name": "command-fork",
     "category": "command",
     "file": "command-fork.json"
@@ -158,11 +153,6 @@
     "name": "response-approve-plan-mode",
     "category": "response",
     "file": "response-approve-plan-mode.json"
-  },
-  {
-    "name": "response-discuss-plan-mode",
-    "category": "response",
-    "file": "response-discuss-plan-mode.json"
   },
   {
     "name": "response-error",
