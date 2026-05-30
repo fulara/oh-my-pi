@@ -72,11 +72,6 @@ const planMode = {
 	reentry: false,
 } satisfies NonNullable<Extract<RpcResponse, { command: "set_plan_mode"; success: true }>["data"]["planMode"]>;
 
-const discussionPlanMode = {
-	...planMode,
-	discussion: true,
-} satisfies NonNullable<Extract<RpcResponse, { command: "discuss_plan_mode"; success: true }>["data"]["planMode"]>;
-
 const goalMode = {
 	enabled: true,
 	mode: "active",
@@ -211,14 +206,6 @@ export const rpcContractFixtures = [
 		} satisfies Extract<RpcCommand, { type: "approve_plan_mode" }>,
 	},
 	{
-		name: "command-discuss-plan-mode",
-		category: "command",
-		frame: { id: "cmd-plan-discuss-1", type: "discuss_plan_mode" } satisfies Extract<
-			RpcCommand,
-			{ type: "discuss_plan_mode" }
-		>,
-	},
-	{
 		name: "command-set-active-tools",
 		category: "command",
 		frame: {
@@ -266,7 +253,7 @@ export const rpcContractFixtures = [
 			id: "uri-write-1",
 			operation: "write",
 			url: "db://records/42",
-			content: "{\"status\":\"done\"}",
+			content: '{"status":"done"}',
 		} satisfies RpcHostUriRequest,
 	},
 	{
@@ -561,17 +548,6 @@ export const rpcContractFixtures = [
 				executionDispatched: true,
 			},
 		} satisfies Extract<RpcResponse, { command: "approve_plan_mode"; success: true }>,
-	},
-	{
-		name: "response-discuss-plan-mode",
-		category: "response",
-		frame: {
-			id: "rpc-plan-discuss-1",
-			type: "response",
-			command: "discuss_plan_mode",
-			success: true,
-			data: { planMode: discussionPlanMode },
-		} satisfies Extract<RpcResponse, { command: "discuss_plan_mode"; success: true }>,
 	},
 	{
 		name: "response-set-active-tools",

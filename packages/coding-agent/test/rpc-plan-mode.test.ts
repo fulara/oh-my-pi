@@ -7,10 +7,10 @@ import { Agent } from "@oh-my-pi/pi-agent-core";
 import { createMockModel } from "@oh-my-pi/pi-ai/providers/mock";
 import { ModelRegistry } from "@oh-my-pi/pi-coding-agent/config/model-registry";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
-import type { RpcPlanReviewEvent } from "@oh-my-pi/pi-coding-agent/modes/rpc/rpc-types";
 import { createFuraRpcRuntime, resolveRpcPlanPath } from "@oh-my-pi/pi-coding-agent/modes/rpc/rpc-mode";
-import { AuthStorage } from "@oh-my-pi/pi-coding-agent/session/auth-storage";
+import type { RpcPlanReviewEvent } from "@oh-my-pi/pi-coding-agent/modes/rpc/rpc-types";
 import { AgentSession } from "@oh-my-pi/pi-coding-agent/session/agent-session";
+import { AuthStorage } from "@oh-my-pi/pi-coding-agent/session/auth-storage";
 import { convertToLlm } from "@oh-my-pi/pi-coding-agent/session/messages";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
 import { createTools, type ToolSession } from "@oh-my-pi/pi-coding-agent/tools";
@@ -78,7 +78,7 @@ async function writeLocalPlan(session: AgentSession, localUrl: string, content: 
 }
 
 describe("Fura RPC plan-mode runtime", () => {
-	it("enables, discusses, reviews, and approves a plan while preserving context", async () => {
+	it("enables, reviews, and approves a plan while preserving context", async () => {
 		const session = await createSession();
 		await session.setActiveToolsByName(["read"]);
 		await writeLocalPlan(session, "local://PLAN.md", "# Runtime Plan\n\n- ship safely\n");
@@ -101,20 +101,6 @@ describe("Fura RPC plan-mode runtime", () => {
 		});
 		expect(session.getPlanModeState()).toMatchObject({ enabled: true, planFilePath: "local://PLAN.md" });
 		expect(session.getActiveToolNames()).toEqual(["read", "resolve"]);
-
-		const discussion = await runtime.handleCommand({ id: "discuss", type: "discuss_plan_mode" });
-		expect(discussion).toMatchObject({
-			id: "discuss",
-			type: "response",
-			command: "discuss_plan_mode",
-			success: true,
-			data: { planMode: { enabled: true, planFilePath: "local://PLAN.md", discussion: true } },
-		});
-		expect(session.getPlanModeState()).toMatchObject({
-			enabled: true,
-			planFilePath: "local://PLAN.md",
-			discussion: true,
-		});
 
 		const resolveHandler = session.peekStandingResolveHandler();
 		expect(resolveHandler).toBeFunction();
@@ -141,11 +127,6 @@ describe("Fura RPC plan-mode runtime", () => {
 			finalPlanFilePath: "local://Reviewed-Runtime-Plan.md",
 			title: "Reviewed-Runtime-Plan",
 			content: "# Runtime Plan\n\n- ship safely\n",
-		});
-		expect(session.getPlanModeState()).toMatchObject({
-			enabled: true,
-			planFilePath: "local://PLAN.md",
-			discussion: false,
 		});
 
 		const agentEnded = Promise.withResolvers<void>();
@@ -191,20 +172,5 @@ describe("Fura RPC plan-mode runtime", () => {
 			"# Runtime Plan\n\n- ship safely\n",
 		);
 		expect(JSON.stringify(session.messages)).toContain("Plan approved. You MUST execute it now.");
-	});
-
-	it("rejects discussion when plan mode is not active", async () => {
-		const session = await createSession();
-		const runtime = createFuraRpcRuntime(session);
-
-		const response = await runtime.handleCommand({ id: "discuss-missing", type: "discuss_plan_mode" });
-
-		expect(response).toEqual({
-			id: "discuss-missing",
-			type: "response",
-			command: "discuss_plan_mode",
-			success: false,
-			error: "Plan mode is not active.",
-		});
 	});
 });
