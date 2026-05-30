@@ -46,7 +46,8 @@ async function createSession(): Promise<AgentSession> {
 	} as ToolSession;
 	const tools = await createTools(toolSession, ["read"]);
 	const goalTool = await HIDDEN_TOOLS.goal(toolSession);
-	for (const tool of [...tools, goalTool].filter((tool): tool is AgentTool => tool !== null)) toolRegistry.set(tool.name, tool);
+	for (const tool of [...tools, goalTool].filter((tool): tool is AgentTool => tool !== null))
+		toolRegistry.set(tool.name, tool);
 
 	const model = createMockModel({ responses: [{ content: ["ok"] }] });
 	const agent = new Agent({

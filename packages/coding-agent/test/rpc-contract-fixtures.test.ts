@@ -33,7 +33,6 @@ const requiredFixtureNames = [
 	"extension-ui-request-confirm",
 	"response-set-plan-mode",
 	"response-approve-plan-mode",
-	"response-discuss-plan-mode",
 	"response-set-active-tools",
 	"response-goal-mode",
 ] as const;
