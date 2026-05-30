@@ -65,7 +65,6 @@ export type RpcCommand =
 			preserveContext?: boolean;
 			compactBeforeExecute?: boolean;
 	  }
-	| { id?: string; type: "discuss_plan_mode" }
 	| { id?: string; type: "set_host_tools"; tools: RpcHostToolDefinition[] }
 	| { id?: string; type: "set_active_tools"; toolNames: string[] }
 	| { id?: string; type: "set_host_uri_schemes"; schemes: RpcHostUriSchemeDefinition[] }
@@ -269,7 +268,13 @@ export type RpcResponse =
 			data: { commands: RpcAvailableSlashCommand[] };
 	  }
 	| { id?: string; type: "response"; command: "set_todos"; success: true; data: { todoPhases: TodoPhase[] } }
-	| { id?: string; type: "response"; command: "set_plan_mode"; success: true; data: { planMode: PlanModeState | null } }
+	| {
+			id?: string;
+			type: "response";
+			command: "set_plan_mode";
+			success: true;
+			data: { planMode: PlanModeState | null };
+	  }
 	| {
 			id?: string;
 			type: "response";
@@ -282,7 +287,6 @@ export type RpcResponse =
 				executionDispatched: boolean;
 			};
 	  }
-	| { id?: string; type: "response"; command: "discuss_plan_mode"; success: true; data: { planMode: PlanModeState } }
 	| { id?: string; type: "response"; command: "set_host_tools"; success: true; data: { toolNames: string[] } }
 	| { id?: string; type: "response"; command: "set_active_tools"; success: true; data: { toolNames: string[] } }
 	| { id?: string; type: "response"; command: "set_host_uri_schemes"; success: true; data: { schemes: string[] } }
