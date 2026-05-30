@@ -7153,7 +7153,6 @@ export class AgentSession implements SettingsScope {
 			isHashlineEditMode: this.#resolveActiveEditMode() === "hashline",
 			reentry: state.reentry ?? false,
 			iterative: state.workflow === "iterative",
-			discussion: state.discussion ?? false,
 			scoutAvailable: this.#isScoutAvailable(),
 		});
 
