@@ -31,6 +31,7 @@
         "cost": {
           "input": 0.00036,
           "output": 0.000675,
+          "reasoning": 0,
           "cacheRead": 0.00003,
           "cacheWrite": 0.000075,
           "total": 0.00114

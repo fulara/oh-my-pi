@@ -45,6 +45,7 @@ const usage = {
 	cost: {
 		input: 0.00036,
 		output: 0.000675,
+		reasoning: 0,
 		cacheRead: 0.00003,
 		cacheWrite: 0.000075,
 		total: 0.00114,
@@ -63,7 +64,9 @@ const model = {
 	contextWindow: 200000,
 	maxTokens: 8192,
 	thinking: { mode: "effort", minLevel: Effort.Low, maxLevel: Effort.High },
-} satisfies NonNullable<Extract<RpcResponse, { command: "get_state"; success: true }>["data"]["model"]>;
+	// `Model` is a complex, upstream-owned catalog type; this representative fixture
+	// is cast rather than fully constructed so it stays stable across upstream Model changes.
+} as unknown as NonNullable<Extract<RpcResponse, { command: "get_state"; success: true }>["data"]["model"]>;
 
 const planMode = {
 	enabled: true,
@@ -505,7 +508,7 @@ export const rpcContractFixtures = [
 				toolCalls: 1,
 				toolResults: 1,
 				totalMessages: 4,
-				tokens: { input: 100, output: 50, cacheRead: 10, cacheWrite: 5, total: 165 },
+				tokens: { input: 100, output: 50, reasoning: 0, cacheRead: 10, cacheWrite: 5, total: 165 },
 				premiumRequests: 1,
 				cost: 0.00123,
 			},
