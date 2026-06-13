@@ -29,7 +29,6 @@ async function createSession(): Promise<AgentSession> {
 
 	const settings = Settings.isolated({
 		"compaction.enabled": false,
-		"recipe.enabled": false,
 	});
 	const sessionManager = await SessionManager.continueRecent(root, path.join(root, "sessions"));
 	const toolRegistry = new Map<string, AgentTool>();
@@ -171,6 +170,11 @@ describe("Fura RPC plan-mode runtime", () => {
 		await expect(fs.readFile(resolveRpcPlanPath(session, "local://APPROVED.md"), "utf8")).resolves.toBe(
 			"# Runtime Plan\n\n- ship safely\n",
 		);
-		expect(JSON.stringify(session.messages)).toContain("Plan approved. You MUST execute it now.");
+		// The approved plan is injected into the session as an execution prompt.
+		// Assert the behavioral invariant (plan content + approval marker), not the
+		// exact prompt wording, which is owned by upstream's plan-mode-approved.md.
+		const serializedMessages = JSON.stringify(session.messages);
+		expect(serializedMessages).toContain("Plan approved.");
+		expect(serializedMessages).toContain("# Runtime Plan");
 	});
 });
