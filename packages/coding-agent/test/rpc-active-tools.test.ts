@@ -23,7 +23,6 @@ async function createSession(toolNames: string[]): Promise<AgentSession> {
 
 	const settings = Settings.isolated({
 		"compaction.enabled": false,
-		"recipe.enabled": false,
 	});
 	const sessionManager = await SessionManager.continueRecent(root, path.join(root, "sessions"));
 	const toolRegistry = new Map<string, AgentTool>();
