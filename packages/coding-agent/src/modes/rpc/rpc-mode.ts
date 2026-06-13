@@ -717,10 +717,14 @@ export async function readRpcPlanFile(session: AgentSession, planFilePath: strin
 	}
 }
 
+interface RpcPlanApprovalDetails extends PlanApprovalDetails {
+	finalPlanFilePath: string;
+}
+
 export async function buildRpcPlanApprovalDetails(
 	session: AgentSession,
 	input: { planFilePath: string; suppliedTitle?: unknown; finalPlanFilePath?: string },
-): Promise<PlanApprovalDetails & { content: string }> {
+): Promise<RpcPlanApprovalDetails & { content: string }> {
 	const content = await readRpcPlanFile(session, input.planFilePath);
 	if (content === null) {
 		throw new ToolError(
@@ -751,7 +755,7 @@ function isBlockingGoalModeState(session: AgentSession): boolean {
 	return goalMode.goal.status !== "complete" && goalMode.goal.status !== "dropped";
 }
 
-function extractRpcPlanReviewDetails(result: unknown): PlanApprovalDetails | undefined {
+function extractRpcPlanReviewDetails(result: unknown): RpcPlanApprovalDetails | undefined {
 	const details =
 		typeof result === "object" && result !== null ? (result as { details?: unknown }).details : undefined;
 	if (typeof details !== "object" || details === null) return undefined;
@@ -759,7 +763,7 @@ function extractRpcPlanReviewDetails(result: unknown): PlanApprovalDetails | und
 	const resolveDetails = details as ResolveToolDetails;
 	if (resolveDetails.sourceToolName !== "plan_approval" || resolveDetails.action !== "apply") return undefined;
 
-	const sourceDetails = resolveDetails.sourceResultDetails as PlanApprovalDetails | undefined;
+	const sourceDetails = resolveDetails.sourceResultDetails as RpcPlanApprovalDetails | undefined;
 	if (
 		typeof sourceDetails?.planFilePath !== "string" ||
 		typeof sourceDetails.finalPlanFilePath !== "string" ||
@@ -965,7 +969,7 @@ export function createFuraRpcRuntime(
 		const contextPreserved = command.preserveContext === true;
 		const compactBeforeExecute = contextPreserved && command.compactBeforeExecute === true;
 		if (compactBeforeExecute) {
-			session.markPlanCompactAbortPending();
+			session.markPlanInternalAbortPending();
 		}
 
 		let compactionOutcome: "ok" | "cancelled" | "failed" | undefined;
@@ -1000,7 +1004,7 @@ export function createFuraRpcRuntime(
 				}
 			}
 		} finally {
-			session.clearPlanCompactAbortPending();
+			session.clearPlanInternalAbortPending();
 		}
 
 		await restorePlanTools();
