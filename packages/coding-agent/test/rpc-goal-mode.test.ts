@@ -24,7 +24,6 @@ async function createSession(): Promise<AgentSession> {
 	const settings = Settings.isolated({
 		"compaction.enabled": false,
 		"goal.enabled": true,
-		"recipe.enabled": false,
 	});
 	const sessionManager = await SessionManager.continueRecent(root, path.join(root, "sessions"));
 	const toolRegistry = new Map<string, AgentTool>();
