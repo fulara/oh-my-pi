@@ -956,6 +956,11 @@ export function createFuraRpcRuntime(
 			finalPlanFilePath: command.finalPlanFilePath,
 		});
 		const { content: planContent, finalPlanFilePath } = details;
+		const previousTools = state.planPreviousTools ?? session.getActiveToolNames();
+		// Approved-plan prompts read the durable local:// plan file instead of
+		// embedding the plan inline, so execution must keep `read` available even
+		// when the pre-plan active tool set omitted it.
+		const executionTools = previousTools.includes("read") ? previousTools : [...previousTools, "read"];
 
 		await maybeRenameApprovedPlan(planFilePath, finalPlanFilePath);
 
@@ -1000,7 +1005,8 @@ export function createFuraRpcRuntime(
 			session.clearPlanInternalAbortPending();
 		}
 
-		await restorePlanTools();
+		await session.setActiveToolsByName(executionTools);
+		state.planPreviousTools = undefined;
 		session.setStandingResolveHandler?.(null);
 		session.setPlanModeState(undefined);
 		session.setPlanReferencePath(finalPlanFilePath);
