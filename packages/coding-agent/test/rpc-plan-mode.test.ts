@@ -177,4 +177,54 @@ describe("Fura RPC plan-mode runtime", () => {
 		expect(serializedMessages).toContain("Plan approved.");
 		expect(serializedMessages).toContain("local://APPROVED.md");
 	});
+
+	it("keeps read active for approved plan execution when pre-plan tools omitted it", async () => {
+		const session = await createSession();
+		await session.setActiveToolsByName(["resolve"]);
+		expect(session.getActiveToolNames()).not.toContain("read");
+		await writeLocalPlan(session, "local://PLAN.md", "# Runtime Plan\n\n- execute from disk\n");
+
+		const runtime = createFuraRpcRuntime(session, () => {});
+		const enabled = await runtime.handleCommand({
+			id: "plan-on-no-read",
+			type: "set_plan_mode",
+			enabled: true,
+		});
+		expect(enabled).toMatchObject({
+			id: "plan-on-no-read",
+			type: "response",
+			command: "set_plan_mode",
+			success: true,
+		});
+
+		const agentEnded = Promise.withResolvers<void>();
+		const unsubscribe = session.subscribe(event => {
+			if (event.type === "agent_end") {
+				unsubscribe();
+				agentEnded.resolve();
+			}
+		});
+
+		const approved = await runtime.handleCommand({
+			id: "approve-no-read",
+			type: "approve_plan_mode",
+			finalPlanFilePath: "local://APPROVED-NO-READ.md",
+			preserveContext: true,
+			compactBeforeExecute: false,
+		});
+		expect(approved).toEqual({
+			id: "approve-no-read",
+			type: "response",
+			command: "approve_plan_mode",
+			success: true,
+			data: {
+				finalPlanFilePath: "local://APPROVED-NO-READ.md",
+				contextPreserved: true,
+				executionDispatched: true,
+			},
+		});
+		await agentEnded.promise;
+
+		expect(session.getActiveToolNames()).toContain("read");
+	});
 });
