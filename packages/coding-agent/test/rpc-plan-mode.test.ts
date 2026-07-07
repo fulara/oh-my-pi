@@ -170,11 +170,11 @@ describe("Fura RPC plan-mode runtime", () => {
 		await expect(fs.readFile(resolveRpcPlanPath(session, "local://APPROVED.md"), "utf8")).resolves.toBe(
 			"# Runtime Plan\n\n- ship safely\n",
 		);
-		// The approved plan is injected into the session as an execution prompt.
-		// Assert the behavioral invariant (plan content + approval marker), not the
-		// exact prompt wording, which is owned by upstream's plan-mode-approved.md.
+		// The approved plan content must be persisted to the final local file above.
+		// Upstream's execution prompt reads that file by path instead of embedding the
+		// plan inline, so assert the durable prompt contract: approval marker + path.
 		const serializedMessages = JSON.stringify(session.messages);
 		expect(serializedMessages).toContain("Plan approved.");
-		expect(serializedMessages).toContain("# Runtime Plan");
+		expect(serializedMessages).toContain("local://APPROVED.md");
 	});
 });
