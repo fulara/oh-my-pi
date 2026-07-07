@@ -963,6 +963,7 @@ export function createFuraRpcRuntime(
 
 		session.markPlanReferenceSent();
 		const planModePrompt = prompt.render(planModeApprovedPrompt, {
+			planFilePath: finalPlanFilePath,
 			planContent,
 			finalPlanFilePath,
 			contextPreserved,
