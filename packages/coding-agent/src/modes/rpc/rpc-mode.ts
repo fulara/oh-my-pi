@@ -47,7 +47,7 @@ import { executeAcpBuiltinSlashCommand } from "../../slash-commands/acp-builtins
 import { buildAvailableSlashCommands } from "../../slash-commands/available-commands";
 import { defaultLoadModeForToolName } from "../../tools/essential-tools";
 import { normalizeLocalScheme, resolveToCwd } from "../../tools/path-utils";
-import { type ResolveToolDetails, runResolveInvocation } from "../../tools/resolve";
+import { PROPOSE_DEVICE_NAME, writeDeviceDispatch } from "../../tools/resolve";
 import { ToolError } from "../../tools/tool-errors";
 import type { EventBus } from "../../utils/event-bus";
 import { calculateTokensPerSecond } from "../../utils/token-rate";
@@ -748,23 +748,43 @@ function isBlockingGoalModeState(session: AgentSession): boolean {
 	return goalMode.goal.status !== "complete" && goalMode.goal.status !== "dropped";
 }
 
-function extractRpcPlanReviewDetails(result: unknown): RpcPlanApprovalDetails | undefined {
-	const details =
-		typeof result === "object" && result !== null ? (result as { details?: unknown }).details : undefined;
-	if (typeof details !== "object" || details === null) return undefined;
+function extractRpcPlanReviewDetails(toolName: string, result: unknown): RpcPlanApprovalDetails | undefined {
+	let directDetails: unknown;
+	if (result !== null && typeof result === "object" && "details" in result) {
+		directDetails = result.details;
+	}
 
-	const resolveDetails = details as ResolveToolDetails;
-	if (resolveDetails.sourceToolName !== "plan_approval" || resolveDetails.action !== "apply") return undefined;
-
-	const sourceDetails = resolveDetails.sourceResultDetails as RpcPlanApprovalDetails | undefined;
+	const dispatch = writeDeviceDispatch(toolName, result);
+	const candidateDetails = dispatch?.tool === PROPOSE_DEVICE_NAME ? dispatch.inner : directDetails;
+	if (typeof candidateDetails !== "object" || candidateDetails === null) return undefined;
 	if (
-		typeof sourceDetails?.planFilePath !== "string" ||
+		!("sourceToolName" in candidateDetails) ||
+		!("action" in candidateDetails) ||
+		!("sourceResultDetails" in candidateDetails) ||
+		candidateDetails.sourceToolName !== "plan_approval" ||
+		candidateDetails.action !== "apply"
+	) {
+		return undefined;
+	}
+
+	const sourceDetails = candidateDetails.sourceResultDetails;
+	if (typeof sourceDetails !== "object" || sourceDetails === null) return undefined;
+	if (
+		!("planFilePath" in sourceDetails) ||
+		!("finalPlanFilePath" in sourceDetails) ||
+		!("title" in sourceDetails) ||
+		typeof sourceDetails.planFilePath !== "string" ||
 		typeof sourceDetails.finalPlanFilePath !== "string" ||
 		typeof sourceDetails.title !== "string"
 	) {
 		return undefined;
 	}
-	return sourceDetails;
+	return {
+		planFilePath: sourceDetails.planFilePath,
+		finalPlanFilePath: sourceDetails.finalPlanFilePath,
+		title: sourceDetails.title,
+		planExists: "planExists" in sourceDetails && sourceDetails.planExists === true,
+	};
 }
 
 export function createFuraRpcRuntime(
@@ -857,38 +877,38 @@ export function createFuraRpcRuntime(
 	const exitPlanMode = async (): Promise<null> => {
 		if (session.getPlanModeState()?.enabled) {
 			await restorePlanTools();
-			session.setStandingResolveHandler?.(null);
+			session.setPlanProposalHandler(null);
 			session.setPlanModeState(undefined);
 			session.sessionManager.appendModeChange("none");
 		}
 		return null;
 	};
 
-	const runRpcPlanApprovalResolve = (input: unknown): Promise<AgentToolResult<ResolveToolDetails>> =>
-		runResolveInvocation(input as Parameters<typeof runResolveInvocation>[0], {
-			sourceToolName: "plan_approval",
-			label: "Plan ready for approval",
-			apply: async (_reason, extra) => {
-				const planMode = session.getPlanModeState();
-				if (!planMode?.enabled) {
-					throw new ToolError("Plan mode is not active.");
-				}
-				const details = await buildRpcPlanApprovalDetails(session, {
-					planFilePath: planMode.planFilePath,
-					suppliedTitle: extra?.title,
-				});
-				return {
-					content: [{ type: "text" as const, text: "Plan ready for approval." }],
-					details: {
-						planFilePath: details.planFilePath,
-						finalPlanFilePath: details.finalPlanFilePath,
-						title: details.title,
-						planExists: details.planExists,
-					},
-				};
-			},
+	const handleRpcPlanProposal = async (title: string): Promise<AgentToolResult<unknown>> => {
+		const planMode = session.getPlanModeState();
+		if (!planMode?.enabled) {
+			throw new ToolError("Plan mode is not active.");
+		}
+		const details = await buildRpcPlanApprovalDetails(session, {
+			planFilePath: planMode.planFilePath,
+			suppliedTitle: title,
 		});
-
+		return {
+			content: [{ type: "text" as const, text: "Plan ready for approval." }],
+			details: {
+				action: "apply",
+				reason: title,
+				sourceToolName: "plan_approval",
+				label: "Plan ready for approval",
+				sourceResultDetails: {
+					planFilePath: details.planFilePath,
+					finalPlanFilePath: details.finalPlanFilePath,
+					title: details.title,
+					planExists: details.planExists,
+				},
+			},
+		};
+	};
 	const enterPlanMode = async (command: Extract<RpcCommand, { type: "set_plan_mode" }>): Promise<RpcResponse> => {
 		if (isBlockingGoalModeState(session)) {
 			return errorResponse(command.id, "set_plan_mode", "Exit goal mode first.");
@@ -901,8 +921,8 @@ export function createFuraRpcRuntime(
 		}
 
 		const previousTools = state.planPreviousTools ?? session.getActiveToolNames();
-		const hasResolveTool = session.getToolByName("resolve") !== undefined;
-		const activeTools = hasResolveTool ? [...previousTools, "resolve"] : previousTools;
+		const hasWriteTool = session.getToolByName("write") !== undefined;
+		const activeTools = hasWriteTool ? [...previousTools, "write"] : previousTools;
 		await session.setActiveToolsByName([...new Set(activeTools)]);
 
 		const planMode = {
@@ -912,7 +932,7 @@ export function createFuraRpcRuntime(
 			reentry: state.planHasEntered || previousPlanMode !== undefined,
 		};
 		session.setPlanModeState(planMode);
-		session.setStandingResolveHandler?.(input => runRpcPlanApprovalResolve(input));
+		session.setPlanProposalHandler(title => handleRpcPlanProposal(title));
 		if (session.isStreaming) {
 			await session.sendPlanModeContext({ deliverAs: "steer" });
 		}
@@ -1007,7 +1027,7 @@ export function createFuraRpcRuntime(
 
 		await session.setActiveToolsByName(executionTools);
 		state.planPreviousTools = undefined;
-		session.setStandingResolveHandler?.(null);
+		session.setPlanProposalHandler(null);
 		session.setPlanModeState(undefined);
 		session.setPlanReferencePath(finalPlanFilePath);
 
@@ -1070,8 +1090,8 @@ export function createFuraRpcRuntime(
 	};
 
 	const handleSessionEvent = async (event: AgentSessionEvent): Promise<void> => {
-		if (event.type !== "tool_execution_end" || event.toolName !== "resolve" || event.isError) return;
-		const details = extractRpcPlanReviewDetails(event.result);
+		if (event.type !== "tool_execution_end" || event.isError) return;
+		const details = extractRpcPlanReviewDetails(event.toolName, event.result);
 		if (!details) return;
 
 		const planContent = await readRpcPlanFile(session, details.planFilePath);

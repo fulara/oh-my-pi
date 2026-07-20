@@ -14,7 +14,6 @@ import { AuthStorage } from "@oh-my-pi/pi-coding-agent/session/auth-storage";
 import { convertToLlm } from "@oh-my-pi/pi-coding-agent/session/messages";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
 import { createTools, type ToolSession } from "@oh-my-pi/pi-coding-agent/tools";
-
 const cleanupRoots: string[] = [];
 const cleanupFns: Array<() => void> = [];
 
@@ -47,7 +46,7 @@ async function createSession(): Promise<AgentSession> {
 		getGoalModeState: () => session?.getGoalModeState(),
 		getToolByName: name => toolRegistry.get(name),
 	} as ToolSession;
-	const tools = await createTools(toolSession, ["read", "resolve"]);
+	const tools = await createTools(toolSession, ["read", "write"]);
 	for (const tool of tools) toolRegistry.set(tool.name, tool);
 
 	const model = createMockModel({ responses: [{ content: ["approved execution"] }] });
@@ -99,21 +98,18 @@ describe("Fura RPC plan-mode runtime", () => {
 			data: { planMode: { enabled: true, planFilePath: "local://PLAN.md", workflow: "parallel" } },
 		});
 		expect(session.getPlanModeState()).toMatchObject({ enabled: true, planFilePath: "local://PLAN.md" });
-		expect(session.getActiveToolNames()).toEqual(["read", "resolve"]);
+		expect(session.getActiveToolNames()).toEqual(["read", "write"]);
 
-		const resolveHandler = session.peekStandingResolveHandler();
-		expect(resolveHandler).toBeFunction();
-		const resolveResult = await resolveHandler?.({
-			action: "apply",
-			reason: "ready",
-			extra: { title: "Reviewed Runtime Plan" },
-		});
+		const proposalHandler = session.peekPlanProposalHandler();
+		expect(proposalHandler).toBeFunction();
+		if (!proposalHandler) throw new Error("plan proposal handler was not registered");
+		const proposalResult = await proposalHandler("Reviewed Runtime Plan");
 		await runtime.handleSessionEvent({
 			type: "tool_execution_end",
-			toolCallId: "resolve-1",
-			toolName: "resolve",
+			toolCallId: "propose-1",
+			toolName: "write",
 			args: {},
-			result: resolveResult,
+			result: proposalResult,
 			isError: false,
 		} as AgentEvent);
 
