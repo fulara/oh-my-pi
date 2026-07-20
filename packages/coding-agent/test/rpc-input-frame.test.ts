@@ -301,11 +301,11 @@ describe("RpcInputDispatcher", () => {
 	test("ordinary commands stay serialized while first command is blocked", async () => {
 		const releaseFirst = Promise.withResolvers<void>();
 		const started: string[] = [];
-		const { deps, outputs } = makeDeps(async command => {
+		const { deps, outputs } = makeDeps(async (command): Promise<RpcResponse> => {
 			started.push(command.type);
 			if (command.type === "abort_retry") {
 				await releaseFirst.promise;
-				return { id: command.id, type: "response", command: "abort_retry", success: true };
+				return { id: command.id, type: "response", command: "abort_retry", success: true } satisfies RpcResponse;
 			}
 			if (command.type === "get_state") {
 				return {
@@ -330,8 +330,10 @@ describe("RpcInputDispatcher", () => {
 						hasPendingAsyncWork: false,
 						isSettled: true,
 						todoPhases: [],
+						planMode: null,
+						goalMode: null,
 					},
-				};
+				} satisfies RpcResponse;
 			}
 			throw new Error(`unexpected command type: ${command.type}`);
 		});
