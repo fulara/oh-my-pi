@@ -1,0 +1,27 @@
+{
+  "type": "goal_updated",
+  "goal": {
+    "id": "goal-1",
+    "objective": "Ship goal-mode projection",
+    "status": "active",
+    "tokenBudget": 50000,
+    "tokensUsed": 1200,
+    "timeUsedSeconds": 90,
+    "createdAt": 1770000000000,
+    "updatedAt": 1770000009000
+  },
+  "state": {
+    "enabled": true,
+    "mode": "active",
+    "goal": {
+      "id": "goal-1",
+      "objective": "Ship goal-mode projection",
+      "status": "active",
+      "tokenBudget": 50000,
+      "tokensUsed": 1200,
+      "timeUsedSeconds": 90,
+      "createdAt": 1770000000000,
+      "updatedAt": 1770000009000
+    }
+  }
+}
