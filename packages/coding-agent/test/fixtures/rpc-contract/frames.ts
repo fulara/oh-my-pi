@@ -11,12 +11,11 @@ import type {
 	RpcHostUriRequest,
 	RpcHostUriResult,
 	RpcPlanReviewEvent,
+	RpcReadyFrame,
 	RpcResponse,
 } from "../../../src/modes/rpc/rpc-types";
-
-type ReadyFrame = { type: "ready" };
 type RpcContractFrame =
-	| ReadyFrame
+	| RpcReadyFrame
 	| RpcCommand
 	| RpcResponse
 	| AgentEvent
@@ -161,7 +160,13 @@ export const rpcContractFixtures = [
 	{
 		name: "ready",
 		category: "lifecycle",
-		frame: { type: "ready" } satisfies ReadyFrame,
+		frame: {
+			type: "ready",
+			protocolVersion: 1,
+			supportedProtocolVersions: [1, 2],
+			maxFrameBytes: 1048576,
+			maxReassembledFrameBytes: 67108864,
+		} satisfies RpcReadyFrame,
 	},
 	{
 		name: "command-get-state",
