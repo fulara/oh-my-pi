@@ -1,0 +1,8 @@
+{
+  "id": "cmd-messages-page-stale-1",
+  "type": "response",
+  "command": "get_messages_page",
+  "success": false,
+  "error": "RPC message cursor is stale",
+  "code": "stale_cursor"
+}

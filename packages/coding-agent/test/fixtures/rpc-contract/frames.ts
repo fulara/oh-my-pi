@@ -1,7 +1,11 @@
 import type { AgentEvent, AgentToolResult } from "@oh-my-pi/pi-agent-core";
 import { Effort } from "@oh-my-pi/pi-ai";
+import type { AgentSessionEvent } from "../../../src/session/agent-session-events";
 import type {
 	RpcCommand,
+	RpcAvailableCommandsUpdateFrame,
+	RpcAvailableSlashCommand,
+	RpcChunkFrame,
 	RpcExtensionUIRequest,
 	RpcHostToolCallRequest,
 	RpcHostToolCancelRequest,
@@ -12,12 +16,18 @@ import type {
 	RpcHostUriResult,
 	RpcPlanReviewEvent,
 	RpcReadyFrame,
+	RpcPromptResultFrame,
 	RpcResponse,
+	RpcSessionState,
 } from "../../../src/modes/rpc/rpc-types";
 type RpcContractFrame =
 	| RpcReadyFrame
+	| RpcChunkFrame
 	| RpcCommand
 	| RpcResponse
+	| RpcAvailableCommandsUpdateFrame
+	| RpcPromptResultFrame
+	| Extract<AgentSessionEvent, { type: "goal_updated" }>
 	| AgentEvent
 	| RpcExtensionUIRequest
 	| RpcHostToolCallRequest
@@ -27,7 +37,21 @@ type RpcContractFrame =
 	| RpcHostUriRequest
 	| RpcHostUriCancelRequest
 	| RpcHostUriResult
-	| RpcPlanReviewEvent;
+	| RpcPlanReviewEvent
+	| RpcRuntimeUpdateFixtureFrame;
+
+type RpcRuntimeUpdateFixtureFrame =
+	| { type: "command_output"; text: string }
+	| {
+			type: "session_info_update";
+			title: RpcSessionState["sessionName"];
+			sessionId: RpcSessionState["sessionId"];
+	  }
+	| {
+			type: "config_update";
+			model: RpcSessionState["model"];
+			thinkingLevel: RpcSessionState["thinkingLevel"];
+	  };
 
 export type RpcContractFixture = {
 	name: string;
@@ -60,8 +84,8 @@ const model = {
 	reasoning: true,
 	input: ["text", "image"],
 	cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
-	contextWindow: 200000,
-	maxTokens: 8192,
+	contextWindow: null,
+	maxTokens: null,
 	thinking: { mode: "effort", minLevel: Effort.Low, maxLevel: Effort.High },
 	// `Model` is a complex, upstream-owned catalog type; this representative fixture
 	// is cast rather than fully constructed so it stays stable across upstream Model changes.
@@ -156,6 +180,66 @@ const toolResultMessage = {
 	timestamp: 1770000004000,
 } satisfies Extract<AgentEvent, { type: "message_end" }>["message"];
 
+const messagesPageResponse = {
+	id: "cmd-messages-page-1",
+	type: "response",
+	command: "get_messages_page",
+	success: true,
+	data: {
+		messages: [userMessage, assistantTextMessage],
+		nextCursor: "eyJ2ZXJzaW9uIjoxLCJvZmZzZXQiOjR9",
+		totalMessages: 4,
+	},
+} satisfies Extract<RpcResponse, { command: "get_messages_page"; success: true }>;
+
+const messagesPageResponseJson = JSON.stringify(messagesPageResponse);
+
+const availableCommands = [
+	{
+		name: "tools",
+		aliases: ["tool"],
+		description: "Manage active tools",
+		input: { hint: "list|enable|disable" },
+		subcommands: [
+			{
+				name: "list",
+				description: "List active tools",
+				usage: "/tools list",
+			},
+		],
+		source: "builtin",
+	},
+	{
+		name: "skill:develop-fura",
+		description: "Apply the Fura development skill",
+		input: { hint: "arguments" },
+		source: "skill",
+	},
+	{
+		name: "review",
+		description: "Run the extension review command",
+		input: { hint: "target" },
+		source: "extension",
+	},
+	{
+		name: "release-notes",
+		description: "Draft release notes",
+		input: { hint: "version" },
+		source: "custom",
+	},
+	{
+		name: "lookup-ticket",
+		description: "Load an MCP prompt",
+		input: { hint: "ticket-id" },
+		source: "mcp_prompt",
+	},
+	{
+		name: "project-status",
+		description: "Run a file-backed command",
+		source: "file",
+	},
+] satisfies RpcAvailableSlashCommand[];
+
 export const rpcContractFixtures = [
 	{
 		name: "ready",
@@ -167,6 +251,45 @@ export const rpcContractFixtures = [
 			maxFrameBytes: 1048576,
 			maxReassembledFrameBytes: 67108864,
 		} satisfies RpcReadyFrame,
+	},
+	{
+		name: "rpc-chunk",
+		category: "lifecycle",
+		frame: {
+			type: "rpc_chunk",
+			chunkId: "chunk-messages-page-1",
+			index: 0,
+			count: 1,
+			byteLength: Buffer.byteLength(messagesPageResponseJson, "utf8"),
+			data: Buffer.from(messagesPageResponseJson, "utf8").toString("base64"),
+		} satisfies RpcChunkFrame,
+	},
+	{
+		name: "command-negotiate-protocol",
+		category: "command",
+		frame: {
+			id: "cmd-negotiate-1",
+			type: "negotiate_protocol",
+			protocolVersion: 2,
+		} satisfies Extract<RpcCommand, { type: "negotiate_protocol" }>,
+	},
+	{
+		name: "command-get-messages-page",
+		category: "command",
+		frame: {
+			id: "cmd-messages-page-1",
+			type: "get_messages_page",
+			cursor: "eyJ2ZXJzaW9uIjoxLCJvZmZzZXQiOjJ9",
+			limit: 2,
+		} satisfies Extract<RpcCommand, { type: "get_messages_page" }>,
+	},
+	{
+		name: "command-get-available-commands",
+		category: "command",
+		frame: {
+			id: "cmd-available-commands-1",
+			type: "get_available_commands",
+		} satisfies Extract<RpcCommand, { type: "get_available_commands" }>,
 	},
 	{
 		name: "command-get-state",
@@ -445,6 +568,80 @@ export const rpcContractFixtures = [
 		} satisfies RpcPlanReviewEvent,
 	},
 	{
+		name: "available-commands-update",
+		category: "event",
+		frame: {
+			type: "available_commands_update",
+			commands: availableCommands,
+		} satisfies RpcAvailableCommandsUpdateFrame,
+	},
+	{
+		name: "prompt-result",
+		category: "event",
+		frame: {
+			type: "prompt_result",
+			id: "cmd-tools-1",
+			agentInvoked: false,
+		} satisfies RpcPromptResultFrame,
+	},
+	{
+		name: "command-output",
+		category: "event",
+		frame: {
+			type: "command_output",
+			text: "Active tools: read, todo, task",
+		} satisfies Extract<RpcRuntimeUpdateFixtureFrame, { type: "command_output" }>,
+	},
+	{
+		name: "session-info-update",
+		category: "event",
+		frame: {
+			type: "session_info_update",
+			title: "Fixture session renamed",
+			sessionId: "session-1",
+		} satisfies Extract<RpcRuntimeUpdateFixtureFrame, { type: "session_info_update" }>,
+	},
+	{
+		name: "config-update",
+		category: "event",
+		frame: {
+			type: "config_update",
+			model,
+			thinkingLevel: Effort.Medium,
+		} satisfies Extract<RpcRuntimeUpdateFixtureFrame, { type: "config_update" }>,
+	},
+	{
+		name: "event-goal-updated",
+		category: "event",
+		frame: {
+			type: "goal_updated",
+			goal: goalMode.goal,
+			state: goalMode,
+		} satisfies Extract<AgentSessionEvent, { type: "goal_updated" }>,
+	},
+	{
+		name: "response-negotiate-protocol",
+		category: "response",
+		frame: {
+			id: "cmd-negotiate-1",
+			type: "response",
+			command: "negotiate_protocol",
+			success: true,
+			data: { protocolVersion: 2 },
+		} satisfies Extract<RpcResponse, { command: "negotiate_protocol"; success: true }>,
+	},
+	{
+		name: "response-get-available-commands",
+		category: "response",
+		frame: {
+			id: "cmd-available-commands-1",
+			type: "response",
+			command: "get_available_commands",
+			success: true,
+			data: { commands: availableCommands },
+		} satisfies Extract<RpcResponse, { command: "get_available_commands"; success: true }>,
+	},
+	{
 		name: "response-get-state",
 		category: "response",
 		frame: {
@@ -466,7 +663,18 @@ export const rpcContractFixtures = [
 				autoCompactionEnabled: true,
 				messageCount: 4,
 				queuedMessageCount: 0,
-				todoPhases: [],
+				todoPhases: [
+					{
+						name: "Delivery",
+						tasks: [
+							{
+								content: "Wait for release approval",
+								status: "blocked",
+								blocker: "Release manager approval is pending",
+							},
+						],
+					},
+				],
 				planMode,
 				goalMode,
 				systemPrompt: ["You are a reliable coding agent."],
@@ -496,6 +704,35 @@ export const rpcContractFixtures = [
 			success: true,
 			data: { messages: [userMessage, toolCallAssistantMessage, toolResultMessage, assistantThinkingMessage] },
 		} satisfies Extract<RpcResponse, { command: "get_messages"; success: true }>,
+	},
+	{
+		name: "response-get-messages-page",
+		category: "response",
+		frame: messagesPageResponse,
+	},
+	{
+		name: "response-get-messages-page-session-busy",
+		category: "response",
+		frame: {
+			id: "cmd-messages-page-busy-1",
+			type: "response",
+			command: "get_messages_page",
+			success: false,
+			error: "Cannot page messages while the session is changing",
+			code: "session_busy",
+		} satisfies Extract<RpcResponse, { success: false }>,
+	},
+	{
+		name: "response-get-messages-page-stale-cursor",
+		category: "response",
+		frame: {
+			id: "cmd-messages-page-stale-1",
+			type: "response",
+			command: "get_messages_page",
+			success: false,
+			error: "RPC message cursor is stale",
+			code: "stale_cursor",
+		} satisfies Extract<RpcResponse, { success: false }>,
 	},
 	{
 		name: "response-get-session-stats",
