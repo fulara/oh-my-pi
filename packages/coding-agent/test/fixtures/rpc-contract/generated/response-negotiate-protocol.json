@@ -1,0 +1,9 @@
+{
+  "id": "cmd-negotiate-1",
+  "type": "response",
+  "command": "negotiate_protocol",
+  "success": true,
+  "data": {
+    "protocolVersion": 2
+  }
+}
