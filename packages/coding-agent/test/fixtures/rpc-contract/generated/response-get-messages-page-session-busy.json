@@ -1,0 +1,8 @@
+{
+  "id": "cmd-messages-page-busy-1",
+  "type": "response",
+  "command": "get_messages_page",
+  "success": false,
+  "error": "Cannot page messages while the session is changing",
+  "code": "session_busy"
+}
