@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { AgentEvent, AgentTool } from "@oh-my-pi/pi-agent-core";
 import { Agent } from "@oh-my-pi/pi-agent-core";
+import { type } from "arktype";
 import { createMockModel } from "@oh-my-pi/pi-ai/providers/mock";
 import { ModelRegistry } from "@oh-my-pi/pi-coding-agent/config/model-registry";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
@@ -14,6 +15,7 @@ import { AuthStorage } from "@oh-my-pi/pi-coding-agent/session/auth-storage";
 import { convertToLlm } from "@oh-my-pi/pi-coding-agent/session/messages";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
 import { createTools, type ToolSession } from "@oh-my-pi/pi-coding-agent/tools";
+import { XdevRegistry } from "@oh-my-pi/pi-coding-agent/tools/xdev";
 const cleanupRoots: string[] = [];
 const cleanupFns: Array<() => void> = [];
 
@@ -22,7 +24,7 @@ afterEach(async () => {
 	await Promise.all(cleanupRoots.splice(0).map(root => fs.rm(root, { recursive: true, force: true })));
 });
 
-async function createSession(): Promise<AgentSession> {
+async function createSession(extraTools: AgentTool[] = []): Promise<AgentSession> {
 	const root = await fs.mkdtemp(path.join(os.tmpdir(), "omp-rpc-plan-mode-"));
 	cleanupRoots.push(root);
 
@@ -47,7 +49,7 @@ async function createSession(): Promise<AgentSession> {
 		getToolByName: name => toolRegistry.get(name),
 	} as ToolSession;
 	const tools = await createTools(toolSession, ["read", "write"]);
-	for (const tool of tools) toolRegistry.set(tool.name, tool);
+	for (const tool of [...tools, ...extraTools]) toolRegistry.set(tool.name, tool);
 
 	const model = createMockModel({ responses: [{ content: ["approved execution"] }] });
 	const authStorage = await AuthStorage.create(path.join(root, "auth.db"));
@@ -65,7 +67,20 @@ async function createSession(): Promise<AgentSession> {
 		convertToLlm,
 		streamFn: model.stream,
 	});
-	session = new AgentSession({ agent, sessionManager, settings, modelRegistry, toolRegistry });
+	session = new AgentSession({
+		agent,
+		sessionManager,
+		settings,
+		modelRegistry,
+		toolRegistry,
+		...(extraTools.length > 0
+			? {
+					builtInToolNames: ["read", "write"],
+					xdevRegistry: new XdevRegistry(extraTools),
+					initialMountedXdevToolNames: extraTools.map(tool => tool.name),
+				}
+			: {}),
+	});
 	return session;
 }
 
@@ -73,6 +88,20 @@ async function writeLocalPlan(session: AgentSession, localUrl: string, content: 
 	const filePath = resolveRpcPlanPath(session, localUrl);
 	await fs.mkdir(path.dirname(filePath), { recursive: true });
 	await fs.writeFile(filePath, content);
+}
+
+function makeDiscoverableTool(name: string): AgentTool {
+	const tool: AgentTool & { loadMode?: "discoverable" } = {
+		name,
+		label: name,
+		description: `Fake ${name}`,
+		parameters: type({}),
+		loadMode: "discoverable",
+		async execute() {
+			return { content: [{ type: "text" as const, text: "ok" }] };
+		},
+	};
+	return tool;
 }
 
 describe("Fura RPC plan-mode runtime", () => {
@@ -222,5 +251,43 @@ describe("Fura RPC plan-mode runtime", () => {
 		await agentEnded.promise;
 
 		expect(session.getActiveToolNames()).toContain("read");
+	});
+
+	it("preserves mounted discoverable tools when leaving plan mode", async () => {
+		const session = await createSession([makeDiscoverableTool("report_issue")]);
+		await session.setActiveToolPresentation(["read", "report_issue"], ["report_issue"]);
+		expect(session.getActiveToolNames()).toEqual(["read", "write"]);
+		expect(session.getMountedXdevToolNames()).toContain("report_issue");
+
+		const runtime = createFuraRpcRuntime(session, () => {});
+		await runtime.handleCommand({ id: "plan-on-mounted", type: "set_plan_mode", enabled: true });
+		expect(session.getActiveToolNames()).toEqual(["read", "write"]);
+		expect(session.getMountedXdevToolNames()).toContain("report_issue");
+
+		await runtime.handleCommand({ id: "plan-off-mounted", type: "set_plan_mode", enabled: false });
+		expect(session.getActiveToolNames()).toEqual(["read", "write"]);
+		expect(session.getMountedXdevToolNames()).toContain("report_issue");
+	});
+
+	it("rejects RPC fork while a prompt is streaming", async () => {
+		let forkCalled = false;
+		const runtime = createFuraRpcRuntime({
+			isStreaming: true,
+			async fork() {
+				forkCalled = true;
+				return true;
+			},
+		} as unknown as AgentSession);
+
+		const response = await runtime.handleCommand({ id: "fork-busy", type: "fork" });
+
+		expect(response).toEqual({
+			id: "fork-busy",
+			type: "response",
+			command: "fork",
+			success: false,
+			error: "Cannot fork while a prompt is in progress.",
+		});
+		expect(forkCalled).toBe(false);
 	});
 });
