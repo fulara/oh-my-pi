@@ -21,8 +21,8 @@
         "cacheRead": 0.3,
         "cacheWrite": 3.75
       },
-      "contextWindow": 200000,
-      "maxTokens": 8192,
+      "contextWindow": null,
+      "maxTokens": null,
       "thinking": {
         "mode": "effort",
         "minLevel": "low",
@@ -41,7 +41,18 @@
     "autoCompactionEnabled": true,
     "messageCount": 4,
     "queuedMessageCount": 0,
-    "todoPhases": [],
+    "todoPhases": [
+      {
+        "name": "Delivery",
+        "tasks": [
+          {
+            "content": "Wait for release approval",
+            "status": "blocked",
+            "blocker": "Release manager approval is pending"
+          }
+        ]
+      }
+    ],
     "planMode": {
       "enabled": true,
       "planFilePath": "local://PLAN.md",

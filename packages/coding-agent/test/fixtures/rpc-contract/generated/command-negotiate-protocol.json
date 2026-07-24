@@ -1,0 +1,5 @@
+{
+  "id": "cmd-negotiate-1",
+  "type": "negotiate_protocol",
+  "protocolVersion": 2
+}

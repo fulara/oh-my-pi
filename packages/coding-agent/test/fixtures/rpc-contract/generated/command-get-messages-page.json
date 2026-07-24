@@ -1,0 +1,6 @@
+{
+  "id": "cmd-messages-page-1",
+  "type": "get_messages_page",
+  "cursor": "eyJ2ZXJzaW9uIjoxLCJvZmZzZXQiOjJ9",
+  "limit": 2
+}
