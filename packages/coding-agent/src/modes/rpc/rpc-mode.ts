@@ -1078,6 +1078,7 @@ export function requestRpcSelect(
 }
 export interface RpcFuraRuntimeState {
 	planPreviousTools?: string[];
+	planPreviousMountedTools?: string[];
 	planHasEntered: boolean;
 	goalPreviousTools?: string[];
 }
@@ -1198,6 +1199,7 @@ function extractRpcPlanReviewDetails(toolName: string, result: unknown): RpcPlan
 	};
 }
 
+
 export function createFuraRpcRuntime(
 	session: AgentSession,
 	output: RpcOutput = () => {},
@@ -1208,8 +1210,9 @@ export function createFuraRpcRuntime(
 } {
 	const restorePlanTools = async (): Promise<void> => {
 		if (state.planPreviousTools !== undefined) {
-			await session.setActiveToolsByName(state.planPreviousTools);
+			await session.setActiveToolPresentation(state.planPreviousTools, state.planPreviousMountedTools ?? []);
 			state.planPreviousTools = undefined;
+			state.planPreviousMountedTools = undefined;
 		}
 	};
 
@@ -1328,13 +1331,15 @@ export function createFuraRpcRuntime(
 		const planFilePath = command.planFilePath?.trim() || "local://PLAN.md";
 
 		if (!previousPlanMode?.enabled && state.planPreviousTools === undefined) {
-			state.planPreviousTools = session.getActiveToolNames();
+			state.planPreviousTools = session.getEnabledToolNames();
+			state.planPreviousMountedTools = session.getMountedXdevToolNames();
 		}
 
-		const previousTools = state.planPreviousTools ?? session.getActiveToolNames();
+		const previousTools = state.planPreviousTools ?? session.getEnabledToolNames();
+		const previousMountedTools = state.planPreviousMountedTools ?? session.getMountedXdevToolNames();
 		const hasWriteTool = session.getToolByName("write") !== undefined;
 		const activeTools = hasWriteTool ? [...previousTools, "write"] : previousTools;
-		await session.setActiveToolsByName([...new Set(activeTools)]);
+		await session.setActiveToolPresentation([...new Set(activeTools)], previousMountedTools);
 
 		const planMode = {
 			enabled: true,
@@ -1387,7 +1392,8 @@ export function createFuraRpcRuntime(
 			finalPlanFilePath: command.finalPlanFilePath,
 		});
 		const { content: planContent, finalPlanFilePath } = details;
-		const previousTools = state.planPreviousTools ?? session.getActiveToolNames();
+		const previousTools = state.planPreviousTools ?? session.getEnabledToolNames();
+		const previousMountedTools = state.planPreviousMountedTools ?? session.getMountedXdevToolNames();
 		// Approved-plan prompts read the durable local:// plan file instead of
 		// embedding the plan inline, so execution must keep `read` available even
 		// when the pre-plan active tool set omitted it.
@@ -1436,8 +1442,9 @@ export function createFuraRpcRuntime(
 			session.clearPlanInternalAbortPending();
 		}
 
-		await session.setActiveToolsByName(executionTools);
+		await session.setActiveToolPresentation(executionTools, previousMountedTools);
 		state.planPreviousTools = undefined;
+		state.planPreviousMountedTools = undefined;
 		session.setPlanProposalHandler(null);
 		session.setPlanModeState(undefined);
 		session.setPlanReferencePath(finalPlanFilePath);
@@ -1474,6 +1481,9 @@ export function createFuraRpcRuntime(
 		try {
 			switch (command.type) {
 				case "fork": {
+					if (session.isStreaming) {
+						return errorResponse(command.id, "fork", "Cannot fork while a prompt is in progress.");
+					}
 					const cancelled = !(await session.fork());
 					return successResponse(command.id, "fork", { cancelled });
 				}
