@@ -22,8 +22,8 @@
           "cacheRead": 0.3,
           "cacheWrite": 3.75
         },
-        "contextWindow": 200000,
-        "maxTokens": 8192,
+        "contextWindow": null,
+        "maxTokens": null,
         "thinking": {
           "mode": "effort",
           "minLevel": "low",
