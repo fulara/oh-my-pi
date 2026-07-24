@@ -1,0 +1,60 @@
+{
+  "type": "available_commands_update",
+  "commands": [
+    {
+      "name": "tools",
+      "aliases": [
+        "tool"
+      ],
+      "description": "Manage active tools",
+      "input": {
+        "hint": "list|enable|disable"
+      },
+      "subcommands": [
+        {
+          "name": "list",
+          "description": "List active tools",
+          "usage": "/tools list"
+        }
+      ],
+      "source": "builtin"
+    },
+    {
+      "name": "skill:develop-fura",
+      "description": "Apply the Fura development skill",
+      "input": {
+        "hint": "arguments"
+      },
+      "source": "skill"
+    },
+    {
+      "name": "review",
+      "description": "Run the extension review command",
+      "input": {
+        "hint": "target"
+      },
+      "source": "extension"
+    },
+    {
+      "name": "release-notes",
+      "description": "Draft release notes",
+      "input": {
+        "hint": "version"
+      },
+      "source": "custom"
+    },
+    {
+      "name": "lookup-ticket",
+      "description": "Load an MCP prompt",
+      "input": {
+        "hint": "ticket-id"
+      },
+      "source": "mcp_prompt"
+    },
+    {
+      "name": "project-status",
+      "description": "Run a file-backed command",
+      "source": "file"
+    }
+  ]
+}

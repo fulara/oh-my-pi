@@ -1,5 +1,10 @@
 [
   {
+    "name": "available-commands-update",
+    "category": "event",
+    "file": "available-commands-update.json"
+  },
+  {
     "name": "command-approve-plan-mode",
     "category": "command",
     "file": "command-approve-plan-mode.json"
@@ -8,6 +13,16 @@
     "name": "command-fork",
     "category": "command",
     "file": "command-fork.json"
+  },
+  {
+    "name": "command-get-available-commands",
+    "category": "command",
+    "file": "command-get-available-commands.json"
+  },
+  {
+    "name": "command-get-messages-page",
+    "category": "command",
+    "file": "command-get-messages-page.json"
   },
   {
     "name": "command-get-state",
@@ -25,6 +40,16 @@
     "file": "command-goal-mode-set-budget.json"
   },
   {
+    "name": "command-negotiate-protocol",
+    "category": "command",
+    "file": "command-negotiate-protocol.json"
+  },
+  {
+    "name": "command-output",
+    "category": "event",
+    "file": "command-output.json"
+  },
+  {
     "name": "command-set-active-tools",
     "category": "command",
     "file": "command-set-active-tools.json"
@@ -40,6 +65,11 @@
     "file": "command-set-plan-mode.json"
   },
   {
+    "name": "config-update",
+    "category": "event",
+    "file": "config-update.json"
+  },
+  {
     "name": "event-agent-end",
     "category": "event",
     "file": "event-agent-end.json"
@@ -48,6 +78,11 @@
     "name": "event-agent-start",
     "category": "event",
     "file": "event-agent-start.json"
+  },
+  {
+    "name": "event-goal-updated",
+    "category": "event",
+    "file": "event-goal-updated.json"
   },
   {
     "name": "event-message-end-text",
@@ -145,6 +180,11 @@
     "file": "host-uri-result-success.json"
   },
   {
+    "name": "prompt-result",
+    "category": "event",
+    "file": "prompt-result.json"
+  },
+  {
     "name": "ready",
     "category": "lifecycle",
     "file": "ready.json"
@@ -165,6 +205,11 @@
     "file": "response-fork.json"
   },
   {
+    "name": "response-get-available-commands",
+    "category": "response",
+    "file": "response-get-available-commands.json"
+  },
+  {
     "name": "response-get-available-models",
     "category": "response",
     "file": "response-get-available-models.json"
@@ -173,6 +218,21 @@
     "name": "response-get-messages",
     "category": "response",
     "file": "response-get-messages.json"
+  },
+  {
+    "name": "response-get-messages-page",
+    "category": "response",
+    "file": "response-get-messages-page.json"
+  },
+  {
+    "name": "response-get-messages-page-session-busy",
+    "category": "response",
+    "file": "response-get-messages-page-session-busy.json"
+  },
+  {
+    "name": "response-get-messages-page-stale-cursor",
+    "category": "response",
+    "file": "response-get-messages-page-stale-cursor.json"
   },
   {
     "name": "response-get-session-stats",
@@ -190,6 +250,11 @@
     "file": "response-goal-mode.json"
   },
   {
+    "name": "response-negotiate-protocol",
+    "category": "response",
+    "file": "response-negotiate-protocol.json"
+  },
+  {
     "name": "response-set-active-tools",
     "category": "response",
     "file": "response-set-active-tools.json"
@@ -198,5 +263,15 @@
     "name": "response-set-plan-mode",
     "category": "response",
     "file": "response-set-plan-mode.json"
+  },
+  {
+    "name": "rpc-chunk",
+    "category": "lifecycle",
+    "file": "rpc-chunk.json"
+  },
+  {
+    "name": "session-info-update",
+    "category": "event",
+    "file": "session-info-update.json"
   }
 ]
