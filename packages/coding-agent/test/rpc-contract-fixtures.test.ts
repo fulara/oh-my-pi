@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { Effort } from "@oh-my-pi/pi-ai";
 import * as path from "node:path";
+import { Effort } from "@oh-my-pi/pi-ai";
 import { rpcContractFixtures } from "./fixtures/rpc-contract/frames";
 
 const requiredFixtureNames = [
@@ -16,6 +16,19 @@ const requiredFixtureNames = [
 	"response-get-available-commands",
 	"available-commands-update",
 	"prompt-result",
+	"command-btw-start",
+	"command-btw-cancel",
+	"command-btw-release",
+	"command-btw-promote",
+	"response-btw-start",
+	"response-btw-cancel",
+	"response-btw-release",
+	"response-btw-promote",
+	"event-btw-started",
+	"event-btw-streaming",
+	"event-btw-completed",
+	"event-btw-cancelled",
+	"event-btw-error",
 	"command-output",
 	"session-info-update",
 	"config-update",
@@ -200,10 +213,29 @@ describe("RPC contract fixtures", () => {
 		});
 	});
 
+	test("BTW fixtures cover every command and update state", () => {
+		const commands = ["btw_start", "btw_cancel", "btw_release", "btw_promote"];
+		for (const command of commands) {
+			expect(frameFor(`command-${command.replace("_", "-")}`)).toMatchObject({ type: command });
+			expect(frameFor(`response-${command.replace("_", "-")}`)).toMatchObject({
+				type: "response",
+				command,
+				success: true,
+			});
+		}
+		expect(
+			["started", "streaming", "completed", "cancelled", "error"].map(state => frameFor(`event-btw-${state}`).state),
+		).toEqual(["started", "streaming", "completed", "cancelled", "error"]);
+		expect(frameFor("event-btw-completed")).toMatchObject({
+			answer: "The new shape makes ownership explicit.",
+			canPromote: true,
+		});
+	});
+
 	test("get_state fixture exposes planMode, goalMode, and contextUsage", () => {
 		const frame = rpcContractFixtures.find(fixture => fixture.name === "response-get-state")?.frame;
 		expect(frame).toBeDefined();
-		if (!frame || frame.type !== "response" || frame.command !== "get_state" || !frame.success) {
+		if (frame?.type !== "response" || frame.command !== "get_state" || !frame.success) {
 			throw new Error("response-get-state fixture is not a successful get_state response");
 		}
 

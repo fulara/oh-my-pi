@@ -1,0 +1,6 @@
+{
+  "type": "btw_update",
+  "btwId": "btw-1",
+  "state": "streaming",
+  "delta": "Because the old shape cannot represent the new state."
+}
