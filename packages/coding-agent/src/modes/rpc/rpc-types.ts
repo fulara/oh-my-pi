@@ -9,9 +9,9 @@ import type { CompactionResult } from "@oh-my-pi/pi-agent-core/compaction";
 import type { Effort, ImageContent, Model, ToolExample } from "@oh-my-pi/pi-ai";
 import type { BashResult } from "../../exec/bash-executor";
 import type { ContextUsage } from "../../extensibility/extensions/types";
-import type { AgentSessionEvent, SessionStats } from "../../session/agent-session";
 import type { GoalModeState } from "../../goals/state";
 import type { PlanModeState } from "../../plan-mode/state";
+import type { AgentSessionEvent, SessionStats } from "../../session/agent-session";
 import type { FileEntry } from "../../session/session-entries";
 import type { AvailableSlashCommandSource } from "../../slash-commands/available-commands";
 import type {
@@ -48,6 +48,10 @@ export type RpcCommand =
 	| { id?: string; type: "abort_and_prompt"; message: string; images?: ImageContent[] }
 	| { id?: string; type: "new_session"; parentSession?: string }
 	| { id?: string; type: "fork" }
+	| { id?: string; type: "btw_start"; btwId: string; question: string }
+	| { id?: string; type: "btw_cancel"; btwId: string }
+	| { id?: string; type: "btw_release"; btwId: string }
+	| { id?: string; type: "btw_promote"; btwId: string }
 
 	// State
 	| { id?: string; type: "get_state" }
@@ -184,6 +188,13 @@ export interface RpcPromptResultFrame {
 	agentInvoked: boolean;
 }
 
+export type RpcBtwUpdateFrame =
+	| { type: "btw_update"; btwId: string; state: "started"; question: string }
+	| { type: "btw_update"; btwId: string; state: "streaming"; delta: string }
+	| { type: "btw_update"; btwId: string; state: "completed"; answer: string; canPromote: boolean }
+	| { type: "btw_update"; btwId: string; state: "cancelled" }
+	| { type: "btw_update"; btwId: string; state: "error"; error: string };
+
 export interface RpcReadyFrame {
 	type: "ready";
 	protocolVersion: 1;
@@ -254,6 +265,16 @@ export type RpcResponse =
 	| { id?: string; type: "response"; command: "abort_and_prompt"; success: true }
 	| { id?: string; type: "response"; command: "new_session"; success: true; data: { cancelled: boolean } }
 	| { id?: string; type: "response"; command: "fork"; success: true; data: { cancelled: boolean } }
+	| { id?: string; type: "response"; command: "btw_start"; success: true; data: { btwId: string } }
+	| { id?: string; type: "response"; command: "btw_cancel"; success: true; data: { btwId: string } }
+	| { id?: string; type: "response"; command: "btw_release"; success: true; data: { btwId: string } }
+	| {
+			id?: string;
+			type: "response";
+			command: "btw_promote";
+			success: true;
+			data: { btwId: string; sessionId: string; sessionFile: string };
+	  }
 
 	// State
 	| { id?: string; type: "response"; command: "get_state"; success: true; data: RpcSessionState }
