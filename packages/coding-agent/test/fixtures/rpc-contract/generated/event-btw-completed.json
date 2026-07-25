@@ -1,0 +1,7 @@
+{
+  "type": "btw_update",
+  "btwId": "btw-1",
+  "state": "completed",
+  "answer": "The new shape makes ownership explicit.",
+  "canPromote": true
+}
