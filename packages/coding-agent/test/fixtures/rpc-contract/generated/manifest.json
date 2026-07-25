@@ -10,6 +10,26 @@
     "file": "command-approve-plan-mode.json"
   },
   {
+    "name": "command-btw-cancel",
+    "category": "command",
+    "file": "command-btw-cancel.json"
+  },
+  {
+    "name": "command-btw-promote",
+    "category": "command",
+    "file": "command-btw-promote.json"
+  },
+  {
+    "name": "command-btw-release",
+    "category": "command",
+    "file": "command-btw-release.json"
+  },
+  {
+    "name": "command-btw-start",
+    "category": "command",
+    "file": "command-btw-start.json"
+  },
+  {
     "name": "command-fork",
     "category": "command",
     "file": "command-fork.json"
@@ -78,6 +98,31 @@
     "name": "event-agent-start",
     "category": "event",
     "file": "event-agent-start.json"
+  },
+  {
+    "name": "event-btw-cancelled",
+    "category": "event",
+    "file": "event-btw-cancelled.json"
+  },
+  {
+    "name": "event-btw-completed",
+    "category": "event",
+    "file": "event-btw-completed.json"
+  },
+  {
+    "name": "event-btw-error",
+    "category": "event",
+    "file": "event-btw-error.json"
+  },
+  {
+    "name": "event-btw-started",
+    "category": "event",
+    "file": "event-btw-started.json"
+  },
+  {
+    "name": "event-btw-streaming",
+    "category": "event",
+    "file": "event-btw-streaming.json"
   },
   {
     "name": "event-goal-updated",
@@ -193,6 +238,26 @@
     "name": "response-approve-plan-mode",
     "category": "response",
     "file": "response-approve-plan-mode.json"
+  },
+  {
+    "name": "response-btw-cancel",
+    "category": "response",
+    "file": "response-btw-cancel.json"
+  },
+  {
+    "name": "response-btw-promote",
+    "category": "response",
+    "file": "response-btw-promote.json"
+  },
+  {
+    "name": "response-btw-release",
+    "category": "response",
+    "file": "response-btw-release.json"
+  },
+  {
+    "name": "response-btw-start",
+    "category": "response",
+    "file": "response-btw-start.json"
   },
   {
     "name": "response-error",
