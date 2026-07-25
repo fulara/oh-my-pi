@@ -1,0 +1,6 @@
+{
+  "id": "cmd-btw-start-1",
+  "type": "btw_start",
+  "btwId": "btw-1",
+  "question": "Why is the agent changing this interface?"
+}

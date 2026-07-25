@@ -1,0 +1,6 @@
+{
+  "type": "btw_update",
+  "btwId": "btw-1",
+  "state": "started",
+  "question": "Why is the agent changing this interface?"
+}
