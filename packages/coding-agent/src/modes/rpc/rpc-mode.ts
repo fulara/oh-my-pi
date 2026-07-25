@@ -17,6 +17,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { AgentToolResult } from "@oh-my-pi/pi-agent-core";
 import { CompactionCancelledError } from "@oh-my-pi/pi-agent-core/compaction";
+import type { AssistantMessage } from "@oh-my-pi/pi-ai";
 import { $env, isEnoent, isRecord, prompt, readJsonl, readLines, Snowflake } from "@oh-my-pi/pi-utils";
 import { reset as resetCapabilities } from "../../capability";
 import { clearPluginRootsAndCaches, resolveActiveProjectRegistryPath } from "../../discovery/helpers";
@@ -43,6 +44,7 @@ import planModeCompactInstructionsPrompt from "../../prompts/system/plan-mode-co
 };
 import type { AgentSession, AgentSessionEvent } from "../../session/agent-session";
 import { SKILL_PROMPT_MESSAGE_TYPE, USER_INTERRUPT_LABEL } from "../../session/messages";
+import type { DetachedBranchSnapshot } from "../../session/session-manager";
 import { executeAcpBuiltinSlashCommand } from "../../slash-commands/acp-builtins";
 import { buildAvailableSlashCommands } from "../../slash-commands/available-commands";
 import { defaultLoadModeForToolName } from "../../tools/essential-tools";
@@ -51,6 +53,7 @@ import { PROPOSE_DEVICE_NAME, writeDeviceDispatch } from "../../tools/resolve";
 import { ToolError } from "../../tools/tool-errors";
 import type { EventBus } from "../../utils/event-bus";
 import { calculateTokensPerSecond } from "../../utils/token-rate";
+import * as git from "../../utils/git";
 import { initializeExtensions } from "../runtime-init";
 import { isRpcHostToolResult, isRpcHostToolUpdate, RpcHostToolBridge } from "./host-tools";
 import { isRpcHostUriResult, RpcHostUriBridge } from "./host-uris";
@@ -683,8 +686,8 @@ function successResponse<T extends RpcCommand["type"]>(
 	return { id, type: "response", command, success: true, data } as RpcResponse;
 }
 
-function errorResponse(id: string | undefined, command: string, message: string): RpcResponse {
-	return { id, type: "response", command, success: false, error: message };
+function errorResponse(id: string | undefined, command: string, message: string, code?: string): RpcResponse {
+	return { id, type: "response", command, success: false, error: message, ...(code ? { code } : {}) };
 }
 
 function getRpcLocalOptions(session: AgentSession) {
@@ -1066,6 +1069,114 @@ export function createFuraRpcRuntime(
 		});
 	};
 
+	type BtwRequest = {
+		question: string;
+		snapshot: DetachedBranchSnapshot;
+		controller: AbortController;
+		state: "running" | "completed" | "cancelled" | "error";
+		answer?: string;
+		assistantMessage?: AssistantMessage;
+	};
+	const btwRequests = new Map<string, BtwRequest>();
+	const canPromoteBtw = (request: BtwRequest): boolean =>
+		request.state === "completed" && session.sessionManager.getLeafId() === request.snapshot.sourceLeafId;
+
+	const startBtw = (command: Extract<RpcCommand, { type: "btw_start" }>): RpcResponse => {
+		const question = command.question.trim();
+		if (!question) return errorResponse(command.id, "btw_start", "BTW question must not be empty.");
+		if ([...btwRequests.values()].some(request => request.state === "running")) {
+			return errorResponse(command.id, "btw_start", "A BTW request is already running.", "btw_active");
+		}
+		if (btwRequests.has(command.btwId)) {
+			return errorResponse(command.id, "btw_start", `BTW request ${command.btwId} already exists.`, "btw_exists");
+		}
+
+		const request: BtwRequest = {
+			question,
+			snapshot: session.captureBtwBranchSnapshot(),
+			controller: new AbortController(),
+			state: "running",
+		};
+		btwRequests.set(command.btwId, request);
+		queueMicrotask(() => {
+			if (btwRequests.get(command.btwId) !== request || request.state !== "running") return;
+			output({ type: "btw_update", btwId: command.btwId, state: "started", question });
+			void session
+				.runEphemeralTurn({
+					promptText:
+						"Answer this side question briefly and directly using only the captured conversation context. " +
+						"Do not ask follow-up questions and do not use tools.\n\n" +
+						question,
+					baseMessages: session.btwMessagesFromSnapshot(request.snapshot),
+					signal: request.controller.signal,
+					onTextDelta: delta => {
+						if (btwRequests.get(command.btwId) !== request || request.state !== "running") return;
+						output({ type: "btw_update", btwId: command.btwId, state: "streaming", delta });
+					},
+				})
+				.then(result => {
+					if (btwRequests.get(command.btwId) !== request || request.state !== "running") return;
+					request.state = "completed";
+					request.answer = result.replyText;
+					request.assistantMessage = result.assistantMessage;
+					output({
+						type: "btw_update",
+						btwId: command.btwId,
+						state: "completed",
+						answer: result.replyText,
+						canPromote: canPromoteBtw(request),
+					});
+				})
+				.catch(error => {
+					if (btwRequests.get(command.btwId) !== request || request.state !== "running") return;
+					request.state = "error";
+					output({
+						type: "btw_update",
+						btwId: command.btwId,
+						state: "error",
+						error: error instanceof Error ? error.message : String(error),
+					});
+				});
+		});
+		return successResponse(command.id, "btw_start", { btwId: command.btwId });
+	};
+
+	const cancelBtw = (command: Extract<RpcCommand, { type: "btw_cancel" }>): RpcResponse => {
+		const request = btwRequests.get(command.btwId);
+		if (!request) return errorResponse(command.id, "btw_cancel", `BTW request ${command.btwId} was not found.`);
+		if (request.state === "running") {
+			request.state = "cancelled";
+			request.controller.abort();
+			output({ type: "btw_update", btwId: command.btwId, state: "cancelled" });
+		}
+		return successResponse(command.id, "btw_cancel", { btwId: command.btwId });
+	};
+
+	const releaseBtw = (command: Extract<RpcCommand, { type: "btw_release" }>): RpcResponse => {
+		const request = btwRequests.get(command.btwId);
+		if (request?.state === "running") request.controller.abort();
+		btwRequests.delete(command.btwId);
+		return successResponse(command.id, "btw_release", { btwId: command.btwId });
+	};
+
+	const promoteBtw = async (command: Extract<RpcCommand, { type: "btw_promote" }>): Promise<RpcResponse> => {
+		const request = btwRequests.get(command.btwId);
+		if (!request?.assistantMessage || request.state !== "completed") {
+			return errorResponse(command.id, "btw_promote", `BTW request ${command.btwId} is not completed.`);
+		}
+		if (!canPromoteBtw(request)) {
+			return errorResponse(
+				command.id,
+				"btw_promote",
+				"The source conversation advanced after this BTW request started.",
+				"btw_source_advanced",
+			);
+		}
+		const promoted = await session.promoteBtwBranch(request.snapshot, request.question, request.assistantMessage);
+		btwRequests.delete(command.btwId);
+		return successResponse(command.id, "btw_promote", { btwId: command.btwId, ...promoted });
+	};
+
 	const handleCommand = async (command: RpcCommand): Promise<RpcResponse | undefined> => {
 		try {
 			switch (command.type) {
@@ -1076,6 +1187,14 @@ export function createFuraRpcRuntime(
 					const cancelled = !(await session.fork());
 					return successResponse(command.id, "fork", { cancelled });
 				}
+				case "btw_start":
+					return startBtw(command);
+				case "btw_cancel":
+					return cancelBtw(command);
+				case "btw_release":
+					return releaseBtw(command);
+				case "btw_promote":
+					return promoteBtw(command);
 				case "set_active_tools": {
 					await session.setActiveToolsByName(command.toolNames);
 					return successResponse(command.id, "set_active_tools", { toolNames: session.getActiveToolNames() });

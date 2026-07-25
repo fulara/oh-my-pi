@@ -1,0 +1,9 @@
+{
+  "id": "cmd-btw-cancel-1",
+  "type": "response",
+  "command": "btw_cancel",
+  "success": true,
+  "data": {
+    "btwId": "btw-1"
+  }
+}

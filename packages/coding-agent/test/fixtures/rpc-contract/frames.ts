@@ -1,11 +1,11 @@
 import type { AgentEvent, AgentToolResult } from "@oh-my-pi/pi-agent-core";
 import { Effort } from "@oh-my-pi/pi-ai";
-import type { AgentSessionEvent } from "../../../src/session/agent-session-events";
 import type {
-	RpcCommand,
 	RpcAvailableCommandsUpdateFrame,
 	RpcAvailableSlashCommand,
+	RpcBtwUpdateFrame,
 	RpcChunkFrame,
+	RpcCommand,
 	RpcExtensionUIRequest,
 	RpcHostToolCallRequest,
 	RpcHostToolCancelRequest,
@@ -15,11 +15,13 @@ import type {
 	RpcHostUriRequest,
 	RpcHostUriResult,
 	RpcPlanReviewEvent,
-	RpcReadyFrame,
 	RpcPromptResultFrame,
+	RpcReadyFrame,
 	RpcResponse,
 	RpcSessionState,
 } from "../../../src/modes/rpc/rpc-types";
+import type { AgentSessionEvent } from "../../../src/session/agent-session-events";
+
 type RpcContractFrame =
 	| RpcReadyFrame
 	| RpcChunkFrame
@@ -27,6 +29,7 @@ type RpcContractFrame =
 	| RpcResponse
 	| RpcAvailableCommandsUpdateFrame
 	| RpcPromptResultFrame
+	| RpcBtwUpdateFrame
 	| Extract<AgentSessionEvent, { type: "goal_updated" }>
 	| AgentEvent
 	| RpcExtensionUIRequest
@@ -300,6 +303,40 @@ export const rpcContractFixtures = [
 		name: "command-fork",
 		category: "command",
 		frame: { id: "cmd-fork-1", type: "fork" } satisfies Extract<RpcCommand, { type: "fork" }>,
+	},
+	{
+		name: "command-btw-start",
+		category: "command",
+		frame: {
+			id: "cmd-btw-start-1",
+			type: "btw_start",
+			btwId: "btw-1",
+			question: "Why is the agent changing this interface?",
+		} satisfies Extract<RpcCommand, { type: "btw_start" }>,
+	},
+	{
+		name: "command-btw-cancel",
+		category: "command",
+		frame: { id: "cmd-btw-cancel-1", type: "btw_cancel", btwId: "btw-1" } satisfies Extract<
+			RpcCommand,
+			{ type: "btw_cancel" }
+		>,
+	},
+	{
+		name: "command-btw-release",
+		category: "command",
+		frame: { id: "cmd-btw-release-1", type: "btw_release", btwId: "btw-1" } satisfies Extract<
+			RpcCommand,
+			{ type: "btw_release" }
+		>,
+	},
+	{
+		name: "command-btw-promote",
+		category: "command",
+		frame: { id: "cmd-btw-promote-1", type: "btw_promote", btwId: "btw-1" } satisfies Extract<
+			RpcCommand,
+			{ type: "btw_promote" }
+		>,
 	},
 	{
 		name: "command-set-host-uri-schemes",
@@ -766,6 +803,104 @@ export const rpcContractFixtures = [
 			success: true,
 			data: { cancelled: false },
 		} satisfies Extract<RpcResponse, { command: "fork"; success: true }>,
+	},
+	{
+		name: "response-btw-start",
+		category: "response",
+		frame: {
+			id: "cmd-btw-start-1",
+			type: "response",
+			command: "btw_start",
+			success: true,
+			data: { btwId: "btw-1" },
+		} satisfies Extract<RpcResponse, { command: "btw_start"; success: true }>,
+	},
+	{
+		name: "response-btw-cancel",
+		category: "response",
+		frame: {
+			id: "cmd-btw-cancel-1",
+			type: "response",
+			command: "btw_cancel",
+			success: true,
+			data: { btwId: "btw-1" },
+		} satisfies Extract<RpcResponse, { command: "btw_cancel"; success: true }>,
+	},
+	{
+		name: "response-btw-release",
+		category: "response",
+		frame: {
+			id: "cmd-btw-release-1",
+			type: "response",
+			command: "btw_release",
+			success: true,
+			data: { btwId: "btw-1" },
+		} satisfies Extract<RpcResponse, { command: "btw_release"; success: true }>,
+	},
+	{
+		name: "response-btw-promote",
+		category: "response",
+		frame: {
+			id: "cmd-btw-promote-1",
+			type: "response",
+			command: "btw_promote",
+			success: true,
+			data: {
+				btwId: "btw-1",
+				sessionId: "session-promoted-1",
+				sessionFile: "/tmp/omp/session-promoted-1.jsonl",
+			},
+		} satisfies Extract<RpcResponse, { command: "btw_promote"; success: true }>,
+	},
+	{
+		name: "event-btw-started",
+		category: "event",
+		frame: {
+			type: "btw_update",
+			btwId: "btw-1",
+			state: "started",
+			question: "Why is the agent changing this interface?",
+		} satisfies RpcBtwUpdateFrame,
+	},
+	{
+		name: "event-btw-streaming",
+		category: "event",
+		frame: {
+			type: "btw_update",
+			btwId: "btw-1",
+			state: "streaming",
+			delta: "Because the old shape cannot represent the new state.",
+		} satisfies RpcBtwUpdateFrame,
+	},
+	{
+		name: "event-btw-completed",
+		category: "event",
+		frame: {
+			type: "btw_update",
+			btwId: "btw-1",
+			state: "completed",
+			answer: "The new shape makes ownership explicit.",
+			canPromote: true,
+		} satisfies RpcBtwUpdateFrame,
+	},
+	{
+		name: "event-btw-cancelled",
+		category: "event",
+		frame: {
+			type: "btw_update",
+			btwId: "btw-1",
+			state: "cancelled",
+		} satisfies RpcBtwUpdateFrame,
+	},
+	{
+		name: "event-btw-error",
+		category: "event",
+		frame: {
+			type: "btw_update",
+			btwId: "btw-1",
+			state: "error",
+			error: "Provider request failed",
+		} satisfies RpcBtwUpdateFrame,
 	},
 	{
 		name: "response-set-plan-mode",

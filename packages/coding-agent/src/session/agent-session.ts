@@ -360,7 +360,12 @@ import {
 	SessionMaintenance,
 	type SessionMaintenanceHost,
 } from "./session-maintenance";
-import { cleanupEmptyMoveSession, copySessionArtifacts, type SessionManager } from "./session-manager";
+import {
+	cleanupEmptyMoveSession,
+	copySessionArtifacts,
+	type DetachedBranchSnapshot,
+	type SessionManager,
+} from "./session-manager";
 import { SessionMemory, type SessionMemoryHost } from "./session-memory";
 import { buildSessionMetadata } from "./session-metadata";
 import { SessionProviderBoundary, type SessionProviderBoundaryHost } from "./session-provider-boundary";
@@ -8820,6 +8825,7 @@ export class AgentSession {
 		promptText: string;
 		onTextDelta?: (delta: string) => void;
 		signal?: AbortSignal;
+		baseMessages?: AgentMessage[];
 		dedupeReply?: boolean;
 	}): Promise<{ replyText: string; assistantMessage: AssistantMessage }> {
 		const model = this.model;
@@ -8827,7 +8833,7 @@ export class AgentSession {
 			throw new Error("No active model on session");
 		}
 		const cacheSessionId = this.sessionId;
-		const snapshot = this.#buildEphemeralSnapshot(args.promptText);
+		const snapshot = this.#buildEphemeralSnapshot(args.promptText, args.baseMessages);
 		const llmMessages = await this.convertMessagesToLlm(snapshot, args.signal);
 		const context = await this.agent.buildSideRequestContext(llmMessages);
 		const options = this.prepareSimpleStreamOptions(
@@ -8911,9 +8917,9 @@ export class AgentSession {
 	 * the partial response in context, then appends the prompt as a virtual
 	 * user message.
 	 */
-	#buildEphemeralSnapshot(promptText: string): AgentMessage[] {
-		const messages = [...this.messages];
-		const streaming = this.agent.state.streamMessage;
+	#buildEphemeralSnapshot(promptText: string, baseMessages?: AgentMessage[]): AgentMessage[] {
+		const messages = baseMessages ? structuredClone(baseMessages) : [...this.messages];
+		const streaming = baseMessages ? undefined : this.agent.state.streamMessage;
 		if (streaming && streaming.role === "assistant" && Array.isArray(streaming.content)) {
 			const preservedBlocks: AssistantMessage["content"] = [];
 			// Preserve thinking blocks: DeepSeek-class encoders replay them as
@@ -9445,6 +9451,53 @@ export class AgentSession {
 		}
 	}
 
+	captureBtwBranchSnapshot(): DetachedBranchSnapshot {
+		const snapshot = this.sessionManager.captureDetachedBranchSnapshot();
+		const liveMessage = this.isStreaming ? this.agent.state.messages.at(-1) : undefined;
+		if (liveMessage?.role === "assistant") {
+			snapshot.transientMessages.push(sanitizeAssistantForReparentedHistory(structuredClone(liveMessage)));
+		}
+		return snapshot;
+	}
+
+	btwMessagesFromSnapshot(snapshot: DetachedBranchSnapshot): AgentMessage[] {
+		return [
+			...this.sessionManager.buildDetachedBranchContext(snapshot).messages,
+			...structuredClone(snapshot.transientMessages),
+		];
+	}
+
+	async promoteBtwBranch(
+		snapshot: DetachedBranchSnapshot,
+		question: string,
+		assistantMessage: AssistantMessage,
+	): Promise<{ sessionId: string; sessionFile: string }> {
+		const result = this.sessionManager.createDetachedBranchedSession(
+			snapshot,
+			[
+				{ role: "user", content: [{ type: "text", text: question }], timestamp: Date.now() },
+				sanitizeAssistantForReparentedHistory(assistantMessage),
+			],
+			`BTW: ${question}`,
+		);
+		const oldArtifactDir = snapshot.sourceSessionFile.slice(0, -6);
+		const newArtifactDir = result.sessionFile.slice(0, -6);
+		try {
+			const oldDirStat = await fs.promises.stat(oldArtifactDir);
+			if (oldDirStat.isDirectory()) {
+				await fs.promises.cp(oldArtifactDir, newArtifactDir, { recursive: true });
+			}
+		} catch (err) {
+			if (!isEnoent(err)) {
+				logger.warn("Failed to copy artifacts during /btw promotion", {
+					oldArtifactDir,
+					newArtifactDir,
+					error: err instanceof Error ? err.message : String(err),
+				});
+			}
+		}
+		return result;
+	}
 	/** Promotes a completed /btw answer from the explicitly authorized session and leaf. */
 	async branchFromBtw(
 		question: string,

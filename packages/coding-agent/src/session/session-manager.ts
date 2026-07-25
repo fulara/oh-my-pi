@@ -135,6 +135,15 @@ export async function copySessionArtifacts(sourceSessionFile: string, destinatio
 	}
 }
 
+export interface DetachedBranchSnapshot {
+	sourceSessionFile: string;
+	sourceLeafId: string;
+	cwd: string;
+	additionalDirectories: string[];
+	entries: SessionEntry[];
+	transientMessages: Message[];
+}
+
 /**
  * Resolve a breadcrumb's recorded session file to its interactive root. Subagent
  * (and other artifact) sessions live inside a parent session's artifacts dir —
@@ -2628,6 +2637,104 @@ export class SessionManager {
 	 */
 	buildSessionContext(options?: BuildSessionContextOptions): SessionContext {
 		return buildSessionContext(this.#entries, this.#index.leafId(), this.#index.entriesById(), options);
+	}
+
+	/**
+	 * Capture the current conversation leaf without tying later work to mutable
+	 * session state. The snapshot stays memory-only until explicitly promoted.
+	 */
+	captureDetachedBranchSnapshot(): DetachedBranchSnapshot {
+		const sourceSessionFile = this.#sessionFile;
+		if (!sourceSessionFile) throw new Error("Cannot capture a detached branch from a non-persisted session");
+		const sourceLeafId = this.#index.leafId();
+		if (!sourceLeafId) throw new Error("Cannot capture a detached branch before the first session entry");
+		const branch = this.getBranch(sourceLeafId).filter(entry => entry.type !== "label");
+		const ids = new Set(branch.map(entry => entry.id));
+		const entries = structuredClone(branch) as SessionEntry[];
+		let parentId = entries.at(-1)?.id ?? null;
+		for (const [targetId, label] of this.#index.labelsInEffect()) {
+			if (!ids.has(targetId)) continue;
+			const entry: LabelEntry = {
+				type: "label",
+				id: generateId(new Set([...ids, ...entries.map(item => item.id)])),
+				parentId,
+				timestamp: nowIso(),
+				targetId,
+				label,
+			};
+			entries.push(entry);
+			parentId = entry.id;
+		}
+		return {
+			sourceSessionFile,
+			sourceLeafId,
+			cwd: this.#cwd,
+			additionalDirectories: [...this.#additionalDirectories],
+			entries,
+			transientMessages: [],
+		};
+	}
+
+	buildDetachedBranchContext(snapshot: DetachedBranchSnapshot): SessionContext {
+		return buildSessionContext(
+			snapshot.entries,
+			snapshot.sourceLeafId,
+			new Map(snapshot.entries.map(entry => [entry.id, entry])),
+		);
+	}
+
+	/**
+	 * Materialize a new session from an earlier detached snapshot without
+	 * changing this manager's active leaf, file, messages, or breadcrumb.
+	 */
+	createDetachedBranchedSession(
+		snapshot: DetachedBranchSnapshot,
+		messages: readonly Message[],
+		title?: string,
+	): { sessionId: string; sessionFile: string } {
+		if (!this.#persist) throw new Error("Cannot promote a detached branch when sessions are not persisted");
+		const timestamp = nowIso();
+		const sessionId = mintSessionId();
+		const sessionFile = path.join(this.#sessionDir, `${fileSafeTimestamp(timestamp)}_${sessionId}.jsonl`);
+		const cleanTitle = title ? SessionManager.#cleanTitle(title) : undefined;
+		const header: SessionHeader = {
+			type: "session",
+			version: CURRENT_SESSION_VERSION,
+			id: sessionId,
+			timestamp,
+			cwd: snapshot.cwd,
+			parentSession: snapshot.sourceSessionFile,
+			additionalDirectories:
+				snapshot.additionalDirectories.length > 0 ? [...snapshot.additionalDirectories] : undefined,
+			title: cleanTitle,
+			titleSource: cleanTitle ? "auto" : undefined,
+		};
+		const entries = structuredClone(snapshot.entries) as SessionEntry[];
+		const ids = new Set(entries.map(entry => entry.id));
+		let parentId = entries.at(-1)?.id ?? null;
+		for (const message of [...snapshot.transientMessages, ...messages]) {
+			const entry: SessionMessageEntry = {
+				type: "message",
+				id: generateId(ids),
+				parentId,
+				timestamp: nowIso(),
+				message: structuredClone(message),
+			};
+			ids.add(entry.id);
+			entries.push(entry);
+			parentId = entry.id;
+		}
+		let body = serializeTitleSlot({
+			title: cleanTitle,
+			source: cleanTitle ? "auto" : undefined,
+			updatedAt: timestamp,
+		});
+		body += `${stringifyJson(prepareEntryForPersistence(header, this.#blobs)) ?? "null"}\n`;
+		for (const entry of entries) {
+			body += `${stringifyJson(prepareEntryForPersistence(entry, this.#blobs)) ?? "null"}\n`;
+		}
+		this.#storage.writeTextSync(sessionFile, body);
+		return { sessionId, sessionFile };
 	}
 
 	/** Strip stale OpenAI Responses assistant replay metadata from loaded entries. */
