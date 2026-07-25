@@ -1,0 +1,9 @@
+{
+  "id": "cmd-btw-release-1",
+  "type": "response",
+  "command": "btw_release",
+  "success": true,
+  "data": {
+    "btwId": "btw-1"
+  }
+}

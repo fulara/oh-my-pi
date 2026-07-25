@@ -1,0 +1,9 @@
+{
+  "id": "cmd-btw-start-1",
+  "type": "response",
+  "command": "btw_start",
+  "success": true,
+  "data": {
+    "btwId": "btw-1"
+  }
+}

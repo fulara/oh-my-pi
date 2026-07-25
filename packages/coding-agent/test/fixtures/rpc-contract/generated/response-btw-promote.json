@@ -1,0 +1,11 @@
+{
+  "id": "cmd-btw-promote-1",
+  "type": "response",
+  "command": "btw_promote",
+  "success": true,
+  "data": {
+    "btwId": "btw-1",
+    "sessionId": "session-promoted-1",
+    "sessionFile": "/tmp/omp/session-promoted-1.jsonl"
+  }
+}
