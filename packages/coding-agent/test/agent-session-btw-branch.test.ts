@@ -181,6 +181,70 @@ describe("AgentSession.branchFromBtw", () => {
 		expect((await loadAdvisorTranscriptCosts(replacementSessionFile)).get("")).toBeUndefined();
 	});
 
+	it("captures and promotes the visible in-flight assistant response", async () => {
+		const providerStarted = Promise.withResolvers<void>();
+		const providerRelease = Promise.withResolvers<void>();
+		const activeSession = await createSession({
+			handler: async () => {
+				providerStarted.resolve();
+				await providerRelease.promise;
+				return { content: ["source response completed"] };
+			},
+		});
+		activeSession.sessionManager.appendMessage({ role: "user", content: "seed", timestamp: Date.now() - 1 });
+		activeSession.agent.replaceMessages(activeSession.sessionManager.buildSessionContext().messages);
+		await activeSession.sessionManager.flush();
+
+		const promptPromise = activeSession.prompt("main prompt");
+		await providerStarted.promise;
+		const partialMessage: AssistantMessage = {
+			...createBtwAssistant(),
+			content: [{ type: "text", text: "visible source response so far" }],
+		};
+		activeSession.agent.emitExternalEvent({
+			type: "message_update",
+			message: partialMessage,
+			assistantMessageEvent: {
+				type: "text_delta",
+				contentIndex: 0,
+				delta: "visible source response so far",
+				partial: partialMessage,
+			},
+		});
+
+		const snapshot = activeSession.captureBtwBranchSnapshot();
+		expect(snapshot.transientMessages).toEqual([
+			expect.objectContaining({
+				role: "assistant",
+				content: [{ type: "text", text: "visible source response so far" }],
+			}),
+		]);
+		expect(activeSession.btwMessagesFromSnapshot(snapshot)).toContainEqual(
+			expect.objectContaining({
+				role: "assistant",
+				content: [{ type: "text", text: "visible source response so far" }],
+			}),
+		);
+
+		const promoted = await activeSession.promoteBtwBranch(snapshot, "side question", createBtwAssistant());
+		const promotedMessages = fs
+			.readFileSync(promoted.sessionFile, "utf8")
+			.trim()
+			.split("\n")
+			.map(line => JSON.parse(line) as { type: string; message?: AssistantMessage })
+			.filter(entry => entry.type === "message")
+			.map(entry => entry.message);
+		expect(promotedMessages).toContainEqual(
+			expect.objectContaining({
+				role: "assistant",
+				content: [{ type: "text", text: "visible source response so far" }],
+			}),
+		);
+
+		providerRelease.resolve();
+		await promptPromise;
+	});
+
 	it("honors session_before_branch cancellation without creating a branch", async () => {
 		const emit = vi.fn(async () => ({ cancel: true }));
 		const extensionRunner = {

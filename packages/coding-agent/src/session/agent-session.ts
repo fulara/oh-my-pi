@@ -9453,7 +9453,7 @@ export class AgentSession {
 
 	captureBtwBranchSnapshot(): DetachedBranchSnapshot {
 		const snapshot = this.sessionManager.captureDetachedBranchSnapshot();
-		const liveMessage = this.isStreaming ? this.agent.state.messages.at(-1) : undefined;
+		const liveMessage = this.isStreaming ? this.agent.state.streamMessage : undefined;
 		if (liveMessage?.role === "assistant") {
 			snapshot.transientMessages.push(sanitizeAssistantForReparentedHistory(structuredClone(liveMessage)));
 		}
