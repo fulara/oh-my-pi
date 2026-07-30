@@ -700,6 +700,9 @@ export const rpcContractFixtures = [
 				autoCompactionEnabled: true,
 				messageCount: 4,
 				queuedMessageCount: 0,
+				fastModeEnabled: false,
+				fastModeActive: false,
+				tokensPerSecond: null,
 				todoPhases: [
 					{
 						name: "Delivery",
