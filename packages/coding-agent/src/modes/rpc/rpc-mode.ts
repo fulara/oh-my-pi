@@ -46,6 +46,7 @@ import {
 } from "../../extensibility/skills";
 import { loadSlashCommands } from "../../extensibility/slash-commands";
 import { resolveLocalUrlToPath } from "../../internal-urls";
+import type { Goal } from "../../goals/state";
 import { type Theme, theme } from "@oh-my-pi/pi-tui/theme";
 import { AgentLifecycleManager } from "../../registry/agent-lifecycle";
 import {
@@ -1162,6 +1163,32 @@ function isBlockingGoalModeState(session: AgentSession): boolean {
 	if (!goalMode?.goal) return false;
 	return goalMode.goal.status !== "complete" && goalMode.goal.status !== "dropped";
 }
+function parseRpcGoalModeData(modeData: Record<string, unknown> | undefined): Goal | undefined {
+	const goal = modeData?.goal;
+	if (!goal || typeof goal !== "object") return undefined;
+	const value = goal as Record<string, unknown>;
+	if (
+		typeof value.id !== "string" ||
+		typeof value.objective !== "string" ||
+		typeof value.status !== "string" ||
+		typeof value.tokensUsed !== "number" ||
+		typeof value.timeUsedSeconds !== "number" ||
+		typeof value.createdAt !== "number" ||
+		typeof value.updatedAt !== "number"
+	) {
+		return undefined;
+	}
+	return {
+		id: value.id,
+		objective: value.objective,
+		status: value.status as Goal["status"],
+		tokenBudget: typeof value.tokenBudget === "number" ? value.tokenBudget : undefined,
+		tokensUsed: value.tokensUsed,
+		timeUsedSeconds: value.timeUsedSeconds,
+		createdAt: value.createdAt,
+		updatedAt: value.updatedAt,
+	};
+}
 
 function extractRpcPlanReviewDetails(toolName: string, result: unknown): RpcPlanApprovalDetails | undefined {
 	let directDetails: unknown;
@@ -1210,6 +1237,7 @@ export function createFuraRpcRuntime(
 ): {
 	handleCommand(command: RpcCommand): Promise<RpcResponse | undefined>;
 	handleSessionEvent(event: AgentSessionEvent): Promise<void>;
+	reconcileSessionMode(): Promise<void>;
 } {
 	const restorePlanTools = async (): Promise<void> => {
 		if (state.planPreviousTools !== undefined) {
@@ -1326,7 +1354,10 @@ export function createFuraRpcRuntime(
 			},
 		};
 	};
-	const enterPlanMode = async (command: Extract<RpcCommand, { type: "set_plan_mode" }>): Promise<RpcResponse> => {
+	const enterPlanMode = async (
+		command: Extract<RpcCommand, { type: "set_plan_mode" }>,
+		options: { persist?: boolean } = {},
+	): Promise<RpcResponse> => {
 		if (isBlockingGoalModeState(session)) {
 			return errorResponse(command.id, "set_plan_mode", "Exit goal mode first.");
 		}
@@ -1340,7 +1371,7 @@ export function createFuraRpcRuntime(
 
 		const previousTools = state.planPreviousTools ?? session.getEnabledToolNames();
 		const previousMountedTools = state.planPreviousMountedTools ?? session.getMountedXdevToolNames();
-		const hasWriteTool = session.getToolByName("write") !== undefined;
+		const hasWriteTool = session.hasBuiltInTool("write");
 		const activeTools = hasWriteTool ? [...previousTools, "write"] : previousTools;
 		await session.setActiveToolPresentation([...new Set(activeTools)], previousMountedTools);
 
@@ -1356,7 +1387,7 @@ export function createFuraRpcRuntime(
 			await session.sendPlanModeContext({ deliverAs: "steer" });
 		}
 		state.planHasEntered = true;
-		session.sessionManager.appendModeChange("plan", { planFilePath });
+		if (options.persist !== false) session.sessionManager.appendModeChange("plan", { planFilePath });
 		return successResponse(command.id, "set_plan_mode", { planMode });
 	};
 
@@ -1426,6 +1457,7 @@ export function createFuraRpcRuntime(
 						executionDispatched: false,
 					});
 				}
+				await reconcileSessionMode();
 				const newPlanPath = resolveRpcPlanPath(session, finalPlanFilePath);
 				await fs.mkdir(path.dirname(newPlanPath), { recursive: true });
 				await fs.writeFile(newPlanPath, planContent);
@@ -1587,6 +1619,62 @@ export function createFuraRpcRuntime(
 		btwRequests.delete(command.btwId);
 		return successResponse(command.id, "btw_promote", { btwId: command.btwId, ...promoted });
 	};
+	const cancelAllBtw = (): void => {
+		for (const [btwId, request] of btwRequests) {
+			if (request.state !== "running") continue;
+			request.state = "cancelled";
+			request.controller.abort();
+			output({ type: "btw_update", btwId, state: "cancelled" });
+		}
+		btwRequests.clear();
+	};
+
+	const reconcileSessionMode = async (): Promise<void> => {
+		cancelAllBtw();
+		await restorePlanTools();
+		await restoreGoalTools();
+		state.planHasEntered = false;
+		session.setPlanProposalHandler(null);
+		session.setPlanModeState(undefined);
+		session.setGoalModeState(undefined);
+		session.goalRuntime.clearAccounting();
+
+		const sessionContext = session.sessionManager.buildSessionContext();
+		if (sessionContext.mode === "goal" || sessionContext.mode === "goal_paused") {
+			if (!session.settings.get("goal.enabled")) {
+				session.sessionManager.appendModeChange("none");
+				return;
+			}
+			const goal = parseRpcGoalModeData(sessionContext.modeData);
+			if (!goal) {
+				session.sessionManager.appendModeChange("none");
+				return;
+			}
+			session.setGoalModeState({
+				enabled: sessionContext.mode === "goal",
+				mode: "active",
+				goal,
+			});
+			const restored = await session.goalRuntime.onThreadResumed({ preserveActiveGoal: true });
+			if (restored?.goal) await activateGoalTools();
+			return;
+		}
+
+		if (sessionContext.mode === "plan" || sessionContext.mode === "plan_paused") {
+			if (!session.settings.get("plan.enabled")) {
+				session.sessionManager.appendModeChange("none");
+				return;
+			}
+			state.planHasEntered = true;
+			if (sessionContext.mode === "plan") {
+				const planFilePath =
+					typeof sessionContext.modeData?.planFilePath === "string"
+						? sessionContext.modeData.planFilePath
+						: undefined;
+				await enterPlanMode({ type: "set_plan_mode", enabled: true, planFilePath }, { persist: false });
+			}
+		}
+	};
 
 	const handleCommand = async (command: RpcCommand): Promise<RpcResponse | undefined> => {
 		try {
@@ -1630,6 +1718,20 @@ export function createFuraRpcRuntime(
 	};
 
 	const handleSessionEvent = async (event: AgentSessionEvent): Promise<void> => {
+		if (event.type === "agent_end") {
+			const goalMode = session.getGoalModeState();
+			if (goalMode?.mode !== "exiting" || goalMode.reason !== "completed") return;
+			await restoreGoalTools();
+			session.setGoalModeState(undefined);
+			session.sessionManager.appendModeChange("none");
+			session.sessionManager.appendCustomEntry("goal-completed", {
+				objective: goalMode.goal.objective,
+				tokensUsed: goalMode.goal.tokensUsed,
+				tokenBudget: goalMode.goal.tokenBudget,
+				timeUsedSeconds: goalMode.goal.timeUsedSeconds,
+			});
+			return;
+		}
 		if (event.type !== "tool_execution_end" || event.isError) return;
 		const details = extractRpcPlanReviewDetails(event.toolName, event.result);
 		if (!details) return;
@@ -1650,7 +1752,7 @@ export function createFuraRpcRuntime(
 		} satisfies RpcPlanReviewEvent);
 	};
 
-	return { handleCommand, handleSessionEvent };
+	return { handleCommand, handleSessionEvent, reconcileSessionMode };
 }
 
 /** Validates `ask` answers against the questions; any mismatch throws instead of guessing. */
@@ -2265,8 +2367,10 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 			output(error(undefined, "resolve", err instanceof Error ? err.message : String(err)));
 		});
 	});
+	session.setSessionSwitchReconciler(() => furaRuntime.reconcileSessionMode());
 	await goalController.reconcile();
 	await goalController.settled();
+	await furaRuntime.reconcileSessionMode();
 
 	// Discriminates a store failure from any other dispose rejection below.
 	let persistenceFailure: Error | undefined;
@@ -2582,6 +2686,7 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 					if (command.type !== "branch" && command.type !== "fork") promptResults.abortOpen();
 					// The detached run publishes no terminal agent_end to settle on.
 					void settleWatcher.check();
+					if (command.type !== "switch_session") await furaRuntime.reconcileSessionMode();
 					await emitAvailableCommandsUpdate();
 				}
 				return success(id, result.type, result.data);
