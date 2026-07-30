@@ -24,14 +24,20 @@ afterEach(async () => {
 	await Promise.all(cleanupRoots.splice(0).map(root => fs.rm(root, { recursive: true, force: true })));
 });
 
-async function createSession(extraTools: AgentTool[] = []): Promise<AgentSession> {
-	const root = await fs.mkdtemp(path.join(os.tmpdir(), "omp-rpc-plan-mode-"));
-	cleanupRoots.push(root);
+async function createSession(
+	extraTools: AgentTool[] = [],
+	builtInToolNames: string[] = ["read", "write"],
+	options: { root?: string; sessionFile?: string } = {},
+): Promise<AgentSession> {
+	const root = options.root ?? (await fs.mkdtemp(path.join(os.tmpdir(), "omp-rpc-plan-mode-")));
+	if (!options.root) cleanupRoots.push(root);
 
 	const settings = Settings.isolated({
 		"compaction.enabled": false,
 	});
-	const sessionManager = await SessionManager.continueRecent(root, path.join(root, "sessions"));
+	const sessionManager = options.sessionFile
+		? await SessionManager.open(options.sessionFile, path.join(root, "sessions"))
+		: await SessionManager.continueRecent(root, path.join(root, "sessions"));
 	const toolRegistry = new Map<string, AgentTool>();
 	let session: AgentSession | undefined;
 	const toolSession: ToolSession = {
@@ -73,13 +79,14 @@ async function createSession(extraTools: AgentTool[] = []): Promise<AgentSession
 		settings,
 		modelRegistry,
 		toolRegistry,
+		builtInToolNames,
 		...(extraTools.length > 0
 			? {
 					builtInToolNames: ["read", "write"],
 					xdev: {
 						tools: toolRegistry,
 						mountedNames: new Set(extraTools.map(tool => tool.name)),
-						builtInNames: new Set(["read", "write"]),
+						builtInNames: new Set(builtInToolNames),
 						isActive: name => agent.state.tools.some(tool => tool.name === name),
 					} satisfies XdevState,
 				}
@@ -271,6 +278,42 @@ describe("Fura RPC plan-mode runtime", () => {
 		await runtime.handleCommand({ id: "plan-off-mounted", type: "set_plan_mode", enabled: false });
 		expect(session.getActiveToolNames()).toEqual(["read", "write"]);
 		expect(session.getMountedXdevToolNames()).toContain("report_issue");
+	});
+
+	it("rehydrates persisted plan mode without duplicating its mode entry", async () => {
+		const session = await createSession();
+		await session.setActiveToolsByName(["read"]);
+		session.sessionManager.appendModeChange("plan", { planFilePath: "local://RESTORED.md" });
+		const root = session.sessionManager.getCwd();
+		await session.sessionManager.ensureOnDisk();
+		const sessionFile = session.sessionManager.getSessionFile();
+		expect(sessionFile).toBeDefined();
+		await session.dispose();
+
+		const resumedSession = await createSession([], ["read", "write"], { root, sessionFile: sessionFile! });
+		const entriesBefore = resumedSession.sessionManager.getBranch().length;
+		const runtime = createFuraRpcRuntime(resumedSession);
+		await runtime.reconcileSessionMode();
+
+		expect(resumedSession.getPlanModeState()).toEqual({
+			enabled: true,
+			planFilePath: "local://RESTORED.md",
+			workflow: "parallel",
+			reentry: true,
+		});
+		expect(resumedSession.getActiveToolNames()).toEqual(["read", "write"]);
+		expect(resumedSession.sessionManager.getBranch()).toHaveLength(entriesBefore);
+	});
+
+	it("does not activate a shadowing non-built-in write tool in plan mode", async () => {
+		const session = await createSession([], ["read"]);
+		await session.setActiveToolsByName(["read"]);
+
+		const runtime = createFuraRpcRuntime(session);
+		const response = await runtime.handleCommand({ id: "plan-shadow-write", type: "set_plan_mode", enabled: true });
+
+		expect(response).toMatchObject({ success: true });
+		expect(session.getActiveToolNames()).toEqual(["read"]);
 	});
 
 	it("rejects RPC fork while a prompt is streaming", async () => {
