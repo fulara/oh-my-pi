@@ -17,15 +17,17 @@ afterEach(async () => {
 	await Promise.all(cleanupRoots.splice(0).map(root => fs.rm(root, { recursive: true, force: true })));
 });
 
-async function createSession(): Promise<AgentSession> {
-	const root = await fs.mkdtemp(path.join(os.tmpdir(), "omp-rpc-goal-mode-"));
-	cleanupRoots.push(root);
+async function createSession(options: { root?: string; sessionFile?: string } = {}): Promise<AgentSession> {
+	const root = options.root ?? (await fs.mkdtemp(path.join(os.tmpdir(), "omp-rpc-goal-mode-")));
+	if (!options.root) cleanupRoots.push(root);
 
 	const settings = Settings.isolated({
 		"compaction.enabled": false,
 		"goal.enabled": true,
 	});
-	const sessionManager = await SessionManager.continueRecent(root, path.join(root, "sessions"));
+	const sessionManager = options.sessionFile
+		? await SessionManager.open(options.sessionFile, path.join(root, "sessions"))
+		: await SessionManager.continueRecent(root, path.join(root, "sessions"));
 	const toolRegistry = new Map<string, AgentTool>();
 	let session: AgentSession | undefined;
 	const toolSession: ToolSession = {
@@ -153,6 +155,65 @@ describe("Fura RPC goal-mode runtime", () => {
 		} finally {
 			unsubscribe();
 		}
+	});
+
+	it("restores tools and clears goal state after tool-driven completion", async () => {
+		const session = await createSession();
+		await session.setActiveToolsByName(["read"]);
+		const runtime = createFuraRpcRuntime(session);
+		await runtime.handleCommand({
+			id: "goal-create-complete",
+			type: "goal_mode",
+			op: "create",
+			objective: "Finish cleanly",
+		});
+
+		await session.goalRuntime.completeGoalFromTool();
+		expect(session.getGoalModeState()).toMatchObject({
+			enabled: false,
+			mode: "exiting",
+			reason: "completed",
+		});
+
+		await runtime.handleSessionEvent({ type: "agent_end", messages: [] } as AgentSessionEvent);
+
+		expect(session.getGoalModeState()).toBeUndefined();
+		expect(session.getActiveToolNames()).toEqual(["read"]);
+		expect(session.sessionManager.buildSessionContext().mode).toBe("none");
+		expect(
+			session.sessionManager
+				.getBranch()
+				.some(entry => entry.type === "custom" && entry.customType === "goal-completed"),
+		).toBe(true);
+	});
+
+	it("rehydrates persisted active goal state when an RPC session resumes", async () => {
+		const session = await createSession();
+		await session.setActiveToolsByName(["read"]);
+		const originalRuntime = createFuraRpcRuntime(session);
+		await originalRuntime.handleCommand({
+			id: "goal-create-resume",
+			type: "goal_mode",
+			op: "create",
+			objective: "Survive process restart",
+		});
+		const root = session.sessionManager.getCwd();
+		await session.sessionManager.ensureOnDisk();
+		const sessionFile = session.sessionManager.getSessionFile();
+		expect(sessionFile).toBeDefined();
+		await session.dispose();
+
+		const resumedSession = await createSession({ root, sessionFile: sessionFile! });
+		await resumedSession.setActiveToolsByName(["read"]);
+		const resumedRuntime = createFuraRpcRuntime(resumedSession);
+		await resumedRuntime.reconcileSessionMode();
+
+		expect(resumedSession.getGoalModeState()).toMatchObject({
+			enabled: true,
+			mode: "active",
+			goal: { objective: "Survive process restart", status: "active" },
+		});
+		expect(resumedSession.getActiveToolNames()).toEqual(["read", "goal"]);
 	});
 
 	it("rejects goal operations that require active mode", async () => {
