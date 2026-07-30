@@ -15,7 +15,7 @@ import { AuthStorage } from "@oh-my-pi/pi-coding-agent/session/auth-storage";
 import { convertToLlm } from "@oh-my-pi/pi-coding-agent/session/messages";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
 import { createTools, type ToolSession } from "@oh-my-pi/pi-coding-agent/tools";
-import { XdevRegistry } from "@oh-my-pi/pi-coding-agent/tools/xdev";
+import type { XdevState } from "@oh-my-pi/pi-coding-agent/tools/xdev";
 const cleanupRoots: string[] = [];
 const cleanupFns: Array<() => void> = [];
 
@@ -76,8 +76,12 @@ async function createSession(extraTools: AgentTool[] = []): Promise<AgentSession
 		...(extraTools.length > 0
 			? {
 					builtInToolNames: ["read", "write"],
-					xdevRegistry: new XdevRegistry(extraTools),
-					initialMountedXdevToolNames: extraTools.map(tool => tool.name),
+					xdev: {
+						tools: toolRegistry,
+						mountedNames: new Set(extraTools.map(tool => tool.name)),
+						builtInNames: new Set(["read", "write"]),
+						isActive: name => agent.state.tools.some(tool => tool.name === name),
+					} satisfies XdevState,
 				}
 			: {}),
 	});
