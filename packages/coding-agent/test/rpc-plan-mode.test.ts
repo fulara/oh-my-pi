@@ -2,9 +2,9 @@ import { afterEach, describe, expect, it } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import { type } from "@oh-my-pi/omptype";
 import type { AgentEvent, AgentTool } from "@oh-my-pi/pi-agent-core";
 import { Agent } from "@oh-my-pi/pi-agent-core";
-import { type } from "arktype";
 import { createMockModel } from "@oh-my-pi/pi-ai/providers/mock";
 import { ModelRegistry } from "@oh-my-pi/pi-coding-agent/config/model-registry";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
@@ -16,6 +16,7 @@ import { convertToLlm } from "@oh-my-pi/pi-coding-agent/session/messages";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
 import { createTools, type ToolSession } from "@oh-my-pi/pi-coding-agent/tools";
 import type { XdevState } from "@oh-my-pi/pi-coding-agent/tools/xdev";
+
 const cleanupRoots: string[] = [];
 const cleanupFns: Array<() => void> = [];
 
@@ -266,7 +267,7 @@ describe("Fura RPC plan-mode runtime", () => {
 
 	it("preserves mounted discoverable tools when leaving plan mode", async () => {
 		const session = await createSession([makeDiscoverableTool("report_issue")]);
-		await session.setActiveToolPresentation(["read", "report_issue"], ["report_issue"]);
+		await session.setActiveToolPresentation(["read", "write", "report_issue"], ["report_issue"]);
 		expect(session.getActiveToolNames()).toEqual(["read", "write"]);
 		expect(session.getMountedXdevToolNames()).toContain("report_issue");
 
