@@ -19,7 +19,7 @@ import * as fs from "node:fs/promises";
 import type { AgentToolResult } from "@oh-my-pi/pi-agent-core";
 import { CompactionCancelledError } from "@oh-my-pi/pi-agent-core/compaction";
 import type { AssistantMessage } from "@oh-my-pi/pi-ai";
-import { $env, isEnoent, isRecord, logger, prompt, readJsonl, readLines, Snowflake } from "@oh-my-pi/pi-utils";
+import { $env, isEnoent, isRecord, logger, prompt, readLines, Snowflake } from "@oh-my-pi/pi-utils";
 import { reset as resetCapabilities } from "../../capability";
 import { clearPluginRootsAndCaches, resolveActiveProjectRegistryPath } from "../../discovery/helpers";
 import {
@@ -37,8 +37,8 @@ import {
 	type SkillPromptInput,
 } from "../../extensibility/skills";
 import { loadSlashCommands } from "../../extensibility/slash-commands";
-import { resolveLocalUrlToPath } from "../../internal-urls";
 import type { Goal } from "../../goals/state";
+import { resolveLocalUrlToPath } from "../../internal-urls";
 import { type Theme, theme } from "@oh-my-pi/pi-tui/theme";
 import { type PlanApprovalDetails, resolvePlanTitle } from "../../plan-mode/approved-plan";
 import planModeApprovedPrompt from "../../prompts/system/plan-mode-approved.md" with { type: "text" };
@@ -57,9 +57,9 @@ import { PROPOSE_DEVICE_NAME, writeDeviceDispatch } from "../../tools/resolve";
 import { ToolError } from "../../tools/tool-errors";
 import type { EventBus } from "../../utils/event-bus";
 import { selectRpcEntries } from "./rpc-compat";
-import { calculateTokensPerSecond } from "../../utils/token-rate";
 import { formatPersistenceDurabilityFailure, formatPersistenceFailure } from "../persistence-failure";
 import * as git from "../../utils/git";
+import { calculateTokensPerSecond } from "../../utils/token-rate";
 import { initializeExtensions } from "../runtime-init";
 import { isRpcHostToolResult, isRpcHostToolUpdate, RpcHostToolBridge } from "./host-tools";
 import { isRpcHostUriResult, RpcHostUriBridge } from "./host-uris";
