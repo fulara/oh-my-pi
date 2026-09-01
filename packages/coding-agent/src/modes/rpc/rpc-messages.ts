@@ -43,6 +43,7 @@ interface RpcMessageCursorPayload extends RpcMessageSnapshot {
 export interface RpcMessagesPageOptions {
 	cursor?: string;
 	limit?: number;
+	elideOversizedMessages?: boolean;
 }
 
 function encodeCursor(snapshot: RpcMessageSnapshot, offset: number): string {
@@ -89,6 +90,21 @@ function sameSnapshot(cursor: RpcMessageCursorPayload, snapshot: RpcMessageSnaps
 	);
 }
 
+function oversizedMessagePlaceholder(message: AgentMessage, index: number, byteLength: number): AgentMessage {
+	const timestamp = isRecord(message) && typeof message.timestamp === "number" ? message.timestamp : 0;
+	const role = isRecord(message) && typeof message.role === "string" ? message.role : "unknown";
+	return {
+		role: "custom",
+		customType: "rpc-message-elided",
+		content:
+			`Message ${index + 1} (${role}, ${byteLength} serialized bytes) was omitted from RPC protocol v1 ` +
+			"because it exceeds the transport limit. Negotiate RPC protocol v2 to retrieve it losslessly.",
+		display: true,
+		details: { byteLength, index, role },
+		timestamp,
+	};
+}
+
 /** Page one stable in-memory message snapshot without crossing the v1 frame budget. */
 export function pageRpcMessages(
 	messages: readonly AgentMessage[],
@@ -111,10 +127,15 @@ export function pageRpcMessages(
 	const page: AgentMessage[] = [];
 	let pageBytes = 2;
 	while (offset + page.length < messages.length && page.length < limit) {
-		const message = messages[offset + page.length];
+		const messageIndex = offset + page.length;
+		const message = messages[messageIndex];
 		const messageBytes = Buffer.byteLength(JSON.stringify(message), "utf8") + (page.length === 0 ? 0 : 1);
 		if (page.length > 0 && pageBytes + messageBytes > MAX_RPC_MESSAGE_PAGE_BYTES) break;
-		page.push(message);
+		page.push(
+			options.elideOversizedMessages && messageBytes > MAX_RPC_MESSAGE_PAGE_BYTES
+				? oversizedMessagePlaceholder(message, messageIndex, messageBytes)
+				: message,
+		);
 		pageBytes += messageBytes;
 	}
 

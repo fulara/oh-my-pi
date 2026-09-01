@@ -1,8 +1,9 @@
 import { mkdir, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { rpcContractFixtures } from "../test/fixtures/rpc-contract/frames";
 
-const outDir = process.argv[2] ?? new URL("../test/fixtures/rpc-contract/generated", import.meta.url).pathname;
+const outDir = process.argv[2] ?? fileURLToPath(new URL("../test/fixtures/rpc-contract/generated", import.meta.url));
 
 await mkdir(outDir, { recursive: true });
 
