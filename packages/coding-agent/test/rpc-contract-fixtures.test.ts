@@ -60,6 +60,7 @@ const requiredFixtureNames = [
 	"event-tool-execution-end",
 	"event-plan-review",
 	"extension-ui-request-confirm",
+	"extension-ui-request-select",
 	"response-set-plan-mode",
 	"response-approve-plan-mode",
 	"response-set-active-tools",
@@ -210,6 +211,14 @@ describe("RPC contract fixtures", () => {
 			type: "goal_updated",
 			goal: { id: "goal-1", status: "active" },
 			state: { enabled: true, mode: "active" },
+		});
+	});
+
+	test("select request fixture preserves aligned option descriptions", () => {
+		expect(frameFor("extension-ui-request-select")).toMatchObject({
+			method: "select",
+			options: ["Keep current", "Create branch"],
+			optionDetails: [{ description: "Continue in this session." }, { description: "Start a separate branch." }],
 		});
 	});
 
