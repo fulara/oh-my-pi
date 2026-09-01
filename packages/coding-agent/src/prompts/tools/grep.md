@@ -5,6 +5,7 @@ Searches files/internal URLs: Rust regex, PCRE2 fallback.
 - Broad searches may time out → narrow scope or use `glob` first.
 - One-file line selector: `src/foo.ts:50-100`; never selects search root.
 - Literal `\n` or `\\n` enables cross-line patterns.
+- No matches is a successful search result reported as `No matches found`; tool success/error says whether the search ran, not whether it matched.
 </instruction>
 
 <critical>
