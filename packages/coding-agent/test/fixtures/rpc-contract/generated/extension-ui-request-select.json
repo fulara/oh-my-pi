@@ -1,0 +1,19 @@
+{
+  "type": "extension_ui_request",
+  "id": "dialog-select-1",
+  "method": "select",
+  "title": "Choose a target",
+  "options": [
+    "Keep current",
+    "Create branch"
+  ],
+  "optionDetails": [
+    {
+      "description": "Continue in this session."
+    },
+    {
+      "description": "Start a separate branch."
+    }
+  ],
+  "timeout": 30000
+}
