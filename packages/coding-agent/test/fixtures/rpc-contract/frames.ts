@@ -977,4 +977,17 @@ export const rpcContractFixtures = [
 			timeout: 30000,
 		} satisfies RpcExtensionUIRequest,
 	},
+	{
+		name: "extension-ui-request-select",
+		category: "extension",
+		frame: {
+			type: "extension_ui_request",
+			id: "dialog-select-1",
+			method: "select",
+			title: "Choose a target",
+			options: ["Keep current", "Create branch"],
+			optionDetails: [{ description: "Continue in this session." }, { description: "Start a separate branch." }],
+			timeout: 30000,
+		} satisfies RpcExtensionUIRequest,
+	},
 ] satisfies RpcContractFixture[];
