@@ -40,7 +40,7 @@ async function createSession(
 		? await SessionManager.open(options.sessionFile, path.join(root, "sessions"))
 		: await SessionManager.continueRecent(root, path.join(root, "sessions"));
 	const toolRegistry = new Map<string, AgentTool>();
-	let session: AgentSession | undefined;
+	const sessionRef: { current?: AgentSession } = {};
 	const toolSession: ToolSession = {
 		cwd: root,
 		hasUI: false,
@@ -51,8 +51,8 @@ async function createSession(
 		getSessionSpawns: () => "*",
 		getSessionId: () => sessionManager.getSessionId(),
 		getArtifactsDir: () => sessionManager.getArtifactsDir(),
-		getPlanModeState: () => session?.getPlanModeState(),
-		getGoalModeState: () => session?.getGoalModeState(),
+		getPlanModeState: () => sessionRef.current?.getPlanModeState(),
+		getGoalModeState: () => sessionRef.current?.getGoalModeState(),
 		getToolByName: name => toolRegistry.get(name),
 	} as ToolSession;
 	const tools = await createTools(toolSession, ["read", "write"]);
@@ -74,7 +74,7 @@ async function createSession(
 		convertToLlm,
 		streamFn: model.stream,
 	});
-	session = new AgentSession({
+	const session = new AgentSession({
 		agent,
 		sessionManager,
 		settings,
@@ -93,6 +93,7 @@ async function createSession(
 				}
 			: {}),
 	});
+	sessionRef.current = session;
 	return session;
 }
 
@@ -263,6 +264,106 @@ describe("Fura RPC plan-mode runtime", () => {
 		await agentEnded.promise;
 
 		expect(session.getActiveToolNames()).toContain("read");
+	});
+
+	it("rolls back plan approval when the new session is cancelled", async () => {
+		const session = await createSession();
+		await session.setActiveToolsByName(["read"]);
+		await writeLocalPlan(session, "local://PLAN.md", "# Cancelled Plan\n");
+		const runtime = createFuraRpcRuntime(session, () => {});
+		await runtime.handleCommand({ id: "plan-on-cancel", type: "set_plan_mode", enabled: true });
+		session.newSession = async () => false;
+
+		const approved = await runtime.handleCommand({
+			id: "approve-cancelled",
+			type: "approve_plan_mode",
+			finalPlanFilePath: "local://CANCELLED.md",
+			preserveContext: false,
+		});
+
+		expect(approved).toEqual({
+			id: "approve-cancelled",
+			type: "response",
+			command: "approve_plan_mode",
+			success: true,
+			data: {
+				finalPlanFilePath: "local://CANCELLED.md",
+				contextPreserved: false,
+				executionDispatched: false,
+			},
+		});
+		expect(session.getPlanModeState()).toMatchObject({ enabled: true, planFilePath: "local://PLAN.md" });
+		expect(session.peekPlanProposalHandler()).toBeFunction();
+		expect(session.getActiveToolNames()).toEqual(["read", "write"]);
+		await expect(fs.readFile(resolveRpcPlanPath(session, "local://PLAN.md"), "utf8")).resolves.toBe(
+			"# Cancelled Plan\n",
+		);
+		await expect(fs.stat(resolveRpcPlanPath(session, "local://CANCELLED.md"))).rejects.toMatchObject({
+			code: "ENOENT",
+		});
+	});
+
+	it("rolls back plan approval when the new session fails before switching", async () => {
+		const session = await createSession();
+		await session.setActiveToolsByName(["read"]);
+		await writeLocalPlan(session, "local://PLAN.md", "# Failed Plan\n");
+		const runtime = createFuraRpcRuntime(session, () => {});
+		await runtime.handleCommand({ id: "plan-on-failure", type: "set_plan_mode", enabled: true });
+		session.newSession = async () => {
+			throw new Error("session transition failed");
+		};
+
+		const approved = await runtime.handleCommand({
+			id: "approve-failed",
+			type: "approve_plan_mode",
+			finalPlanFilePath: "local://FAILED.md",
+			preserveContext: false,
+		});
+
+		expect(approved).toMatchObject({
+			id: "approve-failed",
+			type: "response",
+			command: "approve_plan_mode",
+			success: false,
+			error: "session transition failed",
+		});
+		expect(session.getPlanModeState()).toMatchObject({ enabled: true, planFilePath: "local://PLAN.md" });
+		expect(session.peekPlanProposalHandler()).toBeFunction();
+		expect(session.getActiveToolNames()).toEqual(["read", "write"]);
+		await expect(fs.readFile(resolveRpcPlanPath(session, "local://PLAN.md"), "utf8")).resolves.toBe(
+			"# Failed Plan\n",
+		);
+		await expect(fs.stat(resolveRpcPlanPath(session, "local://FAILED.md"))).rejects.toMatchObject({ code: "ENOENT" });
+	});
+
+	it("passes approved plan compaction through internal guidance", async () => {
+		const session = await createSession();
+		await session.setActiveToolsByName(["read"]);
+		await writeLocalPlan(session, "local://PLAN.md", "# Compact Plan\n");
+		const compactCalls: Parameters<AgentSession["compact"]>[] = [];
+		session.compact = async (...args) => {
+			compactCalls.push(args);
+			return {} as never;
+		};
+		session.prompt = async () => true;
+		const runtime = createFuraRpcRuntime(session, () => {});
+		await runtime.handleCommand({ id: "plan-on-compact", type: "set_plan_mode", enabled: true });
+
+		const approved = await runtime.handleCommand({
+			id: "approve-compact",
+			type: "approve_plan_mode",
+			finalPlanFilePath: "local://Compact-Plan.md",
+			preserveContext: true,
+			compactBeforeExecute: true,
+		});
+
+		expect(approved).toMatchObject({
+			success: true,
+			data: { compactionOutcome: "ok", executionDispatched: true },
+		});
+		expect(compactCalls).toHaveLength(1);
+		expect(compactCalls[0]?.[0]).toBeUndefined();
+		expect(compactCalls[0]?.[1]?.internalGuidance).toContain("local://Compact-Plan.md");
 	});
 
 	it("preserves mounted discoverable tools when leaving plan mode", async () => {

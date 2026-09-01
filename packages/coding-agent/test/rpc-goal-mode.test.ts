@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import { type } from "@oh-my-pi/omptype";
 import { Agent, type AgentTool } from "@oh-my-pi/pi-agent-core";
 import { createMockModel } from "@oh-my-pi/pi-ai/providers/mock";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
@@ -10,6 +11,7 @@ import { AgentSession, type AgentSessionEvent } from "@oh-my-pi/pi-coding-agent/
 import { convertToLlm } from "@oh-my-pi/pi-coding-agent/session/messages";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
 import { createTools, HIDDEN_TOOLS, type ToolSession } from "@oh-my-pi/pi-coding-agent/tools";
+import type { XdevState } from "@oh-my-pi/pi-coding-agent/tools/xdev";
 
 const cleanupRoots: string[] = [];
 
@@ -17,7 +19,9 @@ afterEach(async () => {
 	await Promise.all(cleanupRoots.splice(0).map(root => fs.rm(root, { recursive: true, force: true })));
 });
 
-async function createSession(options: { root?: string; sessionFile?: string } = {}): Promise<AgentSession> {
+async function createSession(
+	options: { root?: string; sessionFile?: string; extraTools?: AgentTool[] } = {},
+): Promise<AgentSession> {
 	const root = options.root ?? (await fs.mkdtemp(path.join(os.tmpdir(), "omp-rpc-goal-mode-")));
 	if (!options.root) cleanupRoots.push(root);
 
@@ -29,7 +33,7 @@ async function createSession(options: { root?: string; sessionFile?: string } = 
 		? await SessionManager.open(options.sessionFile, path.join(root, "sessions"))
 		: await SessionManager.continueRecent(root, path.join(root, "sessions"));
 	const toolRegistry = new Map<string, AgentTool>();
-	let session: AgentSession | undefined;
+	const sessionRef: { current?: AgentSession } = {};
 	const toolSession: ToolSession = {
 		cwd: root,
 		hasUI: false,
@@ -40,14 +44,15 @@ async function createSession(options: { root?: string; sessionFile?: string } = 
 		getSessionSpawns: () => "*",
 		getSessionId: () => sessionManager.getSessionId(),
 		getArtifactsDir: () => sessionManager.getArtifactsDir(),
-		getPlanModeState: () => session?.getPlanModeState(),
-		getGoalModeState: () => session?.getGoalModeState(),
-		getGoalRuntime: () => session?.goalRuntime,
+		getPlanModeState: () => sessionRef.current?.getPlanModeState(),
+		getGoalModeState: () => sessionRef.current?.getGoalModeState(),
+		getGoalRuntime: () => sessionRef.current?.goalRuntime,
 		getToolByName: name => toolRegistry.get(name),
 	} as ToolSession;
-	const tools = await createTools(toolSession, ["read"]);
+	const tools = await createTools(toolSession, ["read", "write"]);
 	const goalTool = await HIDDEN_TOOLS.goal(toolSession);
-	for (const tool of [...tools, goalTool].filter((tool): tool is AgentTool => tool !== null))
+	const extraTools = options.extraTools ?? [];
+	for (const tool of [...tools, goalTool, ...extraTools].filter((tool): tool is AgentTool => tool !== null))
 		toolRegistry.set(tool.name, tool);
 
 	const model = createMockModel({ responses: [{ content: ["ok"] }] });
@@ -62,7 +67,25 @@ async function createSession(options: { root?: string; sessionFile?: string } = 
 		convertToLlm,
 		streamFn: model.stream,
 	});
-	session = new AgentSession({ agent, sessionManager, settings, modelRegistry: {} as never, toolRegistry });
+	const session = new AgentSession({
+		agent,
+		sessionManager,
+		settings,
+		modelRegistry: {} as never,
+		toolRegistry,
+		builtInToolNames: ["read", "write"],
+		...(extraTools.length > 0
+			? {
+					xdev: {
+						tools: toolRegistry,
+						mountedNames: new Set(extraTools.map(tool => tool.name)),
+						builtInNames: new Set(["read", "write"]),
+						isActive: name => agent.state.tools.some(tool => tool.name === name),
+					} satisfies XdevState,
+				}
+			: {}),
+	});
+	sessionRef.current = session;
 	return session;
 }
 
@@ -70,6 +93,20 @@ function goalEvents(events: AgentSessionEvent[]): Extract<AgentSessionEvent, { t
 	return events.filter((event): event is Extract<AgentSessionEvent, { type: "goal_updated" }> => {
 		return event.type === "goal_updated";
 	});
+}
+
+function makeDiscoverableTool(name: string): AgentTool {
+	const tool: AgentTool & { loadMode?: "discoverable" } = {
+		name,
+		label: name,
+		description: `Fake ${name}`,
+		parameters: type({}),
+		loadMode: "discoverable",
+		async execute() {
+			return { content: [{ type: "text" as const, text: "ok" }] };
+		},
+	};
+	return tool;
 }
 
 describe("Fura RPC goal-mode runtime", () => {
@@ -157,6 +194,25 @@ describe("Fura RPC goal-mode runtime", () => {
 		}
 	});
 
+	it("preserves mounted discoverable tools across goal activation and pause", async () => {
+		const session = await createSession({ extraTools: [makeDiscoverableTool("report_issue")] });
+		await session.setActiveToolPresentation(["read", "write", "report_issue"], ["report_issue"]);
+		const runtime = createFuraRpcRuntime(session);
+
+		await runtime.handleCommand({
+			id: "goal-create-mounted",
+			type: "goal_mode",
+			op: "create",
+			objective: "Keep mounted tools",
+		});
+		expect(session.getActiveToolNames()).toEqual(["read", "write", "goal"]);
+		expect(session.getMountedXdevToolNames()).toEqual(["report_issue"]);
+
+		await runtime.handleCommand({ id: "goal-pause-mounted", type: "goal_mode", op: "pause" });
+		expect(session.getActiveToolNames()).toEqual(["read", "write"]);
+		expect(session.getMountedXdevToolNames()).toEqual(["report_issue"]);
+	});
+
 	it("restores tools and clears goal state after tool-driven completion", async () => {
 		const session = await createSession();
 		await session.setActiveToolsByName(["read"]);
@@ -214,6 +270,44 @@ describe("Fura RPC goal-mode runtime", () => {
 			goal: { objective: "Survive process restart", status: "active" },
 		});
 		expect(resumedSession.getActiveToolNames()).toEqual(["read", "goal"]);
+	});
+
+	it("keeps paused goals inactive after interruption and process restart", async () => {
+		const session = await createSession();
+		await session.setActiveToolsByName(["read"]);
+		const runtime = createFuraRpcRuntime(session);
+		await runtime.handleCommand({
+			id: "goal-create-paused",
+			type: "goal_mode",
+			op: "create",
+			objective: "Pause cleanly",
+		});
+
+		await session.goalRuntime.onTaskAborted({ reason: "interrupted" });
+		const pausedState = session.getGoalModeState();
+		expect(pausedState).toMatchObject({ enabled: false, goal: { status: "paused" } });
+		await runtime.handleSessionEvent({
+			type: "goal_updated",
+			goal: pausedState?.goal ?? null,
+			state: pausedState!,
+		});
+		expect(session.getActiveToolNames()).toEqual(["read"]);
+
+		const root = session.sessionManager.getCwd();
+		await session.sessionManager.ensureOnDisk();
+		const sessionFile = session.sessionManager.getSessionFile();
+		expect(sessionFile).toBeDefined();
+		await session.dispose();
+
+		const resumedSession = await createSession({ root, sessionFile: sessionFile! });
+		await resumedSession.setActiveToolsByName(["read"]);
+		const resumedRuntime = createFuraRpcRuntime(resumedSession);
+		await resumedRuntime.reconcileSessionMode();
+		expect(resumedSession.getGoalModeState()).toMatchObject({
+			enabled: false,
+			goal: { objective: "Pause cleanly", status: "paused" },
+		});
+		expect(resumedSession.getActiveToolNames()).toEqual(["read"]);
 	});
 
 	it("rejects goal operations that require active mode", async () => {

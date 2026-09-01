@@ -61,4 +61,33 @@ describe("RPC message pagination", () => {
 		expect(first.messages).toEqual([messages[0]]);
 		expect(first.nextCursor).toBeDefined();
 	});
+
+	it("elides one individually oversized message while advancing a protocol v1 cursor", () => {
+		const messages = [message(0, 2 * 1024 * 1024), message(1, 128)];
+		const pageSnapshot = {
+			sessionId: "session-v1",
+			leafId: "leaf-v1",
+			messageCount: messages.length,
+		};
+		const first = pageRpcMessages(messages, pageSnapshot, { limit: 10, elideOversizedMessages: true });
+		const encoded = encodeRpcFrame({
+			id: "page-v1",
+			type: "response",
+			command: "get_messages_page",
+			success: true,
+			data: first,
+		});
+
+		expect(JSON.parse(encoded).success).toBe(true);
+		expect(first.messages).toHaveLength(1);
+		expect(first.messages[0]).toMatchObject({
+			role: "custom",
+			customType: "rpc-message-elided",
+			details: { index: 0, role: "user" },
+		});
+		expect(first.nextCursor).toBeDefined();
+		expect(pageRpcMessages(messages, pageSnapshot, { cursor: first.nextCursor, limit: 10 }).messages).toEqual([
+			messages[1],
+		]);
+	});
 });

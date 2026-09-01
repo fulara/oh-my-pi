@@ -30,7 +30,7 @@ async function createSession(
 	});
 	const sessionManager = await SessionManager.continueRecent(root, path.join(root, "sessions"));
 	const toolRegistry = new Map<string, AgentTool>();
-	let session: AgentSession | undefined;
+	const sessionRef: { current?: AgentSession } = {};
 	const toolSession: ToolSession = {
 		cwd: root,
 		hasUI: false,
@@ -41,8 +41,8 @@ async function createSession(
 		getSessionSpawns: () => "*",
 		getSessionId: () => sessionManager.getSessionId(),
 		getArtifactsDir: () => sessionManager.getArtifactsDir(),
-		getPlanModeState: () => session?.getPlanModeState(),
-		getGoalModeState: () => session?.getGoalModeState(),
+		getPlanModeState: () => sessionRef.current?.getPlanModeState(),
+		getGoalModeState: () => sessionRef.current?.getGoalModeState(),
 		getToolByName: name => toolRegistry.get(name),
 	} as ToolSession;
 	const tools = await createTools(toolSession, toolNames);
@@ -64,7 +64,7 @@ async function createSession(
 		convertToLlm,
 		streamFn: model.stream,
 	});
-	session = new AgentSession({
+	const session = new AgentSession({
 		agent,
 		sessionManager,
 		settings,
@@ -72,6 +72,7 @@ async function createSession(
 		toolRegistry,
 		sideStreamFn: model.stream,
 	});
+	sessionRef.current = session;
 	return session;
 }
 
