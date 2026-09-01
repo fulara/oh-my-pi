@@ -19,7 +19,7 @@ import * as fs from "node:fs/promises";
 import type { AgentToolResult } from "@oh-my-pi/pi-agent-core";
 import { CompactionCancelledError } from "@oh-my-pi/pi-agent-core/compaction";
 import type { AssistantMessage } from "@oh-my-pi/pi-ai";
-import { $env, isEnoent, isRecord, logger, prompt, readLines, Snowflake } from "@oh-my-pi/pi-utils";
+import { $env, isEnoent, isRecord, logger, prompt, Snowflake } from "@oh-my-pi/pi-utils";
 import { reset as resetCapabilities } from "../../capability";
 import { clearPluginRootsAndCaches, resolveActiveProjectRegistryPath } from "../../discovery/helpers";
 import {
@@ -42,9 +42,7 @@ import { resolveLocalUrlToPath } from "../../internal-urls";
 import { type Theme, theme } from "@oh-my-pi/pi-tui/theme";
 import { type PlanApprovalDetails, resolvePlanTitle } from "../../plan-mode/approved-plan";
 import planModeApprovedPrompt from "../../prompts/system/plan-mode-approved.md" with { type: "text" };
-import planModeCompactInstructionsPrompt from "../../prompts/system/plan-mode-compact-instructions.md" with {
-	type: "text",
-};
+import planModeCompactInstructionsPrompt from "../../prompts/system/plan-mode-compact-instructions.md" with { type: "text" };
 import type { AgentSession, AgentSessionEvent } from "../../session/agent-session";
 import { findMostRecentNonEmptySession } from "../../session/session-listing";
 import { SKILL_PROMPT_MESSAGE_TYPE, USER_INTERRUPT_LABEL } from "../../session/messages";
@@ -58,7 +56,6 @@ import { ToolError } from "../../tools/tool-errors";
 import type { EventBus } from "../../utils/event-bus";
 import { selectRpcEntries } from "./rpc-compat";
 import { formatPersistenceDurabilityFailure, formatPersistenceFailure } from "../persistence-failure";
-import * as git from "../../utils/git";
 import { calculateTokensPerSecond } from "../../utils/token-rate";
 import { initializeExtensions } from "../runtime-init";
 import { isRpcHostToolResult, isRpcHostToolUpdate, RpcHostToolBridge } from "./host-tools";
@@ -621,6 +618,7 @@ export interface RpcFuraRuntimeState {
 	planPreviousMountedTools?: string[];
 	planHasEntered: boolean;
 	goalPreviousTools?: string[];
+	goalPreviousMountedTools?: string[];
 }
 
 function successResponse<T extends RpcCommand["type"]>(
@@ -766,6 +764,7 @@ function extractRpcPlanReviewDetails(toolName: string, result: unknown): RpcPlan
 }
 
 
+
 export function createFuraRpcRuntime(
 	session: AgentSession,
 	output: RpcOutput = () => {},
@@ -784,20 +783,29 @@ export function createFuraRpcRuntime(
 	};
 
 	const restoreGoalTools = async (): Promise<void> => {
-		if (state.goalPreviousTools !== undefined) {
-			await session.setActiveToolsByName(state.goalPreviousTools);
-			state.goalPreviousTools = undefined;
+		const previousTools = state.goalPreviousTools;
+		if (previousTools === undefined) return;
+		const previousMountedTools = state.goalPreviousMountedTools ?? [];
+		state.goalPreviousTools = undefined;
+		state.goalPreviousMountedTools = undefined;
+		try {
+			await session.setActiveToolPresentation(previousTools, previousMountedTools);
+		} catch (error) {
+			state.goalPreviousTools = previousTools;
+			state.goalPreviousMountedTools = previousMountedTools;
+			throw error;
 		}
 	};
 
 	const activateGoalTools = async (): Promise<void> => {
 		if (state.goalPreviousTools === undefined) {
-			state.goalPreviousTools = session.getActiveToolNames().filter(name => name !== "goal");
+			state.goalPreviousTools = session.getEnabledToolNames().filter(name => name !== "goal");
+			state.goalPreviousMountedTools = session.getMountedXdevToolNames().filter(name => name !== "goal");
 		}
 		const previousTools = state.goalPreviousTools;
 		const hasGoalTool = session.getToolByName("goal") !== undefined;
 		const goalTools = hasGoalTool ? [...previousTools, "goal"] : previousTools;
-		await session.setActiveToolsByName([...new Set(goalTools)]);
+		await session.setActiveToolPresentation([...new Set(goalTools)], state.goalPreviousMountedTools ?? []);
 		if (session.isStreaming) {
 			await session.sendGoalModeContext({ deliverAs: "steer" });
 		}
@@ -927,15 +935,18 @@ export function createFuraRpcRuntime(
 		return successResponse(command.id, "set_plan_mode", { planMode });
 	};
 
-	const maybeRenameApprovedPlan = async (planFilePath: string, finalPlanFilePath: string): Promise<void> => {
-		if (planFilePath === finalPlanFilePath) return;
-		if (!isLocalPlanPath(planFilePath) || !isLocalPlanPath(finalPlanFilePath)) return;
+	const maybeRenameApprovedPlan = async (
+		planFilePath: string,
+		finalPlanFilePath: string,
+	): Promise<{ source: string; destination: string } | undefined> => {
+		if (planFilePath === finalPlanFilePath) return undefined;
+		if (!isLocalPlanPath(planFilePath) || !isLocalPlanPath(finalPlanFilePath)) return undefined;
 		const localOptions = getRpcLocalOptions(session);
-		const resolvedSource = resolveLocalUrlToPath(normalizeLocalScheme(planFilePath), localOptions);
-		const resolvedDestination = resolveLocalUrlToPath(normalizeLocalScheme(finalPlanFilePath), localOptions);
-		if (resolvedSource === resolvedDestination) return;
+		const source = resolveLocalUrlToPath(normalizeLocalScheme(planFilePath), localOptions);
+		const destination = resolveLocalUrlToPath(normalizeLocalScheme(finalPlanFilePath), localOptions);
+		if (source === destination) return undefined;
 		try {
-			const destinationStat = await fs.stat(resolvedDestination);
+			const destinationStat = await fs.stat(destination);
 			if (destinationStat.isFile()) {
 				throw new ToolError(
 					`Plan destination already exists at ${finalPlanFilePath}. Choose a different title and submit the plan for approval again.`,
@@ -945,7 +956,8 @@ export function createFuraRpcRuntime(
 		} catch (error) {
 			if (!isEnoent(error)) throw error;
 		}
-		await fs.rename(resolvedSource, resolvedDestination);
+		await fs.rename(source, destination);
+		return { source, destination };
 	};
 
 	const approvePlanMode = async (
@@ -968,14 +980,27 @@ export function createFuraRpcRuntime(
 		// embedding the plan inline, so execution must keep `read` available even
 		// when the pre-plan active tool set omitted it.
 		const executionTools = previousTools.includes("read") ? previousTools : [...previousTools, "read"];
+		const approvalSessionId = session.sessionId;
 
-		await maybeRenameApprovedPlan(planFilePath, finalPlanFilePath);
+		const renamedPlan = await maybeRenameApprovedPlan(planFilePath, finalPlanFilePath);
 
 		const contextPreserved = command.preserveContext === true;
 		const compactBeforeExecute = contextPreserved && command.compactBeforeExecute === true;
 		if (compactBeforeExecute) {
 			session.markPlanInternalAbortPending();
 		}
+
+		const rollbackCancelledPlanApproval = async (): Promise<void> => {
+			if (renamedPlan) await fs.rename(renamedPlan.destination, renamedPlan.source);
+			if (!activePlanMode?.enabled) return;
+			state.planPreviousTools = previousTools;
+			state.planPreviousMountedTools = previousMountedTools;
+			session.setPlanModeState(activePlanMode);
+			session.setPlanProposalHandler(title => handleRpcPlanProposal(title));
+			session.sessionManager.appendModeChange("plan", { planFilePath: activePlanMode.planFilePath });
+			const planTools = session.hasBuiltInTool("write") ? [...previousTools, "write"] : previousTools;
+			await session.setActiveToolPresentation([...new Set(planTools)], previousMountedTools);
+		};
 
 		let compactionOutcome: "ok" | "cancelled" | "failed" | undefined;
 		try {
@@ -987,6 +1012,7 @@ export function createFuraRpcRuntime(
 					previousSessionFile ? { parentSession: previousSessionFile } : undefined,
 				);
 				if (!started) {
+					await rollbackCancelledPlanApproval();
 					return successResponse(command.id, "approve_plan_mode", {
 						finalPlanFilePath,
 						contextPreserved: false,
@@ -1003,12 +1029,17 @@ export function createFuraRpcRuntime(
 					planFilePath: finalPlanFilePath,
 				});
 				try {
-					await session.compact(compactionPrompt);
+					await session.compact(undefined, { internalGuidance: compactionPrompt });
 					compactionOutcome = "ok";
 				} catch (error) {
 					compactionOutcome = error instanceof CompactionCancelledError ? "cancelled" : "failed";
 				}
 			}
+		} catch (error) {
+			if (!contextPreserved && session.sessionId === approvalSessionId) {
+				await rollbackCancelledPlanApproval();
+			}
+			throw error;
 		} finally {
 			session.clearPlanInternalAbortPending();
 		}
@@ -1192,7 +1223,7 @@ export function createFuraRpcRuntime(
 				goal,
 			});
 			const restored = await session.goalRuntime.onThreadResumed({ preserveActiveGoal: true });
-			if (restored?.goal) await activateGoalTools();
+			if (restored?.enabled && restored.goal.status === "active") await activateGoalTools();
 			return;
 		}
 
@@ -1229,22 +1260,23 @@ export function createFuraRpcRuntime(
 				case "btw_release":
 					return releaseBtw(command);
 				case "btw_promote":
-					return promoteBtw(command);
+					return await promoteBtw(command);
 				case "set_active_tools": {
 					await session.setActiveToolsByName(command.toolNames);
 					return successResponse(command.id, "set_active_tools", { toolNames: session.getActiveToolNames() });
 				}
 				case "set_plan_mode": {
 					return command.enabled
-						? enterPlanMode(command)
+						? await enterPlanMode(command)
 						: successResponse(command.id, "set_plan_mode", { planMode: await exitPlanMode() });
 				}
 				case "approve_plan_mode": {
-					return approvePlanMode(command);
+					return await approvePlanMode(command);
 				}
 				case "goal_mode": {
-					return handleGoalMode(command);
+					return await handleGoalMode(command);
 				}
+
 				default:
 					return undefined;
 			}
@@ -1254,6 +1286,10 @@ export function createFuraRpcRuntime(
 	};
 
 	const handleSessionEvent = async (event: AgentSessionEvent): Promise<void> => {
+		if (event.type === "goal_updated") {
+			if (event.state?.enabled !== true || event.goal?.status !== "active") await restoreGoalTools();
+			return;
+		}
 		if (event.type === "agent_end") {
 			const goalMode = session.getGoalModeState();
 			if (goalMode?.mode !== "exiting" || goalMode.reason !== "completed") return;
@@ -1463,7 +1499,6 @@ export interface RpcModeOptions {
  */
 export async function runRpcMode(session: AgentSession, options: RpcModeOptions = {}): Promise<never> {
 	const { setToolUIContext, headless = false, subagentEventBus, input = claimRpcInput() } = options;
-	// Signal to RPC clients that the server is ready to accept commands
 	// Suppress terminal notifications: they write \x07 (BEL) or OSC sequences directly to
 	// process.stdout with no newline, which the reader merges with the next JSON line and
 	// breaks JSON.parse. In RPC mode stdout is the JSON protocol channel — nothing else
@@ -1471,6 +1506,7 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 	process.env.PI_NOTIFICATIONS = "off";
 
 	const frameEncoder = new RpcFrameEncoder();
+	let protocolV2Enabled = false;
 	const outputWriter = new RpcOutputWriter(process.stdout, failure => {
 		logger.error("RPC output delivery failed", { error: String(failure) });
 		void session.dispose().finally(() => process.exit(1));
@@ -1486,8 +1522,10 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 	);
 	const output = (obj: RpcResponse | RpcExtensionUIRequest | object) => {
 		outputWriter.write(frameEncoder.encodeFrames(obj));
-		if (isRecord(obj) && obj.type === "response" && obj.command === "negotiate_protocol" && obj.success === true)
+		if (isRecord(obj) && obj.type === "response" && obj.command === "negotiate_protocol" && obj.success === true) {
 			frameEncoder.setProtocolVersion(2);
+			protocolV2Enabled = true;
+		}
 	};
 	const emitRpcTitles = shouldEmitRpcTitles();
 
@@ -1816,7 +1854,6 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 	// Handle a single command
 	const handleCommand = async (command: RpcCommand): Promise<RpcResponse> => {
 		const id = command.id;
-
 		const furaResponse = await furaRuntime.handleCommand(command);
 		if (furaResponse) return furaResponse;
 
@@ -1954,7 +1991,6 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 					promptResults.abortOpen();
 					// The detached run publishes no terminal agent_end to settle on.
 					void settleWatcher.check();
-					if (command.type !== "switch_session") await furaRuntime.reconcileSessionMode();
 					await emitAvailableCommandsUpdate();
 				}
 				return success(id, result.type, result.data);
@@ -2314,7 +2350,7 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 								leafId: session.sessionManager.getLeafId(),
 								messageCount: messages.length,
 							},
-							{ cursor: command.cursor, limit: command.limit },
+							{ cursor: command.cursor, limit: command.limit, elideOversizedMessages: !protocolV2Enabled },
 						),
 					);
 				} catch (pageError) {

@@ -180,6 +180,11 @@
     "file": "extension-ui-request-confirm.json"
   },
   {
+    "name": "extension-ui-request-select",
+    "category": "extension",
+    "file": "extension-ui-request-select.json"
+  },
+  {
     "name": "host-tool-call",
     "category": "host-tool",
     "file": "host-tool-call.json"

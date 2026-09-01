@@ -94,6 +94,7 @@ import {
 	formatDuration,
 	getAgentDbPath,
 	isBunTestRuntime,
+	isEnoent,
 	isInteractiveHost,
 	isRecord,
 	logger,
@@ -2437,27 +2438,18 @@ export class AgentSession implements SettingsScope {
 		this.#sessionBeforeSwitchReconciler = reconciler ?? undefined;
 	}
 
-	#sessionSwitchReconciler: (() => Promise<void>) | undefined;
+	#sessionSwitchReconciler: ((reason: "new" | "resume" | "fork") => Promise<void>) | undefined;
 
-	setSessionSwitchReconciler(reconciler: (() => Promise<void>) | null): void {
+	setSessionSwitchReconciler(reconciler: ((reason: "new" | "resume" | "fork") => Promise<void>) | null): void {
 		this.#sessionSwitchReconciler = reconciler ?? undefined;
 	}
 
-	/**
-	 * Re-anchor mode state to the session a branch just minted. Branching mints a
-	 * new session id/file (see {@link SessionManager.createBranchedSession}), so
-	 * without this the interactive-mode reconciler keeps the pre-branch vibe owner
-	 * scope and disabling vibe mode trips the stale-scope guard in
-	 * `VibeRuntime.#persistModeExit` (issue #10468). Mirrors the reconcile step
-	 * `switchSession` runs for the same reason. Best-effort: a reconcile failure
-	 * must not roll back an otherwise-successful branch.
-	 */
-	async #reconcileModeAfterBranch(): Promise<void> {
+	async #reconcileSessionAfterSwitch(reason: "new" | "resume" | "fork"): Promise<void> {
 		try {
-			await this.#sessionSwitchReconciler?.();
+			await this.#sessionSwitchReconciler?.(reason);
 		} catch (error) {
-			logger.warn("Failed to reconcile session mode after branch", {
-				sessionFile: this.sessionFile,
+			logger.warn("Failed to reconcile session mode after switch", {
+				targetSessionFile: this.sessionFile,
 				error: String(error),
 			});
 		}
@@ -8805,6 +8797,8 @@ export class AgentSession implements SettingsScope {
 			resetCapabilities();
 			await this.refreshBaseSystemPrompt();
 
+			await this.#reconcileSessionAfterSwitch("new");
+
 			// Emit session_switch event with reason "new" to hooks
 			if (this.#extensionRunner) {
 				await this.#extensionRunner.emit({
@@ -8897,6 +8891,8 @@ export class AgentSession implements SettingsScope {
 			this.#advisors.reattachRecorderFeeds();
 			advisorRecordersDetached = false;
 			await this.#memory.resetContextForNewTranscript();
+
+			await this.#reconcileSessionAfterSwitch("fork");
 
 			// Emit session_switch event with reason "fork" to hooks
 			if (this.#extensionRunner) {
@@ -10303,14 +10299,7 @@ export class AgentSession implements SettingsScope {
 				this.#clearSessionScopedToolState();
 			}
 			this.#reconnectToAgent();
-			try {
-				await this.#sessionSwitchReconciler?.();
-			} catch (error) {
-				logger.warn("Failed to reconcile session mode after switch", {
-					targetSessionFile: sessionPath,
-					error: String(error),
-				});
-			}
+			await this.#reconcileSessionAfterSwitch("resume");
 			// Refresh the workspace-roots block to match the resumed session's directory set.
 			// Wrapped so a rebuild failure (e.g. a gate that intentionally fails in tests)
 			// doesn't roll back an otherwise-successful session switch.
@@ -10397,7 +10386,7 @@ export class AgentSession implements SettingsScope {
 			this.#advisors.reattachRecorderFeeds();
 			this.#reconnectToAgent();
 			try {
-				await this.#sessionSwitchReconciler?.();
+				await this.#sessionSwitchReconciler?.("resume");
 			} catch (reconcileError) {
 				logger.warn("Failed to reconcile session mode after switch rollback", {
 					targetSessionFile: sessionPath,
@@ -10533,7 +10522,7 @@ export class AgentSession implements SettingsScope {
 
 			this.#advisors.reattachRecorderFeeds();
 			advisorRecordersDetached = false;
-			await this.#reconcileModeAfterBranch();
+			await this.#reconcileSessionAfterSwitch("fork");
 			return { selectedText, selectedImages, cancelled: false };
 		} finally {
 			if (advisorRecordersDetached) {
@@ -10712,7 +10701,7 @@ export class AgentSession implements SettingsScope {
 			this.#advisors.resetSessionState();
 			this.#closeCodexProviderSessionsForHistoryRewrite();
 			advisorRecordersDetached = false;
-			await this.#reconcileModeAfterBranch();
+			await this.#reconcileSessionAfterSwitch("fork");
 
 			return { cancelled: false, sessionFile: this.sessionFile };
 		} finally {
