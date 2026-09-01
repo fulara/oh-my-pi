@@ -97,6 +97,7 @@ import {
 	formatDuration,
 	getAgentDbPath,
 	isBunTestRuntime,
+	isEnoent,
 	isInteractiveHost,
 	isRecord,
 	logger,
@@ -2916,28 +2917,18 @@ export class AgentSession implements SettingsScope {
 		this.#sessionBeforeSwitchReconciler = reconciler ?? undefined;
 	}
 
-	#sessionSwitchReconciler: (() => Promise<void>) | undefined;
+	#sessionSwitchReconciler: ((reason: "new" | "resume" | "fork") => Promise<void>) | undefined;
 
-	setSessionSwitchReconciler(reconciler: (() => Promise<void>) | null): void {
+	setSessionSwitchReconciler(reconciler: ((reason: "new" | "resume" | "fork") => Promise<void>) | null): void {
 		this.#sessionSwitchReconciler = reconciler ?? undefined;
 	}
 
-	/**
-	 * Re-anchor mode state to the session a branch or `/new` just minted. Both
-	 * mint a new session id/file, so without this the interactive-mode reconciler
-	 * keeps the previous session's transient mode: a stale vibe owner scope trips
-	 * the guard in `VibeRuntime.#persistModeExit` after a branch (issue #10468),
-	 * and plan/goal mode keeps running in a new session that records no mode
-	 * (issue #14653). Mirrors the reconcile step `switchSession` runs for the same
-	 * reason. Best-effort: a reconcile failure must not roll back an
-	 * otherwise-successful transition.
-	 */
-	async #reconcileModeAfterTransition(): Promise<void> {
+	async #reconcileSessionAfterSwitch(reason: "new" | "resume" | "fork"): Promise<void> {
 		try {
-			await this.#sessionSwitchReconciler?.();
+			await this.#sessionSwitchReconciler?.(reason);
 		} catch (error) {
-			logger.warn("Failed to reconcile session mode after session transition", {
-				sessionFile: this.sessionFile,
+			logger.warn("Failed to reconcile session mode after switch", {
+				targetSessionFile: this.sessionFile,
 				error: String(error),
 			});
 		}
@@ -10236,7 +10227,7 @@ export class AgentSession implements SettingsScope {
 			this.#advisors.resetSessionState();
 			advisorRecordersDetached = false;
 			this.#reconnectToAgent();
-			await this.#reconcileModeAfterTransition();
+			await this.#reconcileSessionAfterSwitch("new");
 			// Drop the process-lifetime context-file cache so the rebuild re-reads
 			// AGENTS.md and friends from disk: the user may have edited them since
 			// the previous session started, and refreshBaseSystemPrompt() re-runs
@@ -10368,6 +10359,8 @@ export class AgentSession implements SettingsScope {
 			this.#advisors.reattachRecorderFeeds();
 			advisorRecordersDetached = false;
 			await this.#memory.resetContextForNewTranscript();
+
+			await this.#reconcileSessionAfterSwitch("fork");
 
 			// Emit session_switch event with reason "fork" to hooks
 			if (this.#extensionRunner) {
@@ -12023,14 +12016,7 @@ export class AgentSession implements SettingsScope {
 				this.#clearSessionScopedToolState();
 			}
 			this.#reconnectToAgent();
-			try {
-				await this.#sessionSwitchReconciler?.();
-			} catch (error) {
-				logger.warn("Failed to reconcile session mode after switch", {
-					targetSessionFile: sessionPath,
-					error: String(error),
-				});
-			}
+			await this.#reconcileSessionAfterSwitch("resume");
 			// Refresh the workspace-roots block to match the resumed session's directory set.
 			// Wrapped so a rebuild failure (e.g. a gate that intentionally fails in tests)
 			// doesn't roll back an otherwise-successful session switch.
@@ -12121,7 +12107,7 @@ export class AgentSession implements SettingsScope {
 			this.#advisors.reattachRecorderFeeds();
 			this.#reconnectToAgent();
 			try {
-				await this.#sessionSwitchReconciler?.();
+				await this.#sessionSwitchReconciler?.("resume");
 			} catch (reconcileError) {
 				logger.warn("Failed to reconcile session mode after switch rollback", {
 					targetSessionFile: sessionPath,
@@ -12311,7 +12297,7 @@ export class AgentSession implements SettingsScope {
 
 			this.#advisors.reattachRecorderFeeds();
 			advisorRecordersDetached = false;
-			await this.#reconcileModeAfterTransition();
+			await this.#reconcileSessionAfterSwitch("fork");
 			return true;
 		} finally {
 			if (advisorRecordersDetached) {
@@ -12474,7 +12460,7 @@ export class AgentSession implements SettingsScope {
 			this.#advisors.resetSessionState();
 			this.#closeCodexProviderSessionsForHistoryRewrite();
 			advisorRecordersDetached = false;
-			await this.#reconcileModeAfterTransition();
+			await this.#reconcileSessionAfterSwitch("fork");
 
 			return { cancelled: false, sessionFile: this.sessionFile };
 		} finally {
