@@ -305,6 +305,23 @@ export const rpcContractFixtures = [
 		frame: { id: "cmd-fork-1", type: "fork" } satisfies Extract<RpcCommand, { type: "fork" }>,
 	},
 	{
+		name: "command-get-branch-messages",
+		category: "command",
+		frame: {
+			id: "cmd-branch-messages-1",
+			type: "get_branch_messages",
+		} satisfies Extract<RpcCommand, { type: "get_branch_messages" }>,
+	},
+	{
+		name: "command-branch",
+		category: "command",
+		frame: {
+			id: "cmd-branch-1",
+			type: "branch",
+			entryId: "entry-image-only",
+		} satisfies Extract<RpcCommand, { type: "branch" }>,
+	},
+	{
 		name: "command-btw-start",
 		category: "command",
 		frame: {
@@ -806,6 +823,50 @@ export const rpcContractFixtures = [
 			success: true,
 			data: { cancelled: false },
 		} satisfies Extract<RpcResponse, { command: "fork"; success: true }>,
+	},
+	{
+		name: "response-get-branch-messages",
+		category: "response",
+		frame: {
+			id: "cmd-branch-messages-1",
+			type: "response",
+			command: "get_branch_messages",
+			success: true,
+			data: {
+				messages: [
+					{ entryId: "entry-text", text: "Inspect this", imageCount: 0 },
+					{ entryId: "entry-image-only", text: "", imageCount: 2 },
+				],
+			},
+		} satisfies Extract<RpcResponse, { command: "get_branch_messages"; success: true }>,
+	},
+	{
+		name: "response-branch",
+		category: "response",
+		frame: {
+			id: "cmd-branch-1",
+			type: "response",
+			command: "branch",
+			success: true,
+			data: {
+				text: "",
+				images: [
+					{
+						type: "image",
+						data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB",
+						mimeType: "image/png",
+						detail: "original",
+					},
+					{
+						type: "image",
+						data: "/9j/4AAQSkZJRgABAQAAAQABAAD",
+						mimeType: "image/jpeg",
+						providerFile: { provider: "anthropic", id: "file_branch_1" },
+					},
+				],
+				cancelled: false,
+			},
+		} satisfies Extract<RpcResponse, { command: "branch"; success: true }>,
 	},
 	{
 		name: "response-btw-start",

@@ -20,7 +20,7 @@ import { toolWireSchema } from "@oh-my-pi/pi-ai/utils/schema";
 import * as fs from "node:fs/promises";
 import type { AgentToolResult } from "@oh-my-pi/pi-agent-core";
 import { CompactionCancelledError } from "@oh-my-pi/pi-agent-core/compaction";
-import type { AssistantMessage } from "@oh-my-pi/pi-ai";
+import type { AssistantMessage, ImageContent } from "@oh-my-pi/pi-ai";
 import { $env, isEnoent, isRecord, logger, prompt, Snowflake } from "@oh-my-pi/pi-utils";
 import { reset as resetCapabilities } from "../../capability";
 import { clearPluginRootsAndCaches, resolveActiveProjectRegistryPath } from "../../discovery/helpers";
@@ -249,10 +249,13 @@ export type RpcQueueModeCommand = Extract<
 export type RpcSessionChangeResult =
 	| { type: "new_session"; data: { cancelled: boolean } }
 	| { type: "switch_session"; data: { cancelled: boolean } }
-	| { type: "branch"; data: { text: string; cancelled: boolean } }
+	| { type: "branch"; data: { text: string; images: ImageContent[]; cancelled: boolean } }
 	| { type: "fork"; data: { cancelled: boolean } };
 
-export type RpcSessionChangeSession = Pick<AgentSession, "newSession" | "switchSession" | "branch" | "fork">;
+export type RpcSessionChangeSession = Pick<
+	AgentSession,
+	"newSession" | "switchSession" | "branch" | "fork" | "isStreaming" | "isCompacting"
+>;
 
 export type RpcSkillCommandSession = Pick<AgentSession, "promptCustomMessage" | "skills" | "skillsSettings">;
 export type RpcSkillCommandResult = { agentInvoked: true };
@@ -809,9 +812,14 @@ export async function handleRpcSessionChange(
 		}
 
 		case "branch": {
+			if (session.isStreaming) throw new Error("Cannot branch while a response is in progress");
+			if (session.isCompacting) throw new Error("Cannot branch while compaction is in progress");
 			const result = await session.branch(command.entryId);
 			if (!result.cancelled) subagentRegistry?.clear();
-			return { type: "branch", data: { text: result.selectedText, cancelled: result.cancelled } };
+			return {
+				type: "branch",
+				data: { text: result.selectedText, images: result.selectedImages, cancelled: result.cancelled },
+			};
 		}
 
 		case "fork": {
