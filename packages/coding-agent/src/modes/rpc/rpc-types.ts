@@ -392,13 +392,19 @@ export type RpcResponse =
 	| { id?: string; type: "response"; command: "get_session_stats"; success: true; data: SessionStats }
 	| { id?: string; type: "response"; command: "export_html"; success: true; data: { path: string } }
 	| { id?: string; type: "response"; command: "switch_session"; success: true; data: { cancelled: boolean } }
-	| { id?: string; type: "response"; command: "branch"; success: true; data: { text: string; cancelled: boolean } }
+	| {
+			id?: string;
+			type: "response";
+			command: "branch";
+			success: true;
+			data: { text: string; images: ImageContent[]; cancelled: boolean };
+	  }
 	| {
 			id?: string;
 			type: "response";
 			command: "get_branch_messages";
 			success: true;
-			data: { messages: Array<{ entryId: string; text: string }> };
+			data: { messages: Array<{ entryId: string; text: string; imageCount: number }> };
 	  }
 	| {
 			id?: string;

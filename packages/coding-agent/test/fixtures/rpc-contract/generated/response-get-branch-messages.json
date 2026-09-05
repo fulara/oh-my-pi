@@ -1,0 +1,20 @@
+{
+  "id": "cmd-branch-messages-1",
+  "type": "response",
+  "command": "get_branch_messages",
+  "success": true,
+  "data": {
+    "messages": [
+      {
+        "entryId": "entry-text",
+        "text": "Inspect this",
+        "imageCount": 0
+      },
+      {
+        "entryId": "entry-image-only",
+        "text": "",
+        "imageCount": 2
+      }
+    ]
+  }
+}
