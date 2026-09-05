@@ -248,7 +248,7 @@ FAKE_SERVER = textwrap.dedent(
     print(json.dumps({"type": "ready"}), flush=True)
     todo_phases = []
     messages = []
-    branch_messages = [{"entryId": "entry-1", "text": "branch message"}]
+    branch_messages = [{"entryId": "entry-1", "text": "branch message", "imageCount": 0}]
     model_provider = "anthropic"
     model_id = "claude-sonnet-4-5"
     thinking_level = "medium"
@@ -393,8 +393,31 @@ FAKE_SERVER = textwrap.dedent(
         elif command_type == "switch_session":
             respond(request_id, "switch_session", {"cancelled": False})
         elif command_type == "branch":
-            branch_messages = [{"entryId": command["entryId"], "text": "branch message"}]
-            respond(request_id, "branch", {"text": "branch created", "cancelled": False})
+            branch_messages = [
+                {"entryId": command["entryId"], "text": "branch message", "imageCount": 2}
+            ]
+            respond(
+                request_id,
+                "branch",
+                {
+                    "text": "branch created",
+                    "images": [
+                        {
+                            "type": "image",
+                            "data": "cG5n",
+                            "mimeType": "image/png",
+                            "detail": "original",
+                        },
+                        {
+                            "type": "image",
+                            "data": "anBlZw==",
+                            "mimeType": "image/jpeg",
+                            "providerFile": {"provider": "anthropic", "id": "file_123"},
+                        },
+                    ],
+                    "cancelled": False,
+                },
+            )
         elif command_type == "get_branch_messages":
             respond(request_id, "get_branch_messages", {"messages": branch_messages})
         elif command_type == "get_last_assistant_text":
@@ -1202,8 +1225,20 @@ class RpcClientTests(unittest.TestCase):
 
             branch = client.branch("entry-9")
             self.assertEqual(branch.text, "branch created")
+            self.assertFalse(branch.cancelled)
+            self.assertEqual(
+                [(image["mimeType"], image.get("detail")) for image in branch.images],
+                [("image/png", "original"), ("image/jpeg", None)],
+            )
+            self.assertEqual(
+                branch.images[1]["providerFile"],
+                {"provider": "anthropic", "id": "file_123"},
+            )
             branch_messages = client.get_branch_messages()
-            self.assertEqual(branch_messages[0].entry_id, "entry-9")
+            self.assertEqual(
+                [(item.entry_id, item.text, item.image_count) for item in branch_messages],
+                [("entry-9", "branch message", 2)],
+            )
 
     def test_message_and_control_commands(self) -> None:
         with self.make_client() as client:

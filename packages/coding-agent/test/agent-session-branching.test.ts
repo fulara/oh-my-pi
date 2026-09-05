@@ -223,6 +223,48 @@ describe("AgentSession historical image prompts", () => {
 		}
 	});
 
+	it("lists text-only, image-backed, and image-only prompts with exact image counts", async () => {
+		const ctx = await createTestSession({ inMemory: true });
+		try {
+			const second: ImageContent = {
+				type: "image",
+				data: "c2Vjb25k",
+				mimeType: "image/jpeg",
+				detail: "high",
+			};
+			const textOnlyId = ctx.sessionManager.appendMessage({
+				role: "user",
+				content: "plain text",
+				timestamp: Date.now(),
+			});
+			const mixedId = ctx.sessionManager.appendMessage({
+				role: "user",
+				content: [{ type: "text", text: "two images" }, HISTORICAL_IMAGE, second],
+				timestamp: Date.now(),
+			});
+			const imageOnlyId = ctx.sessionManager.appendMessage({
+				role: "user",
+				content: [HISTORICAL_IMAGE],
+				timestamp: Date.now(),
+			});
+
+			expect(ctx.session.getUserMessagesForBranching()).toEqual([
+				{ entryId: textOnlyId, text: "plain text", imageCount: 0 },
+				{ entryId: mixedId, text: "two images", imageCount: 2 },
+				{ entryId: imageOnlyId, text: "", imageCount: 1 },
+			]);
+
+			const result = await ctx.session.branch(mixedId);
+			expect(result).toEqual({
+				selectedText: "two images",
+				selectedImages: [HISTORICAL_IMAGE, second],
+				cancelled: false,
+			});
+		} finally {
+			await ctx.cleanup();
+		}
+	});
+
 	it("returns the target images when navigating to a user prompt", async () => {
 		const ctx = await createTestSession({ inMemory: true });
 		try {

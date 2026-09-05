@@ -10043,17 +10043,18 @@ export class AgentSession {
 	/**
 	 * Get all user messages from session for branch selector.
 	 */
-	getUserMessagesForBranching(): Array<{ entryId: string; text: string }> {
+	getUserMessagesForBranching(): Array<{ entryId: string; text: string; imageCount: number }> {
 		const entries = this.sessionManager.getEntries();
-		const result: Array<{ entryId: string; text: string }> = [];
+		const result: Array<{ entryId: string; text: string; imageCount: number }> = [];
 
 		for (const entry of entries) {
 			if (entry.type !== "message") continue;
 			if (entry.message.role !== "user") continue;
 
 			const text = this.#extractUserMessageText(entry.message.content);
-			if (text) {
-				result.push({ entryId: entry.id, text });
+			const imageCount = this.#countUserMessageImages(entry.message.content);
+			if (text.length > 0 || imageCount > 0) {
+				result.push({ entryId: entry.id, text, imageCount });
 			}
 		}
 
@@ -10069,6 +10070,14 @@ export class AgentSession {
 				.join("");
 		}
 		return "";
+	}
+	#countUserMessageImages(content: UserMessage["content"]): number {
+		if (!Array.isArray(content)) return 0;
+		let count = 0;
+		for (const part of content) {
+			if (part.type === "image") count++;
+		}
+		return count;
 	}
 
 	/** Image parts of a stored user message, in submission order — index N-1 backs the

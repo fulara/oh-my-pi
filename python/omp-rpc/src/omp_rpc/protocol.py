@@ -902,11 +902,13 @@ class CancellationResult:
 class BranchMessage:
     entry_id: str
     text: str
+    image_count: int
 
 
 @dataclass(slots=True, frozen=True)
 class BranchResult:
     text: str
+    images: tuple[ImageContent, ...]
     cancelled: bool
 
 
@@ -1502,27 +1504,54 @@ def parse_cancellation_result(payload: JsonObject | None) -> CancellationResult:
     return CancellationResult(cancelled=bool((payload or {}).get("cancelled", False)))
 
 
+def _parse_branch_image(value: object, *, field: str) -> ImageContent:
+    image = _clone_json_object(value, field=field)
+    if image.get("type") != "image":
+        raise ValueError(f"{field}.type must be image")
+    _require_str(image, "data")
+    _require_str(image, "mimeType")
+    return cast(ImageContent, image)
+
+
 def parse_branch_result(payload: JsonObject | None) -> BranchResult:
-    payload = payload or {}
+    if payload is None:
+        raise ValueError("branch response must be an object")
+    images = payload.get("images")
+    if not isinstance(images, list):
+        raise ValueError("images must be a list")
     return BranchResult(
-        text=str(payload.get("text", "")),
-        cancelled=bool(payload.get("cancelled", False)),
+        text=_require_str(payload, "text"),
+        images=tuple(
+            _parse_branch_image(image, field=f"images[{index}]")
+            for index, image in enumerate(images)
+        ),
+        cancelled=_require_bool(payload, "cancelled"),
+    )
+
+
+def _parse_branch_message(value: object, *, index: int) -> BranchMessage:
+    message = _clone_json_object(value, field=f"messages[{index}]")
+    image_count = message.get("imageCount")
+    if (
+        not isinstance(image_count, int)
+        or isinstance(image_count, bool)
+        or image_count < 0
+    ):
+        raise ValueError(f"messages[{index}].imageCount must be a non-negative integer")
+    return BranchMessage(
+        entry_id=_require_str(message, "entryId"),
+        text=_require_str(message, "text"),
+        image_count=image_count,
     )
 
 
 def parse_branch_messages(payload: JsonObject | None) -> tuple[BranchMessage, ...]:
-    messages = (payload or {}).get("messages") or []
+    if payload is None:
+        raise ValueError("get_branch_messages response must be an object")
+    messages = payload.get("messages")
     if not isinstance(messages, list):
         raise ValueError("messages must be a list")
-    return tuple(
-        BranchMessage(
-            entry_id=str(
-                _clone_json_object(item, field="messages[]").get("entryId", "")
-            ),
-            text=str(_clone_json_object(item, field="messages[]").get("text", "")),
-        )
-        for item in messages
-    )
+    return tuple(_parse_branch_message(item, index=index) for index, item in enumerate(messages))
 
 
 def parse_session_stats(payload: JsonObject) -> SessionStats:

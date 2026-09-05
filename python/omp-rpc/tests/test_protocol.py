@@ -15,6 +15,7 @@ from omp_rpc import (
     parse_notification,
     parse_session_state,
 )
+from omp_rpc.protocol import parse_branch_messages, parse_branch_result
 
 
 class ProtocolParsingTests(unittest.TestCase):
@@ -550,6 +551,92 @@ class ProtocolParsingTests(unittest.TestCase):
 
         self.assertIsInstance(notification, AgentEndEvent)
         self.assertEqual(notification.messages[0]["content"][0]["text"], "hello")
+
+    def test_parse_branch_messages_requires_and_preserves_image_counts(self) -> None:
+        messages = parse_branch_messages(
+            {
+                "messages": [
+                    {"entryId": "text", "text": "hello", "imageCount": 0},
+                    {"entryId": "image", "text": "", "imageCount": 2},
+                ]
+            }
+        )
+
+        self.assertEqual(
+            [(item.entry_id, item.text, item.image_count) for item in messages],
+            [("text", "hello", 0), ("image", "", 2)],
+        )
+
+        invalid_payloads = [
+            None,
+            {},
+            {"messages": "not-a-list"},
+            {"messages": [{"entryId": "missing-count", "text": ""}]},
+            {"messages": [{"entryId": "boolean-count", "text": "", "imageCount": True}]},
+            {"messages": [{"entryId": "negative-count", "text": "", "imageCount": -1}]},
+        ]
+        for payload in invalid_payloads:
+            with self.subTest(payload=payload), self.assertRaises(ValueError):
+                parse_branch_messages(payload)
+
+    def test_parse_branch_result_is_strict_and_preserves_image_metadata(self) -> None:
+        payload = {
+            "text": "restore",
+            "images": [
+                {
+                    "type": "image",
+                    "data": "cG5n",
+                    "mimeType": "image/png",
+                    "detail": "original",
+                },
+                {
+                    "type": "image",
+                    "data": "anBlZw==",
+                    "mimeType": "image/jpeg",
+                    "providerFile": {"provider": "anthropic", "id": "file_123"},
+                },
+            ],
+            "cancelled": False,
+        }
+
+        result = parse_branch_result(payload)
+        self.assertEqual(result.text, "restore")
+        self.assertFalse(result.cancelled)
+        self.assertEqual(
+            result.images,
+            (
+                {
+                    "type": "image",
+                    "data": "cG5n",
+                    "mimeType": "image/png",
+                    "detail": "original",
+                },
+                {
+                    "type": "image",
+                    "data": "anBlZw==",
+                    "mimeType": "image/jpeg",
+                    "providerFile": {"provider": "anthropic", "id": "file_123"},
+                },
+            ),
+        )
+        payload["images"][1]["providerFile"]["id"] = "mutated"
+        self.assertEqual(result.images[1]["providerFile"]["id"], "file_123")
+
+        cancelled = parse_branch_result({"text": "", "images": [], "cancelled": True})
+        self.assertTrue(cancelled.cancelled)
+        self.assertEqual(cancelled.images, ())
+
+        invalid_payloads = [
+            None,
+            {"text": "", "cancelled": False},
+            {"text": "", "images": {}, "cancelled": False},
+            {"text": "", "images": [{"type": "image", "mimeType": "image/png"}], "cancelled": False},
+            {"text": "", "images": [{"type": "text", "data": "x", "mimeType": "image/png"}], "cancelled": False},
+            {"text": "", "images": [], "cancelled": "false"},
+        ]
+        for invalid in invalid_payloads:
+            with self.subTest(payload=invalid), self.assertRaises(ValueError):
+                parse_branch_result(invalid)
 
 
 if __name__ == "__main__":

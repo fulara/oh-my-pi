@@ -844,9 +844,9 @@ export class RpcClient {
 
 	/**
 	 * Branch from a specific message.
-	 * @returns Object with `text` (the message text) and `cancelled` (if extension cancelled)
+	 * @returns The selected prompt draft and whether an extension cancelled the branch
 	 */
-	async branch(entryId: string): Promise<{ text: string; cancelled: boolean }> {
+	async branch(entryId: string): Promise<{ text: string; images: ImageContent[]; cancelled: boolean }> {
 		const response = await this.#send({ type: "branch", entryId });
 		return this.#getData(response);
 	}
@@ -854,9 +854,10 @@ export class RpcClient {
 	/**
 	 * Get messages available for branching.
 	 */
-	async getBranchMessages(): Promise<Array<{ entryId: string; text: string }>> {
+	async getBranchMessages(): Promise<Array<{ entryId: string; text: string; imageCount: number }>> {
 		const response = await this.#send({ type: "get_branch_messages" });
-		return this.#getData<{ messages: Array<{ entryId: string; text: string }> }>(response).messages;
+		return this.#getData<{ messages: Array<{ entryId: string; text: string; imageCount: number }> }>(response)
+			.messages;
 	}
 
 	/**
