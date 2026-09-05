@@ -10,6 +10,11 @@
     "file": "command-approve-plan-mode.json"
   },
   {
+    "name": "command-branch",
+    "category": "command",
+    "file": "command-branch.json"
+  },
+  {
     "name": "command-btw-cancel",
     "category": "command",
     "file": "command-btw-cancel.json"
@@ -38,6 +43,11 @@
     "name": "command-get-available-commands",
     "category": "command",
     "file": "command-get-available-commands.json"
+  },
+  {
+    "name": "command-get-branch-messages",
+    "category": "command",
+    "file": "command-get-branch-messages.json"
   },
   {
     "name": "command-get-messages-page",
@@ -245,6 +255,11 @@
     "file": "response-approve-plan-mode.json"
   },
   {
+    "name": "response-branch",
+    "category": "response",
+    "file": "response-branch.json"
+  },
+  {
     "name": "response-btw-cancel",
     "category": "response",
     "file": "response-btw-cancel.json"
@@ -283,6 +298,11 @@
     "name": "response-get-available-models",
     "category": "response",
     "file": "response-get-available-models.json"
+  },
+  {
+    "name": "response-get-branch-messages",
+    "category": "response",
+    "file": "response-get-branch-messages.json"
   },
   {
     "name": "response-get-messages",

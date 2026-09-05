@@ -68,11 +68,23 @@ function createRegistryWithSnapshot(): RpcSubagentRegistry {
 	return registry;
 }
 
+const BRANCH_IMAGES: ImageContent[] = [
+	{ type: "image", data: "cG5n", mimeType: "image/png", detail: "high" },
+	{
+		type: "image",
+		data: "anBlZw==",
+		mimeType: "image/jpeg",
+		providerFile: { provider: "anthropic", id: "file_123" },
+	},
+];
+
 type SessionChangeStubOptions = {
 	newSession?: boolean;
 	switchSession?: boolean;
 	branch?: { selectedText: string; selectedImages: ImageContent[]; cancelled: boolean };
 	fork?: boolean;
+	isStreaming?: boolean;
+	isCompacting?: boolean;
 };
 
 function createSessionChangeSession(options: SessionChangeStubOptions): RpcSessionChangeSession {
@@ -82,6 +94,8 @@ function createSessionChangeSession(options: SessionChangeStubOptions): RpcSessi
 		branch: async (_entryId: string) =>
 			options.branch ?? { selectedText: "branched text", selectedImages: [], cancelled: false },
 		fork: async (_entryId?: string) => options.fork ?? true,
+		isStreaming: options.isStreaming ?? false,
+		isCompacting: options.isCompacting ?? false,
 	};
 }
 
@@ -194,9 +208,12 @@ describe("RPC subagent registry", () => {
 			{
 				command: { type: "branch", entryId: "entry-1" },
 				session: createSessionChangeSession({
-					branch: { selectedText: "Branch text", selectedImages: [], cancelled: false },
+					branch: { selectedText: "Branch text", selectedImages: BRANCH_IMAGES, cancelled: false },
 				}),
-				expected: { type: "branch", data: { text: "Branch text", cancelled: false } },
+				expected: {
+					type: "branch",
+					data: { text: "Branch text", images: BRANCH_IMAGES, cancelled: false },
+				},
 			},
 			{
 				command: { type: "fork", entryId: "entry-1" },
@@ -239,8 +256,13 @@ describe("RPC subagent registry", () => {
 			},
 			{
 				command: { type: "branch", entryId: "entry-1" },
-				session: createSessionChangeSession({ branch: { selectedText: "", selectedImages: [], cancelled: true } }),
-				expected: { type: "branch", data: { text: "", cancelled: true } },
+				session: createSessionChangeSession({
+					branch: { selectedText: "", selectedImages: [BRANCH_IMAGES[0]], cancelled: true },
+				}),
+				expected: {
+					type: "branch",
+					data: { text: "", images: [BRANCH_IMAGES[0]], cancelled: true },
+				},
 			},
 			{
 				command: { type: "fork" },
@@ -261,6 +283,22 @@ describe("RPC subagent registry", () => {
 				registry.dispose();
 			}
 		}
+	});
+
+	test("rejects branch while the session is streaming or compacting", async () => {
+		await expect(
+			handleRpcSessionChange(createSessionChangeSession({ isStreaming: true }), {
+				type: "branch",
+				entryId: "entry-1",
+			}),
+		).rejects.toThrow("Cannot branch while a response is in progress");
+
+		await expect(
+			handleRpcSessionChange(createSessionChangeSession({ isCompacting: true }), {
+				type: "branch",
+				entryId: "entry-1",
+			}),
+		).rejects.toThrow("Cannot branch while compaction is in progress");
 	});
 
 	test("prunes terminal lifecycle snapshots while retaining transcript selectors", () => {
