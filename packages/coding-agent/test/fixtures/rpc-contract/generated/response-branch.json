@@ -1,0 +1,27 @@
+{
+  "id": "cmd-branch-1",
+  "type": "response",
+  "command": "branch",
+  "success": true,
+  "data": {
+    "text": "",
+    "images": [
+      {
+        "type": "image",
+        "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB",
+        "mimeType": "image/png",
+        "detail": "original"
+      },
+      {
+        "type": "image",
+        "data": "/9j/4AAQSkZJRgABAQAAAQABAAD",
+        "mimeType": "image/jpeg",
+        "providerFile": {
+          "provider": "anthropic",
+          "id": "file_branch_1"
+        }
+      }
+    ],
+    "cancelled": false
+  }
+}

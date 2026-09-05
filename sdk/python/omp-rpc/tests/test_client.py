@@ -325,7 +325,7 @@ FAKE_SERVER = textwrap.dedent(
     todo_phases = []
     messages = []
     queued_messages = {"steering": [], "followUp": []}
-    branch_messages = [{"entryId": "entry-1", "text": "branch message"}]
+    branch_messages = [{"entryId": "entry-1", "text": "branch message", "imageCount": 0}]
     model_provider = "anthropic"
     model_id = "claude-sonnet-4-5"
     thinking_level = "medium"
@@ -504,8 +504,31 @@ FAKE_SERVER = textwrap.dedent(
             event_filter = command["events"]
             respond(request_id, "set_event_filter", {"events": event_filter})
         elif command_type == "branch":
-            branch_messages = [{"entryId": command["entryId"], "text": "branch message"}]
-            respond(request_id, "branch", {"text": "branch created", "cancelled": False})
+            branch_messages = [
+                {"entryId": command["entryId"], "text": "branch message", "imageCount": 2}
+            ]
+            respond(
+                request_id,
+                "branch",
+                {
+                    "text": "branch created",
+                    "images": [
+                        {
+                            "type": "image",
+                            "data": "cG5n",
+                            "mimeType": "image/png",
+                            "detail": "original",
+                        },
+                        {
+                            "type": "image",
+                            "data": "anBlZw==",
+                            "mimeType": "image/jpeg",
+                            "providerFile": {"provider": "anthropic", "id": "file_123"},
+                        },
+                    ],
+                    "cancelled": False,
+                },
+            )
         elif command_type == "fork":
             # Report whether entryId reached the wire; a whole-session fork must omit it.
             respond(request_id, "fork", {"cancelled": "entryId" not in command})
@@ -1829,8 +1852,20 @@ class RpcClientTests(unittest.TestCase):
 
             branch = client.branch("entry-9")
             self.assertEqual(branch.text, "branch created")
+            self.assertFalse(branch.cancelled)
+            self.assertEqual(
+                [(image["mimeType"], image.get("detail")) for image in branch.images],
+                [("image/png", "original"), ("image/jpeg", None)],
+            )
+            self.assertEqual(
+                branch.images[1]["providerFile"],
+                {"provider": "anthropic", "id": "file_123"},
+            )
             branch_messages = client.get_branch_messages()
-            self.assertEqual(branch_messages[0].entry_id, "entry-9")
+            self.assertEqual(
+                [(item.entry_id, item.text, item.image_count) for item in branch_messages],
+                [("entry-9", "branch message", 2)],
+            )
 
             # The fake reports cancelled exactly when no entryId was sent.
             self.assertFalse(client.fork("entry-9").cancelled)
