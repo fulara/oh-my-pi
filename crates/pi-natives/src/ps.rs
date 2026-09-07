@@ -94,6 +94,13 @@ impl Process {
 		self.inner.pid()
 	}
 
+	/// Opaque identity of the pinned process instance, stable after exit.
+	/// Includes OS boot/start identity; equality is not permission to signal.
+	#[napi]
+	pub fn identity(&self) -> String {
+		self.inner.identity()
+	}
+
 	/// Parent process id for this process, when available.
 	#[napi(getter)]
 	pub fn ppid(&self) -> Option<i32> {
@@ -112,6 +119,7 @@ impl Process {
 	/// signal abstraction, so the `signal` argument is ignored and the entire
 	/// tree is hard-killed via `TerminateProcess`. Defaults to the POSIX
 	/// hard-kill signal.
+	/// Refuses the host and, on Unix, its live ancestors (returns zero).
 	#[napi]
 	pub fn kill_tree(&self, signal: Option<i32>) -> u32 {
 		self.inner.kill_tree(signal)
@@ -121,6 +129,7 @@ impl Process {
 	///
 	/// By default this waits 1000ms after polite termination before
 	/// hard-killing. Pass `graceful_ms < 0` to skip the graceful phase.
+	/// Refuses the host and, on Unix, its live ancestors (returns `false`).
 	#[napi]
 	pub fn terminate<'env>(
 		&self,
