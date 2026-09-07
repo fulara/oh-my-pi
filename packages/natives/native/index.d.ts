@@ -278,6 +278,11 @@ export declare class Process {
   static fromPath(path: string): Array<Process>
   /** Operating-system process identifier for this process reference. */
   get pid(): number
+  /**
+   * Opaque identity of the pinned process instance, stable after exit.
+   * Includes OS boot/start identity; equality is not permission to signal.
+   */
+  identity(): string
   /** Parent process id for this process, when available. */
   get ppid(): number | null
   /** Launch arguments for this process. */
@@ -289,6 +294,7 @@ export declare class Process {
    * signal abstraction, so the `signal` argument is ignored and the entire
    * tree is hard-killed via `TerminateProcess`. Defaults to the POSIX
    * hard-kill signal.
+   * Refuses the host and, on Unix, its live ancestors (returns zero).
    */
   killTree(signal?: number | undefined | null): number
   /**
@@ -296,6 +302,7 @@ export declare class Process {
    *
    * By default this waits 1000ms after polite termination before
    * hard-killing. Pass `graceful_ms < 0` to skip the graceful phase.
+   * Refuses the host and, on Unix, its live ancestors (returns `false`).
    */
   terminate(options?: ProcessTerminateOptions | undefined | null): Promise<boolean>
   /**

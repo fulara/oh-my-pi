@@ -24,7 +24,7 @@ mod platform {
 		fs,
 		os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd},
 		ptr,
-		sync::Arc,
+		sync::{Arc, LazyLock},
 	};
 
 	use super::ProcessStatus;
@@ -35,6 +35,7 @@ mod platform {
 		pid:        i32,
 		pidfd:      Arc<OwnedFd>,
 		start_time: u64,
+		boot_id:    &'static str,
 	}
 
 	impl Process {
@@ -44,11 +45,23 @@ mod platform {
 			}
 			let pidfd = open_pidfd(pid)?;
 			let start_time = read_start_time(pid)?;
-			Some(Self { pid, pidfd, start_time })
+			static BOOT_ID: LazyLock<Option<String>> = LazyLock::new(|| {
+				fs::read_to_string("/proc/sys/kernel/random/boot_id")
+					.ok()
+					.map(|id| id.trim().to_owned())
+					.filter(|id| !id.is_empty())
+			});
+			let boot_id = BOOT_ID.as_deref()?;
+			let process = Self { pid, pidfd, start_time, boot_id };
+			process.live_identity().then_some(process)
 		}
 
 		pub const fn pid(&self) -> i32 {
 			self.pid
+		}
+
+		pub fn identity(&self) -> String {
+			format!("linux:{}:{}:{}", self.boot_id, self.pid, self.start_time)
 		}
 
 		pub fn children(&self) -> Vec<Self> {
@@ -122,19 +135,17 @@ mod platform {
 			let Some(child) = Self::from_pid(child_pid) else {
 				return;
 			};
-			if child.status() == ProcessStatus::Running
-				&& current_parent_pid(child.pid) == Some(self.pid)
-			{
+			if child.live_identity() && child.parent_pid() == Some(self.pid) && self.live_identity() {
 				out.push(child);
 			}
 		}
 
 		pub fn parent_pid(&self) -> Option<i32> {
-			if self.status() == ProcessStatus::Running {
-				current_parent_pid(self.pid)
-			} else {
-				None
+			if !self.live_identity() {
+				return None;
 			}
+			let parent = current_parent_pid(self.pid)?;
+			self.live_identity().then_some(parent)
 		}
 
 		pub fn args(&self) -> Vec<String> {
@@ -173,15 +184,14 @@ mod platform {
 		}
 
 		pub fn group_id(&self) -> Option<i32> {
-			if self.status() != ProcessStatus::Running {
+			if !self.live_identity() {
 				return None;
 			}
 
-			// SAFETY: `self.pid` names the process currently referenced by `self.pidfd`
-			// unless it exits concurrently. If it exits, `getpgid` reports failure rather
-			// than dereferencing caller-owned memory.
+			// SAFETY: `getpgid` takes a scalar PID. Revalidate the pinned identity
+			// after querying so a recycled PID cannot supply an unrelated group.
 			let pgid = unsafe { libc::getpgid(self.pid) };
-			if pgid > 0 { Some(pgid) } else { None }
+			(pgid >= 0 && self.live_identity()).then_some(pgid)
 		}
 
 		pub fn status(&self) -> ProcessStatus {
@@ -362,6 +372,10 @@ mod platform {
 			self.pid
 		}
 
+		pub fn identity(&self) -> String {
+			format!("macos:{}:{}:{}", self.pid, self.start_tvsec, self.start_tvusec)
+		}
+
 		pub fn children(&self) -> Vec<Self> {
 			if self.live_bsdinfo().is_none() {
 				return Vec::new();
@@ -376,7 +390,7 @@ mod platform {
 			// instead; this is the same approach we already use for `find_by_path`
 			// and that the Windows implementation uses via Toolhelp snapshots.
 			let tree = build_process_tree();
-			Self::children_from_tree(self.pid, &tree)
+			self.children_from_tree(&tree)
 		}
 
 		pub fn parent_pid(&self) -> Option<i32> {
@@ -407,12 +421,15 @@ mod platform {
 
 		pub fn group_id(&self) -> Option<i32> {
 			let info = self.live_bsdinfo()?;
-			i32::try_from(info.pbi_pgid).ok().filter(|pgid| *pgid > 0)
+			i32::try_from(info.pbi_pgid).ok()
 		}
 
 		/// Walk the descendant tree in post-order (leaves first), de-duplicating
 		/// by PID so concurrent reparenting cannot trap us in a cycle.
 		pub fn descendants(&self) -> Vec<Self> {
+			if self.live_bsdinfo().is_none() {
+				return Vec::new();
+			}
 			// One process-table snapshot per walk — building it inside the recursion
 			// would re-scan every pid for every visited node, producing an `O(N · D)`
 			// kernel call pattern. Mirrors the Windows implementation.
@@ -420,41 +437,44 @@ mod platform {
 			let mut out = Vec::new();
 			let mut visited = HashSet::new();
 			visited.insert(self.pid);
-			Self::collect_descendants_from_tree(self.pid, &tree, &mut visited, &mut out);
+			self.collect_descendants_from_tree(&tree, &mut visited, &mut out);
 			out
 		}
 
-		fn children_from_tree(parent: i32, tree: &HashMap<i32, Vec<i32>>) -> Vec<Self> {
-			let Some(child_pids) = tree.get(&parent) else {
+		fn children_from_tree(&self, tree: &HashMap<i32, Vec<i32>>) -> Vec<Self> {
+			let Some(child_pids) = tree.get(&self.pid) else {
 				return Vec::new();
 			};
 			child_pids
 				.iter()
-				.copied()
-				.filter_map(Self::from_pid)
+				.filter_map(|&pid| {
+					let child = Self::from_pid(pid)?;
+					(child.parent_pid() == Some(self.pid) && self.live_bsdinfo().is_some())
+						.then_some(child)
+				})
 				.collect()
 		}
 
 		fn collect_descendants_from_tree(
-			parent: i32,
+			&self,
 			tree: &HashMap<i32, Vec<i32>>,
 			visited: &mut HashSet<i32>,
 			out: &mut Vec<Self>,
 		) {
-			let Some(child_pids) = tree.get(&parent) else {
-				return;
-			};
-			for &child_pid in child_pids {
+			for child in self.children_from_tree(tree) {
+				let child_pid = child.pid;
 				if !visited.insert(child_pid) {
 					continue;
 				}
-				let Some(child) = Self::from_pid(child_pid) else {
-					continue;
-				};
 				// Post-order: grandchildren first, so leaf processes get signalled
 				// before their parents during tree termination.
-				Self::collect_descendants_from_tree(child_pid, tree, visited, out);
-				out.push(child);
+				let subtree_start = out.len();
+				child.collect_descendants_from_tree(tree, visited, out);
+				if child.parent_pid() == Some(self.pid) && self.live_bsdinfo().is_some() {
+					out.push(child);
+				} else {
+					out.truncate(subtree_start);
+				}
 			}
 		}
 
@@ -476,6 +496,26 @@ mod platform {
 			} else {
 				None
 			}
+		}
+
+		#[cfg(test)]
+		pub(super) fn with_stale_identity(&self) -> Self {
+			Self { start_tvusec: self.start_tvusec ^ 1, ..self.clone() }
+		}
+	}
+
+	#[cfg(test)]
+	mod tests {
+		use super::*;
+
+		#[test]
+		fn snapshot_revalidates_child_parentage() {
+			// A stale/cyclic snapshot must not make a process its own child.
+			// This test only reads identities; no process is ever signalled.
+			let pid = i32::try_from(std::process::id()).expect("self pid");
+			let root = Process::from_pid(pid).expect("pin root");
+			let tree = HashMap::from([(pid, vec![pid])]);
+			assert!(root.children_from_tree(&tree).is_empty());
 		}
 	}
 
@@ -874,6 +914,10 @@ mod platform {
 
 		pub const fn pid(&self) -> i32 {
 			self.pid
+		}
+
+		pub fn identity(&self) -> String {
+			format!("windows:{}:{}", self.pid, self.creation_time)
 		}
 
 		pub fn parent_pid(&self) -> Option<i32> {
@@ -1296,6 +1340,13 @@ impl Process {
 		self.inner.pid()
 	}
 
+	/// Opaque identity of the pinned process instance, stable after exit.
+	/// Includes OS boot/start identity; equality is not permission to signal.
+	#[must_use]
+	pub fn identity(&self) -> String {
+		self.inner.identity()
+	}
+
 	/// Parent process id for this process, when available.
 	#[must_use]
 	pub fn ppid(&self) -> Option<i32> {
@@ -1314,6 +1365,7 @@ impl Process {
 	/// signal abstraction, so the `signal` argument is ignored and the entire
 	/// tree is hard-killed via `TerminateProcess`. Defaults to the POSIX
 	/// hard-kill signal.
+	/// Refuses the host and, on Unix, its live ancestors (returns zero).
 	#[must_use]
 	pub fn kill_tree(&self, signal: Option<i32>) -> u32 {
 		self.signal_tree(signal.unwrap_or(KILL_SIGNAL))
@@ -1329,7 +1381,7 @@ impl Process {
 	#[cfg(not(target_os = "windows"))]
 	#[must_use]
 	pub fn group_id(&self) -> Option<i32> {
-		self.inner.group_id()
+		self.inner.group_id().filter(|pgid| *pgid > 0)
 	}
 
 	/// Direct children of this process as stable process references.
@@ -1355,6 +1407,7 @@ impl Process {
 	/// exit before escalating to `KILL_SIGNAL`. Pass `graceful_ms < 0` to skip
 	/// the wait entirely (the polite signal is still emitted). Returns `true`
 	/// when the tree has exited by the end of the hard wave's wait window.
+	/// Refuses the host and, on Unix, its live ancestors (returns `false`).
 	pub async fn terminate_tree(
 		&self,
 		group: bool,
@@ -1391,7 +1444,10 @@ impl Process {
 	}
 
 	fn signal_tree(&self, signal: i32) -> u32 {
-		self.signal_tree_excluding(signal, &host_protected_pids())
+		let Some(protection) = host_protection() else {
+			return 0;
+		};
+		self.signal_tree_excluding(signal, &protection.pids)
 	}
 
 	/// Signal this process and its live descendants (children first), skipping
@@ -1405,6 +1461,9 @@ impl Process {
 	/// as a false descendant; `TerminateProcess`-ing it drops the whole session
 	/// with no cleanup and no `session_exit` record (#7452, related #4605).
 	fn signal_tree_excluding(&self, signal: i32, protected: &HashSet<i32>) -> u32 {
+		if protected.contains(&self.pid()) {
+			return 0;
+		}
 		let descendants = self.signalable_descendants(protected);
 		let mut signaled = 0u32;
 		// If self leads its own process group, also signal the group — this catches
@@ -1420,7 +1479,7 @@ impl Process {
 				signaled += 1;
 			}
 		}
-		if !protected.contains(&self.pid()) && self.inner.kill(signal) {
+		if self.inner.kill(signal) {
 			signaled += 1;
 		}
 		signaled
@@ -1454,18 +1513,32 @@ impl Process {
 		timeout_ms: u32,
 		ct: CancelToken,
 	) -> Result<bool> {
+		let Some(protection) = host_protection() else {
+			return Ok(false);
+		};
+		let protected = protection.pids;
+		if protected.contains(&self.pid()) {
+			return Ok(false);
+		}
 		if self.status() != ProcessStatus::Running {
 			return Ok(true);
 		}
 
-		let process_group = if group { self.group_id() } else { None };
-		let protected = host_protected_pids();
+		// A root may authorize only its own group, never a group it merely joined.
+		let process_group = if group {
+			self.group_id().filter(|pgid| *pgid == self.pid())
+		} else {
+			None
+		};
+		// Capture ownership before TERM can reap the root and reparent its children.
+		let mut descendants = self.signalable_descendants(&protected);
 
 		// Polite wave: SIGTERM the group, every live descendant, then the root.
-		if let Some(pgid) = process_group {
+		if let Some(pgid) = process_group
+			&& self.group_id() == Some(pgid)
+		{
 			let _ = kill_process_group(pgid, TERM_SIGNAL);
 		}
-		let mut descendants = self.signalable_descendants(&protected);
 		for child in &descendants {
 			let _ = child.inner.kill(TERM_SIGNAL);
 		}
@@ -1488,12 +1561,23 @@ impl Process {
 			}
 		}
 
-		// Hard wave. Re-walk the tree so any grandchild spawned during the grace
-		// period — or any process re-parented to the root — is signalled too.
-		if let Some(pgid) = process_group {
+		// Retain pinned survivors even if TERM reparented them away from the root.
+		descendants.retain(|child| child.status() == ProcessStatus::Running);
+		let mut seen: HashSet<i32> = descendants.iter().map(Self::pid).collect();
+		descendants.extend(
+			self
+				.signalable_descendants(&protected)
+				.into_iter()
+				.filter(|child| seen.insert(child.pid())),
+		);
+		// A cached PGID alone is not ownership: a pinned member must still anchor it.
+		if let Some(pgid) = process_group
+			&& std::iter::once(self)
+				.chain(&descendants)
+				.any(|process| process.group_id() == Some(pgid))
+		{
 			let _ = kill_process_group(pgid, KILL_SIGNAL);
 		}
-		descendants = self.signalable_descendants(&protected);
 		for child in &descendants {
 			let _ = child.inner.kill(KILL_SIGNAL);
 		}
@@ -1506,24 +1590,57 @@ impl Process {
 	}
 }
 
-/// The harness pid — the one process a run-cancellation sweep must never
-/// signal.
-///
-/// On Unix the descendant walk is identity-pinned (pidfd / start-time), so the
-/// host can never appear as a false descendant and this set is a harmless
-/// no-op safety net. On Windows the descendant tree is derived from raw
-/// `th32ParentProcessID` values that survive their recorded parent's death: a
-/// freshly spawned child whose recycled pid matches the harness's stale parent
-/// pid makes the harness enumerate as a false descendant, so cancelling a
-/// timed-out bash run would `TerminateProcess` the host with no cleanup and no
-/// `session_exit` record (#7452, related #4605).
-///
-/// Do not walk the host's numeric parent chain here. On Windows the host's
-/// recorded parent pid can itself have been recycled onto the cancellation
-/// target; treating that raw pid as protected would spare the hung command and
-/// prune all of its descendants from cleanup.
-fn host_protected_pids() -> HashSet<i32> {
-	i32::try_from(std::process::id()).into_iter().collect()
+/// Shared signal guard. Unix parentage is live and revalidated; Windows PPIDs
+/// can refer to recycled processes, so only the host itself is protected there.
+struct HostProtection {
+	pids:   HashSet<i32>,
+	#[cfg(unix)]
+	groups: HashSet<i32>,
+}
+
+fn host_protection() -> Option<HostProtection> {
+	let pid = i32::try_from(std::process::id()).ok()?;
+	#[cfg(not(unix))]
+	{
+		Some(HostProtection { pids: HashSet::from([pid]) })
+	}
+	#[cfg(unix)]
+	{
+		let mut protection = HostProtection { pids: HashSet::new(), groups: HashSet::new() };
+		let mut process = Process::from_pid(pid)?;
+		// A failed read, unstable parentage, or cycle cannot authorize a signal.
+		for _ in 0..256 {
+			if !protection.pids.insert(process.pid()) {
+				return None;
+			}
+			// Kernel PGID 0 (e.g. macOS launchd) is valid ancestry metadata, but
+			// never a public signal target. Keep it distinct from a failed query.
+			protection.groups.insert(process.inner.group_id()?);
+			if process.pid() == 1 {
+				return Some(protection);
+			}
+			let parent_pid = process.ppid()?;
+			if parent_pid == 1 {
+				// PID 1 is the non-recyclable kernel init boundary. macOS may
+				// deny libproc access to launchd, so it cannot require from_pid.
+				// Only a revalidated live parent link authorizes this boundary.
+				// SAFETY: getpgid reads scalar metadata for reserved kernel PID 1.
+				let init_group = unsafe { libc::getpgid(1) };
+				if init_group < 0 || process.ppid() != Some(1) {
+					return None;
+				}
+				protection.pids.insert(1);
+				protection.groups.insert(init_group);
+				return Some(protection);
+			}
+			let parent = Process::from_pid(parent_pid)?;
+			if process.ppid() != Some(parent.pid()) || parent.status() != ProcessStatus::Running {
+				return None;
+			}
+			process = parent;
+		}
+		None
+	}
 }
 
 /// True when `pid` is itself protected or descends — within the enumerated
@@ -1590,31 +1707,24 @@ async fn wait_for_exit(
 }
 
 /// Send `signal` to the process group `pgid`.
-/// Returns false when process groups are unsupported on the platform.
+/// Returns false for invalid groups, host/Unix ancestor groups, unavailable
+/// ancestry, or platforms without process groups.
 #[allow(clippy::missing_const_for_fn, reason = "Dispatches to platform-specific implementation")]
 #[must_use]
 pub fn kill_process_group(pgid: i32, signal: i32) -> bool {
-	// Defense in depth: refuse to deliver a signal to the harness's own
-	// process group. Doing so terminates the harness along with the targets.
-	// `SpawnRegistry` only ever records pgids brush created for this run (never
-	// the harness pgid); this catches any future caller that bypasses it.
-	if pgid <= 0 || is_self_process_group(pgid) {
+	if pgid <= 0 || is_protected_process_group(pgid) {
 		return false;
 	}
 	platform::kill_process_group(pgid, signal)
 }
 
 #[cfg(unix)]
-fn is_self_process_group(pgid: i32) -> bool {
-	// SAFETY: `getpgid(0)` queries the calling process's pgid and does not access
-	// caller-owned memory. A return value <= 0 is treated as "unknown", which
-	// fails open so the actual signal call decides.
-	let self_pgid = unsafe { libc::getpgid(0) };
-	self_pgid > 0 && self_pgid == pgid
+fn is_protected_process_group(pgid: i32) -> bool {
+	host_protection().is_none_or(|protection| protection.groups.contains(&pgid))
 }
 
 #[cfg(not(unix))]
-const fn is_self_process_group(_pgid: i32) -> bool {
+const fn is_protected_process_group(_pgid: i32) -> bool {
 	false
 }
 
@@ -1907,54 +2017,15 @@ mod tests {
 	/// parent would be unsafe on Windows: that stale numeric pid can have been
 	/// recycled onto the timed-out command, causing cancellation to spare the
 	/// hung target and its whole subtree.
+	#[cfg(windows)]
 	#[test]
 	fn host_protected_pids_includes_self() {
 		let self_pid = i32::try_from(std::process::id()).expect("self pid fits in i32");
 		assert_eq!(
-			host_protected_pids(),
+			host_protection().expect("host protection").pids,
 			HashSet::from([self_pid]),
-			"only the harness pid may be protected from cancellation sweeps",
+			"Windows must not protect recycled raw parent PIDs",
 		);
-	}
-
-	/// Regression test for #7452: a cancellation sweep must never signal the
-	/// protected host pid, even when it is enumerated as the sweep root. On
-	/// Windows a recycled pid can make the harness surface as
-	/// a false descendant of a just-spawned child; `TerminateProcess`-ing it
-	/// killed the whole session with no `session_exit` record. The observable
-	/// defense — provable cross-platform — is that `signal_tree_excluding`
-	/// leaves a protected pid untouched.
-	#[cfg(unix)]
-	#[test]
-	fn signal_tree_spares_protected_pids() {
-		use std::{process::Command, thread, time::Duration};
-
-		let mut child = Command::new("sleep")
-			.arg("30")
-			.spawn()
-			.expect("spawn sleep");
-		let child_pid = i32::try_from(child.id()).expect("child pid fits in i32");
-		let root = Process::from_pid(child_pid).expect("pin child");
-
-		// Treat the child's pid as protected (standing in for the harness/an
-		// ancestor). The sweep must refuse to signal it.
-		let protected: HashSet<i32> = HashSet::from([child_pid]);
-		let signaled = root.signal_tree_excluding(KILL_SIGNAL, &protected);
-		assert_eq!(signaled, 0, "a protected root must never be signalled");
-
-		// The protected process is still alive after the sweep.
-		thread::sleep(Duration::from_millis(50));
-		assert_eq!(
-			root.status(),
-			ProcessStatus::Running,
-			"a protected pid must survive a cancellation sweep",
-		);
-
-		// With no protection the same sweep reaps it — proves the skip is what
-		// spared it, not a dead target.
-		let reaped = root.signal_tree_excluding(KILL_SIGNAL, &HashSet::new());
-		assert!(reaped >= 1, "an unprotected root must be signalled");
-		let _ = child.wait();
 	}
 
 	/// Regression test for the #7453 review: pruning a protected node must drop
@@ -1987,25 +2058,322 @@ mod tests {
 		);
 	}
 
-	/// `kill_process_group` is the last line of defense: even if a future
-	/// caller manages to feed the harness's own pgid into the signal path,
-	/// this wrapper must refuse to deliver the signal.
+	/// All real signal probes run behind an observed setsid + GO handshake.
+	/// Even a guard-free RED can only kill disposable processes, never this
+	/// runner.
 	#[cfg(unix)]
 	#[test]
-	fn kill_process_group_refuses_self_pgroup() {
-		// SAFETY: `getpgid(0)` queries the calling process and does not touch
-		// caller-owned memory.
-		let self_pgid = unsafe { libc::getpgid(0) };
-		assert!(self_pgid > 0, "getpgid(0) failed");
-		assert!(
-			!kill_process_group(self_pgid, TERM_SIGNAL),
-			"kill_process_group must refuse the harness pgid; otherwise the test process would have \
-			 been SIGTERMed",
-		);
-		assert!(
-			!kill_process_group(0, TERM_SIGNAL),
-			"kill_process_group must reject non-positive pgids",
-		);
+	fn process_safety_isolated_regressions() {
+		for mode in [
+			"self-group",
+			"zero-group",
+			"protected-root",
+			"ancestor-kill",
+			"ancestor-term",
+			"ancestor-term-group",
+			"ancestor-group",
+			"sibling-group",
+			"owned-child",
+			"nonleader-group",
+			"reparented-child",
+		] {
+			run_safety_probe(mode, None);
+		}
+		#[cfg(target_os = "macos")]
+		run_safety_probe("stale-root", None);
+	}
+
+	#[cfg(unix)]
+	struct DisposableChild(std::process::Child);
+
+	#[cfg(unix)]
+	impl Drop for DisposableChild {
+		fn drop(&mut self) {
+			// Owned, unreaped Child only; never reopen a numeric PID for cleanup.
+			let _ = self.0.kill();
+			let _ = self.0.wait();
+		}
+	}
+
+	#[cfg(unix)]
+	fn run_safety_probe(mode: &str, target: Option<i32>) {
+		use std::{
+			io::{BufRead, BufReader, Write},
+			os::unix::process::CommandExt,
+			process::{Command, Stdio},
+		};
+		let mut command = Command::new(std::env::current_exe().expect("test executable"));
+		command
+			.args(["--exact", "process::tests::process_safety_probe", "--ignored", "--nocapture"])
+			.env("OMP_PROCESS_SAFETY_MODE", mode)
+			.env("OMP_PROCESS_SAFETY_TARGET", target.unwrap_or(0).to_string())
+			.stdin(Stdio::piped())
+			.stdout(Stdio::piped())
+			.stderr(Stdio::inherit());
+		// SAFETY: only async-signal-safe syscalls run between fork and exec.
+		unsafe {
+			command.pre_exec(move || {
+				let result = if target.is_none() {
+					libc::setsid()
+				} else {
+					libc::setpgid(0, 0)
+				};
+				if result < 0 {
+					Err(std::io::Error::last_os_error())
+				} else {
+					Ok(())
+				}
+			});
+		}
+		let mut child = DisposableChild(command.spawn().expect("spawn isolated probe"));
+		let pid = i32::try_from(child.0.id()).expect("child pid");
+		let mut output = BufReader::new(child.0.stdout.take().expect("probe stdout"));
+		let mut line = String::new();
+		loop {
+			line.clear();
+			assert!(output.read_line(&mut line).expect("probe handshake") > 0, "no READY: {mode}");
+			if line.starts_with("OMP_PROCESS_READY ") {
+				break;
+			}
+		}
+		let reported: Vec<i32> = line
+			.split_whitespace()
+			.skip(1)
+			.map(|part| part.parse().expect("numeric handshake"))
+			.collect();
+		// SAFETY: scalar, read-only process/session queries.
+		let (pgid, sid, own_pgid, own_sid) =
+			unsafe { (libc::getpgid(pid), libc::getsid(pid), libc::getpgrp(), libc::getsid(0)) };
+		assert_eq!(reported, vec![pid, pgid, sid], "kernel must confirm handshake");
+		assert_eq!(pgid, pid, "probe must lead a disposable group");
+		assert_ne!(pgid, own_pgid, "runner group must never be a probe target");
+		if target.is_none() {
+			assert_eq!(sid, pid, "sandbox must lead its own session");
+			assert_ne!(sid, own_sid, "runner session must remain outside sandbox");
+		} else {
+			assert_eq!(sid, own_sid, "nested probe must stay in disposable session");
+			assert_eq!(own_sid, own_pgid, "only sandbox leader may launch ancestor probes");
+		}
+		child
+			.0
+			.stdin
+			.as_mut()
+			.expect("probe stdin")
+			.write_all(b"GO\n")
+			.expect("authorize probe");
+		// Drain stdout before wait so libtest output cannot fill the pipe.
+		let mut rest = String::new();
+		std::io::Read::read_to_string(&mut output, &mut rest).expect("probe result");
+		let status = child.0.wait().expect("reap probe");
+		assert!(status.success(), "isolated probe {mode} failed: {status}\n{rest}");
+	}
+
+	#[cfg(unix)]
+	fn disposable_sleep() -> DisposableChild {
+		DisposableChild(
+			std::process::Command::new("sleep")
+				.arg("30")
+				.spawn()
+				.expect("spawn sentinel"),
+		)
+	}
+
+	#[cfg(unix)]
+	fn terminate_probe(process: &Process, group: bool) -> bool {
+		tokio::runtime::Builder::new_current_thread()
+			.enable_time()
+			.build()
+			.expect("runtime")
+			.block_on(process.terminate_tree(group, -1, 1000, CancelToken::default()))
+			.expect("terminate result")
+	}
+
+	#[cfg(unix)]
+	#[test]
+	#[ignore = "subprocess entrypoint; use process_safety_isolated_regressions"]
+	fn process_safety_probe() {
+		use std::io::Write;
+		let Ok(mode) = std::env::var("OMP_PROCESS_SAFETY_MODE") else {
+			return;
+		};
+		// No signal-based watchdog: it exits only this disposable process.
+		std::thread::spawn(|| {
+			std::thread::sleep(Duration::from_secs(10));
+			std::process::exit(124);
+		});
+		// SAFETY: read-only queries of this disposable process.
+		let (pid, pgid, sid) = unsafe { (libc::getpid(), libc::getpgrp(), libc::getsid(0)) };
+		println!("\nOMP_PROCESS_READY {pid} {pgid} {sid}");
+		std::io::stdout().flush().expect("flush READY");
+		let mut go = String::new();
+		std::io::stdin().read_line(&mut go).expect("read GO");
+		assert_eq!(go, "GO\n", "no signals before controller confirms isolation");
+		assert_eq!(pid, pgid);
+
+		if let Some(operation) = mode.strip_prefix("worker-") {
+			let target: i32 = std::env::var("OMP_PROCESS_SAFETY_TARGET")
+				.expect("target")
+				.parse()
+				.expect("target pid");
+			// SAFETY: read-only queries. Never use the external runner as target.
+			let parent_pid = unsafe { libc::getppid() };
+			assert_eq!(sid, parent_pid, "parent must be the disposable session leader");
+			assert_ne!(pid, sid, "worker must have a separate group");
+			let parent = Process::from_pid(parent_pid).expect("pin disposable parent");
+			let root = Process::from_pid(target).expect("pin disposable target");
+			if operation == "sibling-group" {
+				assert_eq!(root.ppid(), Some(parent_pid));
+				assert!(terminate_probe(&root, true), "own sibling target remains terminable");
+			} else {
+				assert_eq!(target, parent_pid, "only disposable parent may be targeted");
+				match operation {
+					"ancestor-kill" => assert_eq!(root.kill_tree(Some(KILL_SIGNAL)), 0),
+					"ancestor-term" => assert!(!terminate_probe(&root, false)),
+					"ancestor-term-group" => assert!(!terminate_probe(&root, true)),
+					"ancestor-group" => assert!(!kill_process_group(sid, TERM_SIGNAL)),
+					_ => panic!("unknown worker operation"),
+				}
+			}
+			assert_eq!(parent.status(), ProcessStatus::Running, "disposable ancestor must survive");
+			return;
+		}
+
+		assert_eq!(sid, pid, "only isolated session leader may run probes");
+		let sentinel = disposable_sleep();
+		let sentinel_ref = Process::from_pid(sentinel.0.id() as i32).expect("pin sentinel");
+		let own = Process::from_pid(pid).expect("pin disposable leader");
+		match mode.as_str() {
+			"self-group" => assert!(!kill_process_group(pgid, TERM_SIGNAL)),
+			"zero-group" => assert!(!kill_process_group(0, TERM_SIGNAL)),
+			"protected-root" => {
+				assert_eq!(own.signal_tree_excluding(KILL_SIGNAL, &HashSet::from([pid])), 0);
+			},
+			"ancestor-kill" | "ancestor-term" | "ancestor-term-group" | "ancestor-group" => {
+				run_safety_probe(&format!("worker-{mode}"), Some(pid));
+			},
+			"sibling-group" => {
+				let mut target = disposable_sleep();
+				let target_pid = target.0.id() as i32;
+				// Reap concurrently: macOS reports unreaped zombies as Running.
+				let reaper = std::thread::spawn(move || target.0.wait().expect("reap sibling"));
+				run_safety_probe("worker-sibling-group", Some(target_pid));
+				assert!(!reaper.join().expect("sibling reaper").success());
+			},
+			"owned-child" => {
+				let mut target = disposable_sleep();
+				let pinned = Process::from_pid(target.0.id() as i32).expect("pin owned child");
+				let identity = pinned.identity();
+				assert_eq!(
+					Process::from_pid(pinned.pid())
+						.expect("reopen live child")
+						.identity(),
+					identity
+				);
+				assert_ne!(identity, sentinel_ref.identity());
+				let reaper = std::thread::spawn(move || target.0.wait().expect("reap owned child"));
+				assert!(terminate_probe(&pinned, true), "own child must remain terminable");
+				let _ = reaper.join().expect("owned child reaper");
+				assert_eq!(pinned.status(), ProcessStatus::Exited);
+				assert_eq!(pinned.identity(), identity, "identity survives process exit");
+			},
+			"nonleader-group" => {
+				use std::{os::unix::process::CommandExt, process::Command};
+				let leader = DisposableChild(
+					Command::new("sleep")
+						.arg("30")
+						.process_group(0)
+						.spawn()
+						.expect("spawn unrelated group leader"),
+				);
+				let leader_ref = Process::from_pid(leader.0.id() as i32).expect("pin group leader");
+				let group = leader_ref.group_id().expect("group");
+				assert_eq!(group, leader_ref.pid());
+				assert_ne!(group, pgid);
+				let peer = DisposableChild(
+					Command::new("sleep")
+						.arg("30")
+						.process_group(group)
+						.spawn()
+						.expect("spawn group sentinel"),
+				);
+				let peer_ref = Process::from_pid(peer.0.id() as i32).expect("pin group sentinel");
+				let mut target = DisposableChild(
+					Command::new("sleep")
+						.arg("30")
+						.process_group(group)
+						.spawn()
+						.expect("spawn nonleader target"),
+				);
+				let pinned = Process::from_pid(target.0.id() as i32).expect("pin target");
+				assert_eq!(pinned.group_id(), Some(group));
+				assert_eq!(peer_ref.group_id(), Some(group));
+				let reaper = std::thread::spawn(move || target.0.wait().expect("reap target"));
+				assert!(terminate_probe(&pinned, true));
+				let _ = reaper.join().expect("target reaper");
+				assert_eq!(
+					leader_ref.status(),
+					ProcessStatus::Running,
+					"nonleader cannot authorize group"
+				);
+				assert_eq!(
+					peer_ref.status(),
+					ProcessStatus::Running,
+					"unrelated group member must survive"
+				);
+			},
+			"reparented-child" => {
+				use std::{
+					io::{BufRead, BufReader},
+					os::unix::process::CommandExt,
+					process::{Command, Stdio},
+				};
+				// Child ignores TERM; root exits on TERM. Pin both before the first
+				// wave, then require KILL to reach the reparented surviving child.
+				let mut target = DisposableChild(
+					Command::new("sh")
+						.args([
+							"-c",
+							r#"trap 'exit 0' TERM; sh -c 'trap "" TERM; echo "$$"; exec sleep 30' & read ignored"#,
+						])
+						.process_group(0)
+						.stdin(Stdio::piped())
+						.stdout(Stdio::piped())
+						.spawn()
+						.expect("spawn owned tree"),
+				);
+				let pinned = Process::from_pid(target.0.id() as i32).expect("pin root");
+				let mut child_pid = String::new();
+				BufReader::new(target.0.stdout.take().expect("tree stdout"))
+					.read_line(&mut child_pid)
+					.expect("child READY");
+				let child = Process::from_pid(child_pid.trim().parse().expect("child pid"))
+					.expect("pin child before root exit");
+				assert_eq!(child.ppid(), Some(pinned.pid()));
+				assert_eq!(pinned.group_id(), Some(pinned.pid()));
+				assert_eq!(child.group_id(), Some(pinned.pid()));
+				// Child::wait closes its stdin; keep the pipe open so only TERM,
+				// not the concurrent reaper, releases the root's read.
+				let _root_stdin = target.0.stdin.take().expect("retain root stdin");
+				let reaper = std::thread::spawn(move || target.0.wait().expect("reap root"));
+				let terminated = tokio::runtime::Builder::new_current_thread()
+					.enable_time()
+					.build()
+					.expect("runtime")
+					.block_on(pinned.terminate_tree(true, 100, 1000, CancelToken::default()))
+					.expect("terminate tree");
+				let _ = reaper.join().expect("root reaper");
+				assert!(terminated, "retained child must not escape cleanup when root exits");
+				assert_eq!(child.status(), ProcessStatus::Exited);
+			},
+			#[cfg(target_os = "macos")]
+			"stale-root" => {
+				let stale = own.inner.with_stale_identity();
+				assert!(stale.descendants().is_empty(), "expired root cannot enumerate new children");
+				assert!(stale.children().is_empty());
+			},
+			_ => panic!("unknown probe mode"),
+		}
+		assert_eq!(sentinel_ref.status(), ProcessStatus::Running, "unrelated sentinel must survive");
 	}
 
 	/// Regression test for the macOS `proc_listchildpids` brokenness: on
