@@ -3,12 +3,13 @@
  *
  * - Track managed child processes for cleanup on shutdown (postmortem).
  * - Drain stdout/stderr to avoid subprocess pipe deadlocks.
- * - Cross-platform tree kill for process groups (Windows taskkill, Unix -pid).
+ * - Identity-pinned native tree termination with protected host ancestry.
  * - Convenience helpers: captureText / execText, AbortSignal, timeouts.
  */
 
-import { Process, type ProcessTerminateOptions } from "@oh-my-pi/pi-natives";
+import { Process } from "@oh-my-pi/pi-natives";
 import type { Spawn, Subprocess } from "bun";
+import * as logger from "./logger";
 
 type InMask = "pipe" | "ignore" | Buffer | Uint8Array | null;
 
@@ -197,9 +198,9 @@ export class ChildProcess<In extends InMask = InMask> {
 	#hardKillSweep?: Promise<void>;
 	#terminateGroup: boolean;
 	#hardKillTree: boolean;
-	// Windows has no process groups. Retaining the root's native handle pins
-	// its PID after exit so killTree() can still enumerate its original children.
-	#windowsRootProcess?: Process;
+	// Pin the generation at spawn; never reopen its PID during cleanup.
+	// Windows retains this handle even after exit for descendant enumeration.
+	#rootProcess?: Process;
 	constructor(
 		readonly proc: PipedSubprocess<In>,
 		readonly exposeStderr: boolean,
@@ -209,7 +210,7 @@ export class ChildProcess<In extends InMask = InMask> {
 	) {
 		this.#terminateGroup = terminateGroup;
 		this.#hardKillTree = hardKillTree;
-		this.#windowsRootProcess = process.platform === "win32" ? (Process.fromPid(proc.pid) ?? undefined) : undefined;
+		this.#rootProcess = Process.fromPid(proc.pid) ?? undefined;
 		if (retainFullStderr) this.#stderrChunks = [];
 		// Eagerly drain stderr into a truncated tail, retaining raw chunks only for explicit full capture.
 		const dec = new TextDecoder();
@@ -347,7 +348,7 @@ export class ChildProcess<In extends InMask = InMask> {
 			// Keep the subreaper alive while descendants are killed. A single
 			// killTree() snapshot can miss a worker whose parent exits during the
 			// walk and reparents it to the subreaper after that root was enumerated.
-			const root = Process.fromPid(this.proc.pid);
+			const root = this.#rootProcess;
 			if (root) {
 				const sweep = this.#hardKillSubreaperTree(root).catch(e => void e);
 				this.#hardKillSweep = sweep;
@@ -364,19 +365,25 @@ export class ChildProcess<In extends InMask = InMask> {
 			this.#openPipeReaders > 0 &&
 			process.platform !== "win32"
 		) {
-			// Bun detached children are POSIX session/process-group leaders. If
-			// the leader has exited, the native Process handle cannot rediscover
-			// its PGID, but a pipe-holding descendant keeps that exact group alive.
-			try {
-				process.kill(-this.proc.pid, "SIGKILL");
-			} catch {}
+			// An inherited pipe may belong to a child that changed sessions.
+			// It cannot prove the old PGID still belongs to this invocation.
+			const refusal = `cleanup refused: exited PID ${this.proc.pid} no longer proves process-group ownership; pipe-holding resources left unmanaged`;
+			if (this.#exitReasonPending) this.#exitReasonPending.message += `\n${refusal}`;
+			else this.#exitReasonPending = new AbortError(refusal, this.#stderrTail);
+			this.#exitReason = this.#exitReasonPending;
+			logger.warn(refusal);
 			this.#terminating = Promise.resolve();
 			return;
 		}
-		if (this.proc.exitCode !== null && this.#windowsRootProcess && this.#openPipeReaders > 0) {
+		if (
+			this.proc.exitCode !== null &&
+			process.platform === "win32" &&
+			this.#rootProcess &&
+			this.#openPipeReaders > 0
+		) {
 			// The retained handle keeps the dead root PID reserved, making the
 			// Windows Toolhelp descendant walk identity-safe after root exit.
-			this.#windowsRootProcess.killTree();
+			this.#rootProcess.killTree();
 			this.#terminating = Promise.resolve();
 			return;
 		}
@@ -387,38 +394,8 @@ export class ChildProcess<In extends InMask = InMask> {
 						? { group: true }
 						: undefined
 					: { gracefulMs, group: this.#terminateGroup };
-			this.#terminating = this.#terminateTree(options);
+			this.#terminating = this.#rootProcess?.terminate(options)?.catch(e => void e);
 		}
-	}
-
-	/**
-	 * Native tree termination. A native handle that cannot be resolved or used
-	 * — the PID left the process table, or a `bun test --isolate` realm whose
-	 * napi classes another realm superseded ("Value is not an instance of class
-	 * `Process`") — must not leave the child running, so signal it directly.
-	 */
-	#terminateTree(options: ProcessTerminateOptions | undefined): Promise<boolean | void> {
-		const gracefulMs = options?.gracefulMs ?? 1000;
-		try {
-			const root = this.#windowsRootProcess ?? Process.fromPid(this.proc.pid);
-			if (root) return root.terminate(options).catch(() => this.#signalChild(gracefulMs));
-		} catch {}
-		return this.#signalChild(gracefulMs);
-	}
-
-	/** SIGTERM the child (its group when it leads one), then SIGKILL if it outlives `gracefulMs`. */
-	async #signalChild(gracefulMs: number): Promise<void> {
-		const signal = (name: NodeJS.Signals) => {
-			try {
-				if (this.#terminateGroup && process.platform !== "win32") process.kill(-this.proc.pid, name);
-				else this.proc.kill(name);
-			} catch {}
-		};
-		if (gracefulMs >= 0) {
-			signal("SIGTERM");
-			await Promise.race([this.proc.exited, Bun.sleep(gracefulMs)]);
-		}
-		if (this.proc.exitCode === null && this.proc.signalCode === null) signal("SIGKILL");
 	}
 
 	async #hardKillSubreaperTree(root: Process): Promise<void> {
@@ -611,12 +588,11 @@ export class ChildProcess<In extends InMask = InMask> {
 		// A clean command clears it in wait(), so fast invocations do not hold
 		// the event loop for the unused remainder.
 		const timer = setTimeout(() => {
-			// A detached group can remain alive after its leader exits. Only use
-			// the dead-leader fallback while an inherited pipe proves that exact
-			// group still has a live member; this avoids stale-PGID reuse.
+			// A deadline still rejects collection when a dead root leaves open
+			// pipes, but Unix cleanup must refuse the unproven process group.
 			if (
 				this.proc.exitCode === null ||
-				(this.#openPipeReaders > 0 && (this.#terminateGroup || this.#windowsRootProcess))
+				(this.#openPipeReaders > 0 && (this.#terminateGroup || (process.platform === "win32" && this.#rootProcess)))
 			) {
 				this.kill(new TimeoutError(ms, this.#stderrTail), -1);
 			}
