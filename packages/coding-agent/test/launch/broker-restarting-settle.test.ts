@@ -135,12 +135,11 @@ describe("daemon broker restart settling", () => {
 
 		const previousTitle = process.title;
 		const name = "recovered-crash";
-		let pid: number | undefined;
-
-		const firstClient = await createDaemonBrokerClient(projectDir, { runtimeDir, idleGraceMs: 5_000 });
-		const firstBroker = startBroker(projectDir, runtimeDir);
+		let processRef: Process | undefined;
+		let client = await createDaemonBrokerClient(projectDir, { runtimeDir, idleGraceMs: 5_000 });
+		let broker = startBroker(projectDir, runtimeDir);
 		try {
-			const started = await firstClient.request({
+			const started = await client.request({
 				op: "start",
 				spec: {
 					name,
@@ -155,31 +154,25 @@ describe("daemon broker restart settling", () => {
 				},
 			});
 			if (started.op !== "start") throw new Error(`unexpected result: ${started.op}`);
-			pid = started.daemon.pid;
+			const pid = started.daemon.pid;
 			if (pid === undefined) throw new Error("detached daemon has no pid");
-		} finally {
-			await firstClient.request({ op: "shutdown" }).catch(() => undefined);
-			firstClient.close();
-			await firstBroker;
-		}
+			processRef = Process.fromPid(pid) ?? undefined;
+			if (!processRef) throw new Error(`launched daemon process ${pid} is unavailable`);
+			await client.request({ op: "shutdown" });
+			client.close();
+			await broker;
 
-		const secondClient = await createDaemonBrokerClient(projectDir, { runtimeDir, idleGraceMs: 5_000 });
-		const secondBroker = startBroker(projectDir, runtimeDir);
-		try {
-			const recovered = await snapshotOf(secondClient, name);
+			client = await createDaemonBrokerClient(projectDir, { runtimeDir, idleGraceMs: 5_000 });
+			broker = startBroker(projectDir, runtimeDir);
+			const recovered = await snapshotOf(client, name);
 			expect(recovered.state).toBe("running");
 			expect(recovered.pid).toBe(pid);
 
-			const processRef = Process.fromPid(pid);
-			if (!processRef) throw new Error(`recovered daemon process ${pid} is unavailable`);
 			await processRef.terminate({ group: true, gracefulMs: 0, timeoutMs: 2_000 });
 
 			// Both requests enter #settle before its detached-output read completes. The
 			// post-read guard must let only one continuation settle this generation.
-			const concurrentLists = await Promise.all([
-				secondClient.request({ op: "list" }),
-				secondClient.request({ op: "list" }),
-			]);
+			const concurrentLists = await Promise.all([client.request({ op: "list" }), client.request({ op: "list" })]);
 			for (const listed of concurrentLists) {
 				if (listed.op !== "list") throw new Error(`unexpected result: ${listed.op}`);
 				const daemon = listed.daemons.find(entry => entry.name === name);
@@ -187,11 +180,10 @@ describe("daemon broker restart settling", () => {
 				expect(daemon?.restartCount).toBe(1);
 			}
 		} finally {
-			await secondClient.request({ op: "stop", name, timeoutMs: 2_000 }).catch(() => undefined);
-			await secondClient.request({ op: "shutdown" }).catch(() => undefined);
-			secondClient.close();
-			await secondBroker;
-			const processRef = pid === undefined ? null : Process.fromPid(pid);
+			await client.request({ op: "stop", name, timeoutMs: 2_000 }).catch(() => undefined);
+			await client.request({ op: "shutdown" }).catch(() => undefined);
+			client.close();
+			await broker;
 			if (processRef?.status() === "running") {
 				await processRef.terminate({ group: true, gracefulMs: 0, timeoutMs: 2_000 });
 			}

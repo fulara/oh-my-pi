@@ -13,6 +13,13 @@
 ### Fixed
 
 - Fixed C++ language inference excluding CUDA header (`.cuh`) files ([#10782](https://github.com/can1357/oh-my-pi/pull/10782) by [@alphastorm](https://github.com/alphastorm)).
+### Added
+
+- Added `Process.identity()` for comparing pinned operating-system process instances across daemon recovery.
+
+### Fixed
+
+- Process-tree termination now protects Unix host ancestors and their groups, and revalidates pinned group ownership before escalation.
 
 ## [18.1.9] - 2026-09-04
 

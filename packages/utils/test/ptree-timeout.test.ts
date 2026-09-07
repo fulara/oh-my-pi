@@ -2,6 +2,88 @@ import { describe, expect, it } from "bun:test";
 import { Process, ProcessStatus } from "@oh-my-pi/pi-natives";
 import { createLinuxSubreaperScript, exec, NonZeroExitError, spawn, TimeoutError } from "@oh-my-pi/pi-utils/ptree";
 
+async function spawnPipeHolder({
+	detached = false,
+	timeout = 250,
+	pipe = "stdout",
+	output = "token",
+	exitCode = 0,
+}: {
+	detached?: boolean;
+	timeout?: number;
+	pipe?: "stdout" | "stderr";
+	output?: string;
+	exitCode?: number;
+} = {}) {
+	const ready = Promise.withResolvers<{ pid: number; port: number }>();
+	const probe = `${import.meta.dir}/fixtures/ptree-dead-root-probe.ts`;
+	const child = spawn([process.execPath, probe, JSON.stringify({ pipe, output, exitCode })], {
+		detached,
+		ipc(message) {
+			ready.resolve(message);
+		},
+	});
+	let descendant: Process | undefined;
+	// IPC drives readiness; a real watchdog bounds startup outside the test process.
+	const startupTimer = setTimeout(() => ready.reject(new Error("pipe holder startup timed out")), 2_000);
+	const cleanup = async () => {
+		clearTimeout(startupTimer);
+		try {
+			try {
+				if (child.proc.exitCode === null) child.proc.send("stop");
+			} finally {
+				await child.proc.exited;
+			}
+		} finally {
+			try {
+				if (descendant) {
+					descendant.killTree(9);
+					if (!(await descendant.waitForExit({ timeoutMs: 2_000 }))) {
+						throw new Error("owned pipe holder did not exit");
+					}
+				}
+			} finally {
+				child[Symbol.dispose]();
+			}
+		}
+	};
+	try {
+		if (detached && process.platform !== "win32" && Process.fromPid(child.pid)?.groupId() !== child.pid) {
+			throw new Error("pipe holder root did not get its own process group");
+		}
+		const { pid, port } = await Promise.race([
+			ready.promise,
+			child.proc.exited.then(code => {
+				throw new Error(`pipe holder root exited during startup: ${code}`);
+			}),
+		]);
+		// The fixture blocks root exit until this identity and parentage are pinned.
+		const pinned = Process.fromPid(pid);
+		if (
+			!pinned ||
+			child.proc.exitCode !== null ||
+			pinned.ppid !== child.pid ||
+			pinned.status() !== ProcessStatus.Running
+		) {
+			throw new Error("pipe holder is not a running child of the owned root");
+		}
+		descendant = pinned;
+		clearTimeout(startupTimer);
+		const ping = async () => {
+			const response = await fetch(`http://127.0.0.1:${port}`, { signal: AbortSignal.timeout(1_000) });
+			return response.text();
+		};
+		expect(await ping()).toBe("alive");
+		child.attachTimeout(timeout);
+		child.proc.send("release");
+		await child.proc.exited;
+		return { child, descendant, ping, [Symbol.asyncDispose]: cleanup };
+	} catch (error) {
+		await cleanup();
+		throw error;
+	}
+}
+
 async function supportsLinuxMountNamespaces(): Promise<boolean> {
 	if (process.platform !== "linux") return false;
 	try {
@@ -177,13 +259,10 @@ ${createLinuxSubreaperScript()}
 	);
 
 	it.skipIf(process.platform === "win32")("rejects text when the deadline fires after the root exits", async () => {
-		using child = spawn(["/bin/sh", "-c", "sleep 30 & echo token"], {
-			detached: true,
-			timeout: 250,
-		});
+		await using fixture = await spawnPipeHolder({ detached: true });
 		let threw: unknown;
 		try {
-			await child.text();
+			await fixture.child.text();
 		} catch (error) {
 			threw = error;
 		}
@@ -195,13 +274,10 @@ ${createLinuxSubreaperScript()}
 		it.skipIf(process.platform === "win32")(
 			`rejects ${outputMethod} when the deadline fires after the root exits`,
 			async () => {
-				using child = spawn(["/bin/sh", "-c", `sleep 30 2>/dev/null & printf '"token"'`], {
-					detached: true,
-					timeout: 250,
-				});
+				await using fixture = await spawnPipeHolder({ detached: true, output: '"token"' });
 				let threw: unknown;
 				try {
-					await child[outputMethod]();
+					await fixture.child[outputMethod]();
 				} catch (error) {
 					threw = error;
 				}
@@ -222,64 +298,28 @@ ${createLinuxSubreaperScript()}
 	});
 
 	it.skipIf(process.platform === "win32")(
-		"terminates a detached group that holds stdout past the command deadline",
+		"refuses cleanup after a Unix root exits and leaves its pipe holder responding",
 		async () => {
-			// The root exits after printing its child's pid. The child keeps the
-			// group and stdout alive past the deadline, so timeout must terminate
-			// the group even though its original leader is already gone.
-			let orphanPid: number | undefined;
-			try {
-				const result = await exec(["/bin/sh", "-c", "sleep 30 & echo $!"], {
-					detached: true,
-					timeout: 250,
-					allowNonZero: true,
-					allowAbort: true,
-				});
-				orphanPid = Number.parseInt(result.stdout.trim(), 10);
+			await using fixture = await spawnPipeHolder({ detached: true });
+			const result = await fixture.child.wait({ allowNonZero: true, allowAbort: true });
 
-				expect(result.exitError).toBeInstanceOf(TimeoutError);
-				// Real process state: SIGKILL delivery is synchronous, but pidfd
-				// exit observation may settle on the next scheduler turn.
-				const deadline = Date.now() + 500;
-				let status = Process.fromPid(orphanPid)?.status();
-				while (status === ProcessStatus.Running && Date.now() < deadline) {
-					await Bun.sleep(10);
-					status = Process.fromPid(orphanPid)?.status();
-				}
-				expect(status).not.toBe(ProcessStatus.Running);
-			} finally {
-				if (orphanPid) Process.fromPid(orphanPid)?.killTree(9);
-			}
+			expect(result.exitError).toBeInstanceOf(TimeoutError);
+			expect(result.stdout).toBe("token");
+			expect(await fixture.ping()).toBe("alive");
+			expect(fixture.descendant.status()).toBe(ProcessStatus.Running);
 		},
 	);
 
 	it.skipIf(process.platform !== "win32")(
 		"terminates a pipe-holding descendant after the Windows root exits",
 		async () => {
-			// Windows has no process groups. The probe exits after starting a
-			// child that inherits stdout, so the retained root handle must anchor
-			// the Toolhelp tree walk when the command deadline expires.
-			const probe = `${import.meta.dir}/fixtures/ptree-dead-root-probe.ts`;
-			let descendantPid: number | undefined;
-			try {
-				const result = await exec([process.execPath, probe], {
-					timeout: 250,
-					allowNonZero: true,
-					allowAbort: true,
-				});
-				descendantPid = Number.parseInt(result.stdout.trim(), 10);
+			// Windows retains the root handle for its post-exit Toolhelp tree walk.
+			await using fixture = await spawnPipeHolder();
+			const result = await fixture.child.wait({ allowNonZero: true, allowAbort: true });
 
-				expect(result.exitError).toBeInstanceOf(TimeoutError);
-				const deadline = Date.now() + 500;
-				let status = Process.fromPid(descendantPid)?.status();
-				while (status === ProcessStatus.Running && Date.now() < deadline) {
-					await Bun.sleep(10);
-					status = Process.fromPid(descendantPid)?.status();
-				}
-				expect(status).not.toBe(ProcessStatus.Running);
-			} finally {
-				if (descendantPid) Process.fromPid(descendantPid)?.killTree(9);
-			}
+			expect(result.exitError).toBeInstanceOf(TimeoutError);
+			expect(await fixture.descendant.waitForExit({ timeoutMs: 500 })).toBe(true);
+			expect(fixture.descendant.status()).not.toBe(ProcessStatus.Running);
 		},
 	);
 
@@ -299,85 +339,50 @@ ${createLinuxSubreaperScript()}
 	);
 
 	it.skipIf(process.platform === "win32")("completes when an orphan holds stdout past the root's exit", async () => {
-		// `sleep 30 & echo token $!`: the root exits at once but the background
-		// sleep inherits the pipe, so an EOF-based read would stall for the
-		// orphan's lifetime, far past the timeout budget. The orphan's pid is
-		// printed so the fixture can clean it up instead of leaking it.
-		let orphanPid: number | undefined;
-		try {
-			const start = performance.now();
-			const result = await exec(["sh", "-c", "sleep 30 & echo token $!"], {
-				timeout: 1_000,
-				allowNonZero: true,
-				allowAbort: true,
-			});
-			const elapsedMs = performance.now() - start;
-			const match = /^token (\d+)$/.exec(result.stdout.trim());
-			orphanPid = match ? Number.parseInt(match[1], 10) : undefined;
-			expect(result.ok).toBe(true);
-			expect(match, `stdout was: ${result.stdout}`).not.toBeUndefined();
-			expect(elapsedMs).toBeLessThan(5_000);
-		} finally {
-			if (orphanPid) Process.fromPid(orphanPid)?.killTree(9);
-		}
+		await using fixture = await spawnPipeHolder({ timeout: 1_000 });
+		const start = performance.now();
+		const result = await fixture.child.wait({ allowNonZero: true, allowAbort: true });
+
+		expect(result.ok).toBe(true);
+		expect(result.stdout).toBe("token");
+		expect(performance.now() - start).toBeLessThan(5_000);
 	});
 
 	it.skipIf(process.platform === "win32")("completes when an orphan holds stderr past the root's exit", async () => {
-		let orphanPid: number | undefined;
-		try {
-			const start = performance.now();
-			const result = await exec(["sh", "-c", "sleep 30 >&2 & echo token2 $!"], {
-				timeout: 1_000,
-				allowNonZero: true,
-				allowAbort: true,
-			});
-			const elapsedMs = performance.now() - start;
-			const match = /^token2 (\d+)$/.exec(result.stdout.trim());
-			orphanPid = match ? Number.parseInt(match[1], 10) : undefined;
-			expect(result.ok).toBe(true);
-			expect(match, `stdout was: ${result.stdout}`).not.toBeUndefined();
-			expect(elapsedMs).toBeLessThan(5_000);
-		} finally {
-			if (orphanPid) Process.fromPid(orphanPid)?.killTree(9);
-		}
+		await using fixture = await spawnPipeHolder({ pipe: "stderr", output: "token2", timeout: 1_000 });
+		const start = performance.now();
+		const result = await fixture.child.wait({ allowNonZero: true, allowAbort: true });
+
+		expect(result.ok).toBe(true);
+		expect(result.stderr).toBe("token2");
+		expect(performance.now() - start).toBeLessThan(5_000);
 	});
 
 	it.skipIf(process.platform === "win32")("completes when a nonzero exit races an orphan holding stderr", async () => {
-		// `sleep 30 >&2 & exit 1`: the nonzero-exit normalization awaits the
-		// stderr drain, so a grace keyed on the normalized exit promise would
-		// deadlock until the orphan closes stderr. The grace must key on the
-		// raw process exit.
-		let orphanPid: number | undefined;
-		try {
-			const start = performance.now();
-			const result = await exec(["sh", "-c", "sleep 30 >&2 & echo $! >&2; exit 1"], {
-				timeout: 1_000,
-				allowNonZero: true,
-				allowAbort: true,
-			});
-			const elapsedMs = performance.now() - start;
-			const match = /(\d+)\s*$/.exec(result.stderr.trim());
-			orphanPid = match ? Number.parseInt(match[1], 10) : undefined;
-			expect(result.exitCode).toBe(1);
-			expect(elapsedMs).toBeLessThan(5_000);
-		} finally {
-			if (orphanPid) Process.fromPid(orphanPid)?.killTree(9);
-		}
+		// Nonzero normalization must finish even while the inherited stderr stays open.
+		await using fixture = await spawnPipeHolder({
+			pipe: "stderr",
+			output: "nonzero",
+			exitCode: 1,
+			timeout: 1_000,
+		});
+		const start = performance.now();
+		const result = await fixture.child.wait({ allowNonZero: true, allowAbort: true });
+
+		expect(result.exitCode).toBe(1);
+		expect(result.exitError).toBeInstanceOf(NonZeroExitError);
+		expect(result.stderr).toBe("nonzero");
+		expect(performance.now() - start).toBeLessThan(5_000);
 	});
 
 	it.skipIf(process.platform === "win32")(
 		"preserves the timeout reason when nonzero normalization waits for stderr",
 		async () => {
-			// The root exits nonzero while its child holds stderr open. The
-			// deadline kills the detached group while exit normalization awaits
-			// the drain, and that timeout must outrank the earlier exit code.
+			// Cleanup refusal must not replace the timeout with the earlier exit code.
+			await using fixture = await spawnPipeHolder({ detached: true, pipe: "stderr", exitCode: 7 });
 			let threw: unknown;
 			try {
-				await exec(["/bin/sh", "-c", "sleep 30 >&2 & exit 7"], {
-					detached: true,
-					timeout: 250,
-					allowNonZero: true,
-				});
+				await fixture.child.wait({ allowNonZero: true });
 			} catch (err) {
 				threw = err;
 			}
