@@ -1,3 +1,4 @@
+import { Process } from "@oh-my-pi/pi-natives";
 import { logger, Snowflake } from "@oh-my-pi/pi-utils";
 import type { Subprocess } from "bun";
 import { type KernelDisplayOutput, renderKernelDisplay } from "./py/display";
@@ -104,45 +105,6 @@ export function getRemainingTimeMs(deadlineMs?: number): number | undefined {
 	return Math.max(0, deadlineMs - Date.now());
 }
 
-/**
- * True when `pid` is safe to use as a process-group target for `kill(2)`.
- *
- * `process.kill(-pid, …)` is a group signal, and the degenerate targets are
- * catastrophic rather than merely useless: `-0` signals *our own* process group
- * (omp would kill itself along with the whole terminal job) and `-1` signals
- * every process the user is permitted to signal. Both must be rejected before
- * the negation is applied.
- */
-export function isSignalableProcessGroup(pid: number | undefined): pid is number {
-	return typeof pid === "number" && Number.isInteger(pid) && pid > 1;
-}
-
-/**
- * Signal the whole process group led by `pid`, returning true when a signal was
- * actually delivered.
- *
- * Kernels are spawned with `detached: true` on POSIX (see `shouldDetachKernel`),
- * so each runner calls `setsid()` and becomes the leader of its own session and
- * process group. Signalling only the direct PID therefore leaves anything the
- * runner itself spawned behind, and those orphans keep the kernel's pipes open
- * for the remainder of the omp process lifetime (#7714).
- *
- * Windows has no process groups, so this is a no-op there and callers keep
- * relying on the direct-PID kill.
- */
-export function killProcessGroup(pid: number | undefined, signal: NodeJS.Signals): boolean {
-	if (process.platform === "win32") return false;
-	if (!isSignalableProcessGroup(pid)) return false;
-	try {
-		process.kill(-pid, signal);
-		return true;
-	} catch {
-		// ESRCH: the group is already gone, which is the outcome we wanted anyway.
-		// EPERM: not ours to signal. Neither is worth failing a shutdown over.
-		return false;
-	}
-}
-
 export function createAbortError(name: "AbortError" | "TimeoutError", message: string): Error {
 	const err = new Error(message);
 	err.name = name;
@@ -176,6 +138,7 @@ export function isTimeoutReason(reason: unknown): boolean {
 export abstract class BaseKernel<TExecuteOptions extends KernelExecuteOptions = KernelExecuteOptions> {
 	readonly id: string;
 	#proc: Subprocess | null = null;
+	#processIdentity: Process | null = null;
 	#stdin: Bun.FileSink | null = null;
 	#alive = true;
 	#disposed = false;
@@ -192,6 +155,8 @@ export abstract class BaseKernel<TExecuteOptions extends KernelExecuteOptions = 
 
 	setProcess(proc: Subprocess<"pipe", "pipe", "pipe">) {
 		this.#proc = proc;
+		const candidate = Process.fromPid(proc.pid);
+		this.#processIdentity = candidate?.ppid === process.pid ? candidate : null;
 		this.#stdin = proc.stdin;
 		this.#exitedPromise = proc.exited;
 		void this.#exitedPromise.then(code => {
@@ -358,6 +323,16 @@ export abstract class BaseKernel<TExecuteOptions extends KernelExecuteOptions = 
 			return { confirmed: true };
 		}
 
+		// Capture descendants before the polite exit can orphan them. Each native
+		// handle retains its original identity; no numeric PID/PGID fallback.
+		const owned: Process[] = [];
+		if (this.#processIdentity) {
+			owned.push(this.#processIdentity);
+			for (let index = 0; index < owned.length; index++) {
+				owned.push(...owned[index].children());
+			}
+		}
+
 		try {
 			await this.#writeLine(this.#options.exitPayload).catch(() => {});
 		} catch {
@@ -370,36 +345,20 @@ export abstract class BaseKernel<TExecuteOptions extends KernelExecuteOptions = 
 			/* ignore */
 		}
 
-		const exited = this.#waitForExitWithTimeout(timeoutMs);
-		let result = await exited;
-		if (!result) {
-			try {
-				proc.kill("SIGTERM");
-			} catch {
-				/* ignore */
-			}
-			// The runner leads its own process group (setsid), so the direct-PID
-			// signal above never reaches anything it spawned. Sweep the group too.
-			killProcessGroup(proc.pid, "SIGTERM");
-			result = await this.#waitForExitWithTimeout(timeoutMs);
-			if (!result) {
-				try {
-					proc.kill("SIGKILL");
-				} catch {
-					/* ignore */
-				}
-			}
-			// The leader exiting after SIGTERM does not prove its descendants did.
-			// Always finish an attempted group shutdown with a SIGKILL sweep.
-			killProcessGroup(proc.pid, "SIGKILL");
-			if (!result) result = await this.#waitForExitWithTimeout(timeoutMs);
+		const exited = await this.#waitForExitWithTimeout(timeoutMs);
+		let confirmed = exited !== null;
+		if (owned.length > 0) {
+			const results = await Promise.all(
+				owned.map(reference => reference.terminate({ group: false, gracefulMs: timeoutMs, timeoutMs })),
+			);
+			confirmed = results.every(Boolean);
+		} else if (exited === null) {
+			// Losing ownership is not permission to signal a numeric PID.
+			confirmed = false;
 		}
-
-		const confirmed = !!result;
 		if (!confirmed) {
-			// Nothing acknowledged the exit. Record the pid so an operator can find
-			// the survivor; the group SIGKILL above is our last automatic recourse.
-			logger.warn(`${this.#options.languageName} kernel did not confirm exit after SIGKILL`, {
+			// Keep the survivor visible; do not recover ownership from a PID file.
+			logger.warn(`${this.#options.languageName} kernel cleanup unconfirmed; no PID/group fallback`, {
 				kernelId: this.id,
 				pid: proc.pid,
 			});

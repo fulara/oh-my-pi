@@ -1,6 +1,7 @@
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "bun:test";
-import { isPidRunning } from "@oh-my-pi/pi-utils/procmgr";
+import { Process } from "@oh-my-pi/pi-natives";
+import { readLines } from "@oh-my-pi/pi-utils";
 import { runCli } from "../src/cli";
 import * as computerWorkerEntry from "../src/tools/computer/worker-entry";
 
@@ -76,7 +77,7 @@ describe("worker selector dispatch", () => {
 		expect(exited).toBe(true);
 	});
 
-	it("reaps orphaned IPC worker when parent process terminates", async () => {
+	it.each([false, true])("reaps orphaned IPC worker (native handles disabled: %s)", async noNatives => {
 		const repoRoot = path.resolve(__dirname, "../../..");
 		const parent = Bun.spawn({
 			cmd: [
@@ -84,58 +85,14 @@ describe("worker selector dispatch", () => {
 				"-e",
 				`
 				const child = Bun.spawn({
-					cmd: [process.execPath, "packages/coding-agent/src/cli.ts", "__omp_worker_js_eval_process"],
+					cmd: [process.execPath, "-e", ${JSON.stringify(`
+						import { runCli } from "./packages/coding-agent/src/cli.ts";
+						// Real subprocess watchdog; fake timers cannot bound an orphan.
+						setTimeout(() => process.exit(124), 10000);
+						await runCli(["__omp_worker_js_eval_process"]);
+					`)}],
 					cwd: ${JSON.stringify(repoRoot)},
-					ipc(msg) {},
-					serialization: "advanced",
-					windowsHide: true,
-					stdin: "ignore",
-					stdout: "ignore",
-					stderr: "ignore",
-				});
-				console.log("CHILD_PID:" + child.pid);
-				setTimeout(() => process.exit(0), 500);
-				`,
-			],
-			cwd: repoRoot,
-			stdout: "pipe",
-		});
-
-		const text = await new Response(parent.stdout).text();
-		const match = text.match(/CHILD_PID:(\d+)/);
-		expect(match).not.toBeNull();
-		const childPid = Number(match?.[1]);
-		expect(childPid).toBeGreaterThan(0);
-
-		await parent.exited;
-
-		let running = isPidRunning(childPid);
-		try {
-			for (let i = 0; i < 30 && running; i++) {
-				await Bun.sleep(100);
-				running = isPidRunning(childPid);
-			}
-		} finally {
-			if (running) {
-				try {
-					process.kill(childPid, "SIGKILL");
-				} catch {}
-			}
-		}
-		expect(running).toBe(false);
-	});
-
-	it("reaps orphaned IPC worker using fallback watchdog when native process handles are unavailable", async () => {
-		const repoRoot = path.resolve(__dirname, "../../..");
-		const parent = Bun.spawn({
-			cmd: [
-				process.execPath,
-				"-e",
-				`
-				const child = Bun.spawn({
-					cmd: [process.execPath, "packages/coding-agent/src/cli.ts", "__omp_worker_js_eval_process"],
-					cwd: ${JSON.stringify(repoRoot)},
-					env: { ...process.env, PI_TEST_NO_NATIVES: "1" },
+					env: { ...process.env, PI_TEST_NO_NATIVES: ${JSON.stringify(noNatives ? "1" : "0")} },
 					ipc() {},
 					serialization: "advanced",
 					windowsHide: true,
@@ -143,36 +100,38 @@ describe("worker selector dispatch", () => {
 					stdout: "ignore",
 					stderr: "ignore",
 				});
-				console.log("CHILD_PID:" + child.pid);
-				setTimeout(() => process.exit(0), 500);
+				console.log(child.pid);
+				// Stay alive until the test pins our child's identity.
+				process.stdin.resume();
+				process.stdin.on("end", () => process.exit(0));
+				setTimeout(() => process.exit(124), 10000);
 				`,
 			],
 			cwd: repoRoot,
+			stdin: "pipe",
 			stdout: "pipe",
 		});
-
-		const text = await new Response(parent.stdout).text();
-		const match = text.match(/CHILD_PID:(\d+)/);
-		expect(match).not.toBeNull();
-		const childPid = Number(match?.[1]);
-		expect(childPid).toBeGreaterThan(0);
-
-		await parent.exited;
-
-		let running = isPidRunning(childPid);
+		let child: Process | null = null;
 		try {
-			for (let i = 0; i < 30 && running; i++) {
-				await Bun.sleep(100);
-				running = isPidRunning(childPid);
+			for await (const line of readLines(parent.stdout)) {
+				const candidate = Process.fromPid(Number(new TextDecoder().decode(line)));
+				// A PID printed on stdout is not permission to signal a process.
+				if (!candidate || candidate.ppid !== parent.pid || parent.exitCode !== null) {
+					throw new Error("Could not establish ownership of the live worker");
+				}
+				child = candidate;
+				break;
 			}
+			if (!child) throw new Error("Parent exited without a worker ownership handshake");
+			parent.stdin.end();
+			await parent.exited;
+			expect(await child.waitForExit({ timeoutMs: 3000 })).toBe(true);
 		} finally {
-			if (running) {
-				try {
-					process.kill(childPid, "SIGKILL");
-				} catch {}
-			}
+			parent.stdin.end();
+			await parent.exited;
+			// Retain the original handle; never reopen a potentially reused PID.
+			if (child) await child.terminate({ group: false, gracefulMs: -1, timeoutMs: 1000 });
 		}
-		expect(running).toBe(false);
 	});
 
 	it("does not treat PID 1 as an immediate orphan at boot in container environments", async () => {
