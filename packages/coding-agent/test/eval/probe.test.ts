@@ -6,6 +6,7 @@ import { describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Process, ProcessStatus } from "@oh-my-pi/pi-natives";
 import { probeCandidates, runBoundedProbe } from "../../src/eval/probe";
 
 // A cross-platform "hangs forever" command: re-invoke the running Bun to sleep.
@@ -35,38 +36,39 @@ describe("runBoundedProbe", () => {
 
 	test("kills descendants spawned by an interpreter shim", async () => {
 		const pidFile = join(tmpdir(), `omp-probe-grandchild-${process.pid}-${Date.now()}.pid`);
-		let grandchildPid: number | undefined;
+		let grandchild: Process | null = null;
+		const controller = new AbortController();
 		const wrapper = [
 			bun,
 			"-e",
-			`const child=Bun.spawn([process.execPath,"-e","await Bun.sleep(60_000)"],{stdin:"ignore",stdout:"ignore",stderr:"ignore"});await Bun.write(${JSON.stringify(pidFile)},String(child.pid));await child.exited`,
+			`const child=Bun.spawn([process.execPath,"-e","await Bun.sleep(10_000)"],{stdin:"ignore",stdout:"ignore",stderr:"ignore"});await Bun.write(${JSON.stringify(pidFile)},JSON.stringify({pid:child.pid,parent:process.pid}));await child.exited`,
 		];
+		const pending = runBoundedProbe(wrapper, {
+			cwd: process.cwd(),
+			env: baseEnv(),
+			timeoutMs: 5_000,
+			signal: controller.signal,
+		});
 		try {
-			const result = await runBoundedProbe(wrapper, {
-				cwd: process.cwd(),
-				env: baseEnv(),
-				timeoutMs: 1_000,
-			});
-			expect(result).toEqual({ exitCode: null, timedOut: true, aborted: false });
-			grandchildPid = Number(await Bun.file(pidFile).text());
 			const deadline = Date.now() + 2_000;
-			while (Date.now() < deadline) {
-				try {
-					process.kill(grandchildPid, 0);
-					await Bun.sleep(25);
-				} catch {
-					break;
-				}
+			while (!(await Bun.file(pidFile).exists())) {
+				if (Date.now() > deadline) throw new Error("Shim did not reach its readiness handshake");
+				await Bun.sleep(10);
 			}
-			expect(() => process.kill(grandchildPid!, 0)).toThrow();
+			const record = await Bun.file(pidFile).json();
+			const parent = Process.fromPid(record.parent);
+			const candidate = Process.fromPid(record.pid);
+			if (!parent || parent.ppid !== process.pid || !candidate || candidate.ppid !== parent.pid) {
+				throw new Error("Cannot establish ownership of the shim worker");
+			}
+			grandchild = candidate;
+			controller.abort();
+			expect(await pending).toEqual({ exitCode: null, timedOut: false, aborted: true });
+			expect(grandchild.status()).toBe(ProcessStatus.Exited);
 		} finally {
-			if (grandchildPid !== undefined) {
-				try {
-					process.kill(grandchildPid, "SIGKILL");
-				} catch {
-					// Expected when the process-tree teardown succeeded.
-				}
-			}
+			controller.abort();
+			await pending;
+			await grandchild?.terminate({ group: false, gracefulMs: -1 });
 			await rm(pidFile, { force: true });
 		}
 	});
