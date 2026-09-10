@@ -899,6 +899,8 @@ export interface ProviderInputTransformation {
 export interface UserMessage {
 	role: "user";
 	content: string | (TextContent | ImageContent)[];
+	/** Client correlation metadata for this user submission; never part of provider text. */
+	clientMessageId?: string;
 	/** True if the message was injected by the system (e.g., auto-continue). */
 	synthetic?: boolean;
 	/** True when injected mid-turn as a steer; consumed by the agent's pre-LLM transform to wrap it for emphasis. Never rendered. */

@@ -110,12 +110,25 @@ Important edge behavior from runtime:
 
 ### Prompting
 
-- `{ id?, type: "prompt", message: string, images?: ImageContent[], streamingBehavior?: "steer" | "followUp" }`
-- `{ id?, type: "steer", message: string, images?: ImageContent[] }`
-- `{ id?, type: "follow_up", message: string, images?: ImageContent[] }`
+- `{ id?, type: "prompt", message: string, images?: ImageContent[], streamingBehavior?: "steer" | "followUp", clientMessageId?: string }`
+- `{ id?, type: "steer", message: string, images?: ImageContent[], clientMessageId?: string }`
+- `{ id?, type: "follow_up", message: string, images?: ImageContent[], clientMessageId?: string }`
 - `{ id?, type: "abort" }`
 - `{ id?, type: "abort_and_prompt", message: string, images?: ImageContent[] }`
 - `{ id?, type: "new_session", parentSession?: string }`
+
+`clientMessageId` is persistent submission correlation, separate from response `id`.
+Use a fresh unique value for each submission, even when its content is identical.
+Actual user messages retain it through preprocessing, queues, `message_start` /
+`message_end`, and persisted history. User-invoked skills instead retain it in
+`details.clientMessageId` on their visible, user-attributed `custom` / `skill-prompt`
+message. It is metadata, not provider prompt text.
+
+An acknowledgement accepts dispatch/enqueue; it does not prove consumption.
+A matching message event/history entry proves acceptance into conversation context,
+not that a provider successfully used it. Local-only commands may produce no such
+message; use their explicit completion/error response rather than guessing from
+activity, text, or aggregate queue counts.
 
 ### Protocol
 

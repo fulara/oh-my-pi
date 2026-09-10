@@ -333,6 +333,8 @@ export interface PromptOptions {
 	expandPromptTemplates?: boolean;
 	/** Image attachments. */
 	images?: ImageContent[];
+	/** Client correlation metadata carried by the actual user message. */
+	clientMessageId?: string;
 	/** Queue behavior while streaming. `"aside"` is non-interrupting — it does not steer/follow-up
 	 *  an in-flight tool batch, injecting at the next step boundary instead (see
 	 *  AgentSession.sendUserMessage's `deliverAs: "aside"`). */
@@ -361,6 +363,8 @@ export interface DroppedPrompt {
 
 /** Options for AgentSession.followUp(). */
 export interface FollowUpOptions {
+	/** Client correlation metadata carried by the actual user message, not synthetic messages. */
+	clientMessageId?: string;
 	/** Enqueue as a hidden developer message instead of a user follow-up. */
 	synthetic?: boolean;
 	/** Whether to expand file-based prompt templates (default: true). */

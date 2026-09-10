@@ -6173,7 +6173,13 @@ export class AgentSession {
 			for (const notice of keywordNotices) {
 				await this.#queueCustomMessage(notice, streamingBehavior);
 			}
-			await this.#queueUserMessage(expandedText, options?.images, streamingBehavior, submittedAt);
+			await this.#queueUserMessage(
+				expandedText,
+				options?.images,
+				streamingBehavior,
+				submittedAt,
+				options?.clientMessageId,
+			);
 			return true;
 		}
 
@@ -6219,10 +6225,14 @@ export class AgentSession {
 			for (const notice of keywordNotices) {
 				await this.#queueCustomMessage(notice, streamingBehavior);
 			}
-			await this.#queueUserMessage(expandedText, options?.images, streamingBehavior, submittedAt, {
-				images: normalizedImages,
-				descriptionNotice: imageDescriptionNotice,
-			});
+			await this.#queueUserMessage(
+				expandedText,
+				options?.images,
+				streamingBehavior,
+				submittedAt,
+				options?.clientMessageId,
+				{ images: normalizedImages, descriptionNotice: imageDescriptionNotice },
+			);
 			return true;
 		}
 
@@ -6242,7 +6252,13 @@ export class AgentSession {
 					synthetic: true,
 					userInitiated: options?.userInitiated === true ? true : undefined,
 				}
-			: { role: "user" as const, content: userContent, attribution: promptAttribution, timestamp: submittedAt };
+			: {
+					role: "user" as const,
+					content: userContent,
+					clientMessageId: options?.clientMessageId,
+					attribution: promptAttribution,
+					timestamp: submittedAt,
+				};
 
 		const preludeMessages: AgentMessage[] = [];
 		if (eagerTodoPrelude) {
@@ -6776,7 +6792,7 @@ export class AgentSession {
 	/**
 	 * Queue a steering message to interrupt the agent mid-run.
 	 */
-	async steer(text: string, images?: ImageContent[]): Promise<void> {
+	async steer(text: string, images?: ImageContent[], options?: Pick<PromptOptions, "clientMessageId">): Promise<void> {
 		if (text.startsWith("/")) {
 			this.#throwIfExtensionCommand(text);
 		}
@@ -6785,7 +6801,7 @@ export class AgentSession {
 		// Stamp before image preprocessing so a queued image steer measures from
 		// the operator's submission, not after the vision-model description.
 		const submittedAt = Date.now();
-		await this.#queueUserMessage(expandedText, images, "steer", submittedAt);
+		await this.#queueUserMessage(expandedText, images, "steer", submittedAt, options?.clientMessageId);
 	}
 
 	/**
@@ -6806,7 +6822,7 @@ export class AgentSession {
 		// from the operator's submission, not after the vision-model description.
 		const submittedAt = Date.now();
 		if (!options?.synthetic) {
-			await this.#queueUserMessage(expandedText, images, "followUp", submittedAt);
+			await this.#queueUserMessage(expandedText, images, "followUp", submittedAt, options?.clientMessageId);
 			return;
 		}
 		// Synthetic branch: agent-initiated hidden developer message. Bypass
@@ -6868,6 +6884,7 @@ export class AgentSession {
 		images: ImageContent[] | undefined,
 		mode: "steer" | "followUp" | "aside",
 		timestamp?: number,
+		clientMessageId?: string,
 		preprocessed?: { images: ImageContent[] | undefined; descriptionNotice: CustomMessage | undefined },
 	): Promise<void> {
 		// Captured before any await below so the aside branch can detect a
@@ -6903,7 +6920,13 @@ export class AgentSession {
 			if (await this.#sessionGenerationChanged(sessionGeneration)) return;
 			const records: AgentMessage[] = [];
 			if (imageDescriptionNotice) records.push(imageDescriptionNotice);
-			records.push({ role: "user", content, attribution: "user", timestamp: timestamp ?? Date.now() });
+			records.push({
+				role: "user",
+				content,
+				clientMessageId,
+				attribution: "user",
+				timestamp: timestamp ?? Date.now(),
+			});
 			this.#irc.queueAside(records);
 			// The awaits above (image normalization / vision description) can span the run's
 			// settle, so the run may already be idle by the time the record lands in the aside
@@ -6919,6 +6942,7 @@ export class AgentSession {
 			this.agent.followUp({
 				role: "user",
 				content,
+				clientMessageId,
 				attribution: "user",
 				timestamp: timestamp ?? Date.now(),
 			});
@@ -6928,6 +6952,7 @@ export class AgentSession {
 			this.agent.steer({
 				role: "user",
 				content,
+				clientMessageId,
 				steering: true,
 				attribution: "user",
 				timestamp: timestamp ?? Date.now(),

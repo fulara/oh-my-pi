@@ -31,9 +31,14 @@
 - `omp models` now reports whether a model's images actually reach the provider, so an id stripped by a text-only catalog rule no longer shows `images: yes` ([#9697](https://github.com/can1357/oh-my-pi/issues/9697)).
 - Custom `Other` answers are now applied before the Ask dialog becomes interactive again, so the next Enter is no longer discarded ([#11558](https://github.com/can1357/oh-my-pi/pull/11558) by [@schickling-assistant](https://github.com/schickling-assistant)).
 - Explicit per-model price overrides retain their configured flat rates instead of inheriting time-based pricing.
+### Added
+
+- RPC `prompt`, `steer`, and `follow_up` accept optional `clientMessageId` metadata that survives queued consumption, skill expansion, and persisted replay.
+
 ### Fixed
 
 - Supervised process launch refuses a native addon without the fork's process-identity API before starting a child, avoiding untracked processes when source and addon builds differ.
+- Distinct correlated user submissions with identical timestamps and content remain separate in persisted history.
 
 ## [18.1.16] - 2026-09-09
 

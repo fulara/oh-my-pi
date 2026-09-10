@@ -11,11 +11,12 @@
  *     post-prompt recovery, but the loop is already done) must be drained when
  *     the session settles.
  */
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { Agent } from "@oh-my-pi/pi-agent-core";
+import { Agent, type AgentMessage } from "@oh-my-pi/pi-agent-core";
+import type { ImageContent } from "@oh-my-pi/pi-ai";
 import { createMockModel, type MockModel, type MockResponse } from "@oh-my-pi/pi-ai/providers/mock";
 import { getBundledModel } from "@oh-my-pi/pi-catalog/models";
 import { ModelRegistry } from "@oh-my-pi/pi-coding-agent/config/model-registry";
@@ -64,7 +65,10 @@ describe("AgentSession queued steer delivery", () => {
 		removeSyncWithRetries(fixtureDir);
 	});
 
-	async function createSession(responses: MockResponse[]): Promise<SteerHarness> {
+	async function createSession(
+		responses: MockResponse[],
+		sessionManager = SessionManager.inMemory(),
+	): Promise<SteerHarness> {
 		const model = getBundledModel("anthropic", "claude-sonnet-4-5")!;
 		const mock = createMockModel({ responses });
 		const agent = new Agent({
@@ -72,7 +76,6 @@ describe("AgentSession queued steer delivery", () => {
 			initialState: { model, systemPrompt: ["Test"], tools: [] },
 			streamFn: mock.stream,
 		});
-		const sessionManager = SessionManager.inMemory();
 		const settings = Settings.isolated({ "compaction.enabled": false });
 
 		session = new AgentSession({ agent, sessionManager, settings, modelRegistry });
@@ -304,5 +307,97 @@ describe("AgentSession queued steer delivery", () => {
 		await session.waitForIdle();
 
 		expect(session.agent.peekSteeringQueue()).toEqual([]);
+	});
+
+	it("correlates consumed prompt, steer, and follow-up messages through events and persisted reload without matching text", async () => {
+		const sessionManager = SessionManager.create(tempDir, path.join(tempDir, "sessions"));
+		const { session, mock } = await createSession(
+			[{ content: ["Initial answer"] }, { content: ["Queued work consumed"] }],
+			sessionManager,
+		);
+		const ended: AgentMessage[] = [];
+		session.setSteeringMode("all");
+		session.setFollowUpMode("all");
+		session.subscribe(event => {
+			if (event.type === "message_end") ended.push(structuredClone(event.message));
+		});
+		const images: ImageContent[] = [
+			{
+				type: "image",
+				data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M8AAAMBAQDJ/pLvAAAAAElFTkSuQmCC",
+				mimeType: "image/png",
+			},
+		];
+		const duplicateText = "  duplicate ultrathink\n";
+		const whitespaceText = " \n\t ";
+		const queuedIds = ["client-steer", "client-prompt-steer", "client-follow-up", "client-prompt-follow-up"];
+		let injected = false;
+		session.agent.setOnBeforeYield(async () => {
+			if (injected) return;
+			injected = true;
+			// Force equal submission timestamps: distinct client IDs, not text or
+			// wall-clock precision, must keep duplicate submissions distinct on disk.
+			const clock = vi.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
+			try {
+				await session.steer(duplicateText, undefined, { clientMessageId: queuedIds[0] });
+				await session.prompt(duplicateText, { streamingBehavior: "steer", clientMessageId: queuedIds[1] });
+				await session.followUp(whitespaceText, images, { clientMessageId: queuedIds[2] });
+				await session.prompt(whitespaceText, {
+					images,
+					streamingBehavior: "followUp",
+					clientMessageId: queuedIds[3],
+				});
+				await session.followUp("internal follow-up", undefined, {
+					synthetic: true,
+					clientMessageId: "client-hidden",
+				});
+			} finally {
+				clock.mockRestore();
+			}
+			expect(ended.filter(message => message.role === "user").map(message => message.clientMessageId)).toEqual([
+				"client-root",
+			]);
+		});
+
+		await session.prompt("ultrathink start", { clientMessageId: "client-root" });
+		await session.waitForIdle();
+		await session.dispose();
+		const expectedIds = ["client-root", ...queuedIds];
+		const users = ended.filter(message => message.role === "user");
+		expect(users.map(message => message.clientMessageId)).toEqual(expectedIds);
+		expect(users.slice(1, 3).map(message => message.content)).toEqual([
+			[{ type: "text", text: duplicateText }],
+			[{ type: "text", text: duplicateText }],
+		]);
+		for (const message of users.slice(3)) {
+			expect(message.content).toEqual([
+				{ type: "text", text: whitespaceText },
+				expect.objectContaining({ type: "image" }),
+			]);
+		}
+		const companions = ended.filter(
+			message => message.role === "custom" && message.customType === "ultrathink-notice",
+		);
+		expect(companions.some(message => message.role === "custom" && message.display === false)).toBe(true);
+		expect(ended.filter(message => message.role !== "user").some(message => "clientMessageId" in message)).toBe(
+			false,
+		);
+		for (const call of mock.calls) {
+			const providerContent = JSON.stringify(call.context.messages.map(message => message.content));
+			for (const id of expectedIds) expect(providerContent).not.toContain(id);
+		}
+
+		const sessionFile = sessionManager.getSessionFile();
+		if (!sessionFile) throw new Error("Expected persisted session file");
+		const reopened = await SessionManager.open(sessionFile);
+		try {
+			const persistedUsers = reopened
+				.getBranch()
+				.flatMap(entry => (entry.type === "message" && entry.message.role === "user" ? [entry.message] : []));
+			expect(persistedUsers.map(message => message.clientMessageId)).toEqual(expectedIds);
+			expect(persistedUsers.map(message => message.content)).toEqual(users.map(message => message.content));
+		} finally {
+			await reopened.close();
+		}
 	});
 });
