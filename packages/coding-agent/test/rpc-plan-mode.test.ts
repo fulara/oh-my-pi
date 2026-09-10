@@ -165,6 +165,8 @@ describe("Fura RPC plan-mode runtime", () => {
 			title: "Reviewed-Runtime-Plan",
 			content: "# Runtime Plan\n\n- ship safely\n",
 		});
+		// Approval must dispatch the latest reviewed file, not the earlier proposal.
+		await writeLocalPlan(session, "local://PLAN.md", "# Runtime Plan\n\n- ship the reviewed change\n");
 
 		const agentEnded = Promise.withResolvers<void>();
 		const unsubscribe = session.subscribe(event => {
@@ -206,14 +208,12 @@ describe("Fura RPC plan-mode runtime", () => {
 		expect(session.getPlanModeState()).toBeUndefined();
 		expect(session.getActiveToolNames()).toEqual(["read"]);
 		await expect(fs.readFile(resolveRpcPlanPath(session, "local://APPROVED.md"), "utf8")).resolves.toBe(
-			"# Runtime Plan\n\n- ship safely\n",
+			"# Runtime Plan\n\n- ship the reviewed change\n",
 		);
-		// The approved plan content must be persisted to the final local file above.
-		// Upstream's execution prompt reads that file by path instead of embedding the
-		// plan inline, so assert the durable prompt contract: approval marker + path.
-		const serializedMessages = JSON.stringify(session.messages);
-		expect(serializedMessages).toContain("Plan approved.");
-		expect(serializedMessages).toContain("local://APPROVED.md");
+		const executionMessages = JSON.stringify(convertToLlm(session.messages));
+		expect(executionMessages).toContain("ship the reviewed change");
+		expect(executionMessages).not.toContain("ship safely");
+		expect(executionMessages).toContain("local://APPROVED.md");
 	});
 
 	it("keeps read active for approved plan execution when pre-plan tools omitted it", async () => {

@@ -2,7 +2,7 @@
 // exercises the real broker, native process handles, child pipes, and socket RPC.
 // Every target is our own Bun.spawn child in a separate POSIX session/group. Even
 // the pre-fix broker can only terminate that disposable sentinel, not the runner.
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { Process } from "@oh-my-pi/pi-natives";
@@ -237,6 +237,69 @@ async function recoverSentinel(
 }
 
 describe.skipIf(process.platform === "win32")("daemon broker process identity recovery", () => {
+	it("refuses an addon without identity before spawning a command", async () => {
+		using tempDir = TempDir.createSync("@omp-launch-missing-native-identity-");
+		const projectDir = path.join(tempDir.path(), "project");
+		const runtimeDir = path.join(tempDir.path(), "runtime");
+		const marker = path.join(tempDir.path(), "spawned");
+		await fs.mkdir(projectDir);
+		const client = await createDaemonBrokerClient(projectDir, { runtimeDir, idleGraceMs: 5_000 });
+		const previousTitle = process.title;
+		const broker = startBroker(projectDir, runtimeDir);
+		const descriptor = Object.getOwnPropertyDescriptor(Process.prototype, "identity");
+		const spawn = spyOn(Bun, "spawn");
+		let connected = false;
+		try {
+			const endpoint = daemonBrokerEndpoint(projectDir, runtimeDir);
+			const deadline = Date.now() + 5_000;
+			while (
+				!(await fs.stat(endpoint).then(
+					() => true,
+					() => false,
+				))
+			) {
+				if (Date.now() >= deadline) throw new Error("Private broker socket did not appear");
+				await Promise.race([broker, Bun.sleep(10)]);
+			}
+			await client.request({ op: "ping" });
+			connected = true;
+			Object.defineProperty(Process.prototype, "identity", { ...descriptor, value: undefined });
+			const result = await client.request({
+				op: "start",
+				spec: {
+					name: "must-not-spawn",
+					application: process.execPath,
+					args: ["-e", `await Bun.write(${JSON.stringify(marker)}, "started")`],
+					env: {},
+					cwd: projectDir,
+					pty: false,
+					restart: "no",
+					persist: false,
+					detached: false,
+				},
+			});
+			if (result.op !== "start") throw new Error(`Unexpected result: ${result.op}`);
+			expect(result.daemon.state).toBe("failed");
+			// If the old broker spawned our harmless marker writer, await its exit;
+			// absence is then a completed outcome, not a guessed timing window.
+			for (const result of spawn.mock.results) {
+				if (result.type === "return") await result.value.exited;
+			}
+			expect(await Bun.file(marker).exists()).toBe(false);
+			expect(result.daemon.exitReason).toContain("Process.identity");
+		} finally {
+			spawn.mockRestore();
+			if (descriptor) Object.defineProperty(Process.prototype, "identity", descriptor);
+			try {
+				if (connected) await client.request({ op: "shutdown" });
+			} finally {
+				client.close();
+				await broker;
+				process.title = previousTitle;
+			}
+		}
+	}, 15_000);
+
 	for (const detached of [false, true]) {
 		for (const identity of ["missing", "stale"] as const) {
 			it(`refuses ${identity} identity for ${detached ? "detached adoption" : "recovery termination"}`, async () => {
