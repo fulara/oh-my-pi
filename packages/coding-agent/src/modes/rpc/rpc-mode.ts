@@ -301,6 +301,7 @@ export async function runRpcSkillCommand(
 	prebuilt?: BuiltSkillPromptMessage,
 	onPromptAdmitted?: () => void,
 	images?: ImageContent[],
+	clientMessageId?: string,
 ): Promise<boolean> {
 	const built = prebuilt ?? (await buildSkillPromptMessage(invocation.skill, invocation, "user"));
 	return session.promptCustomMessage(
@@ -308,7 +309,7 @@ export async function runRpcSkillCommand(
 			customType: SKILL_PROMPT_MESSAGE_TYPE,
 			content: images?.length ? [{ type: "text", text: built.message }, ...images] : built.message,
 			display: true,
-			details: built.details,
+			details: { ...built.details, clientMessageId },
 			attribution: "user",
 		},
 		{ streamingBehavior, queueChipText: invocation.queueChipText, onPromptAdmitted },
@@ -331,6 +332,7 @@ export async function dispatchRpcSkillPrompt(input: {
 	ticket: RpcPromptTicket;
 	session: RpcSkillCommandSession;
 	message: string;
+	clientMessageId?: string;
 	streamingBehavior: "steer" | "followUp" | undefined;
 	results: RpcPromptResults;
 	onError: (error: Error) => void;
@@ -359,6 +361,7 @@ export async function dispatchRpcSkillPrompt(input: {
 				built,
 				onPromptAdmitted,
 				input.images,
+				input.clientMessageId,
 			),
 		results: input.results,
 		onError: input.onError,
@@ -2506,6 +2509,7 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 			if (!isCurrent()) return "cancelled";
 			let text = command.message;
 			let images = command.images;
+			const clientMessageId = "clientMessageId" in command ? command.clientMessageId : undefined;
 			const runner = session.extensionRunner;
 			if (runner?.hasHandlers("input")) {
 				const result = await runner.emitInput(text, images, "rpc");
@@ -2517,11 +2521,11 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 			if (!isCurrent()) return "cancelled";
 			if (!text.trim() && !images?.length) return "local";
 			if (command.type === "steer") {
-				await session.steer(text, images);
+				await session.steer(text, images, { clientMessageId });
 				return "admitted";
 			}
 			if (command.type === "follow_up") {
-				await session.followUp(text, images);
+				await session.followUp(text, images, { clientMessageId });
 				return "admitted";
 			}
 			if (command.type === "prompt") {
@@ -2530,6 +2534,7 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 					ticket,
 					session,
 					message: text,
+					clientMessageId,
 					streamingBehavior: command.streamingBehavior,
 					results: promptResults,
 					onError: onPromptError(command.id, "prompt"),
@@ -2580,6 +2585,7 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 				startPrompt: onPromptAdmitted =>
 					session.prompt(text, {
 						images,
+						clientMessageId,
 						...(command.type === "prompt" ? { streamingBehavior: command.streamingBehavior } : {}),
 						onPromptAdmitted,
 					}),
