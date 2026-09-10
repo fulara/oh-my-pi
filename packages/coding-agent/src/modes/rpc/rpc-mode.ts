@@ -176,6 +176,7 @@ export async function runRpcSkillCommand(
 	invocation: RpcSkillInvocation,
 	streamingBehavior: "steer" | "followUp" = "steer",
 	prebuilt?: BuiltSkillPromptMessage,
+	clientMessageId?: string,
 ): Promise<boolean> {
 	const built = prebuilt ?? (await buildSkillPromptMessage(invocation.skill, invocation, "user"));
 	return session.promptCustomMessage(
@@ -183,7 +184,7 @@ export async function runRpcSkillCommand(
 			customType: SKILL_PROMPT_MESSAGE_TYPE,
 			content: built.message,
 			display: true,
-			details: built.details,
+			details: { ...built.details, clientMessageId },
 			attribution: "user",
 		},
 		{ streamingBehavior },
@@ -202,6 +203,7 @@ export async function dispatchRpcSkillPrompt(input: {
 	id: string | undefined;
 	session: RpcSkillCommandSession;
 	message: string;
+	clientMessageId?: string;
 	streamingBehavior: "steer" | "followUp" | undefined;
 	output: (obj: object) => void;
 	onError: (error: Error) => void;
@@ -217,7 +219,14 @@ export async function dispatchRpcSkillPrompt(input: {
 	const built = await buildSkillPromptMessage(invocation.skill, invocation, "user");
 	watchAndReportLocalOnlyPromptResult({
 		id: input.id,
-		startPrompt: () => runRpcSkillCommand(input.session, invocation, input.streamingBehavior ?? "steer", built),
+		startPrompt: () =>
+			runRpcSkillCommand(
+				input.session,
+				invocation,
+				input.streamingBehavior ?? "steer",
+				built,
+				input.clientMessageId,
+			),
 		output: input.output,
 		onError: input.onError,
 		extensionUserMessageTracker: input.extensionUserMessageTracker,
@@ -1931,6 +1940,7 @@ export async function runRpcMode(
 					id,
 					session,
 					message: command.message,
+					clientMessageId: command.clientMessageId,
 					streamingBehavior: command.streamingBehavior,
 					output,
 					onError: promptError => output(error(id, "prompt", promptError.message)),
@@ -1959,7 +1969,11 @@ export async function runRpcMode(
 					if ("prompt" in builtinResult) {
 						watchAndReportLocalOnlyPromptResult({
 							id,
-							startPrompt: () => session.prompt(builtinResult.prompt, { images: command.images }),
+							startPrompt: () =>
+								session.prompt(builtinResult.prompt, {
+									images: command.images,
+									clientMessageId: command.clientMessageId,
+								}),
 							output,
 							onError: promptError => output(error(id, "prompt", promptError.message)),
 							extensionUserMessageTracker,
@@ -1981,6 +1995,7 @@ export async function runRpcMode(
 					startPrompt: () =>
 						session.prompt(command.message, {
 							images: command.images,
+							clientMessageId: command.clientMessageId,
 							streamingBehavior: command.streamingBehavior,
 						}),
 					output,
@@ -1991,12 +2006,12 @@ export async function runRpcMode(
 			}
 
 			case "steer": {
-				await session.steer(command.message, command.images);
+				await session.steer(command.message, command.images, { clientMessageId: command.clientMessageId });
 				return success(id, "steer");
 			}
 
 			case "follow_up": {
-				await session.followUp(command.message, command.images);
+				await session.followUp(command.message, command.images, { clientMessageId: command.clientMessageId });
 				return success(id, "follow_up");
 			}
 

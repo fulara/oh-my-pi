@@ -6397,6 +6397,7 @@ export class AgentSession {
 			await this.#queueUserMessage(expandedText, options?.images, streamingBehavior, {
 				timestamp: submittedAt,
 				attribution: promptAttribution,
+				clientMessageId: options?.clientMessageId,
 			});
 			outcome.sessionClaimed = true;
 			return true;
@@ -6450,6 +6451,7 @@ export class AgentSession {
 			await this.#queueUserMessage(expandedText, options?.images, streamingBehavior, {
 				timestamp: submittedAt,
 				attribution: promptAttribution,
+				clientMessageId: options?.clientMessageId,
 				preprocessed: {
 					images: normalizedImages,
 					descriptionNotice: imageDescriptionNotice,
@@ -6474,7 +6476,13 @@ export class AgentSession {
 					synthetic: true,
 					userInitiated: options?.userInitiated === true ? true : undefined,
 				}
-			: { role: "user" as const, content: userContent, attribution: promptAttribution, timestamp: submittedAt };
+			: {
+					role: "user" as const,
+					content: userContent,
+					clientMessageId: options?.clientMessageId,
+					attribution: promptAttribution,
+					timestamp: submittedAt,
+				};
 
 		const preludeMessages: AgentMessage[] = [];
 		if (eagerTodoPrelude) {
@@ -7161,6 +7169,7 @@ export class AgentSession {
 		await this.#queueUserMessage(expandedText, images, "steer", {
 			timestamp: submittedAt,
 			attribution: options?.attribution,
+			clientMessageId: options?.clientMessageId,
 		});
 	}
 
@@ -7185,6 +7194,7 @@ export class AgentSession {
 			await this.#queueUserMessage(expandedText, images, "followUp", {
 				timestamp: submittedAt,
 				attribution: options?.attribution,
+				clientMessageId: options?.clientMessageId,
 			});
 			return;
 		}
@@ -7249,12 +7259,14 @@ export class AgentSession {
 		options?: {
 			timestamp?: number;
 			attribution?: MessageAttribution;
+			clientMessageId?: string;
 			preprocessed?: { images: ImageContent[] | undefined; descriptionNotice: CustomMessage | undefined };
 		},
 	): Promise<void> {
 		const attribution = options?.attribution ?? "user";
 		const timestamp = options?.timestamp;
 		const preprocessed = options?.preprocessed;
+		const clientMessageId = options?.clientMessageId;
 		// Captured before any await below so the aside branch can detect a
 		// newSession()/switchSession() that completed while normalization/vision
 		// description was in flight and drop a record that would otherwise land in a
@@ -7288,7 +7300,7 @@ export class AgentSession {
 			if (await this.#sessionGenerationChanged(sessionGeneration)) return;
 			const records: AgentMessage[] = [];
 			if (imageDescriptionNotice) records.push(imageDescriptionNotice);
-			records.push({ role: "user", content, attribution, timestamp: timestamp ?? Date.now() });
+			records.push({ role: "user", content, clientMessageId, attribution, timestamp: timestamp ?? Date.now() });
 			this.#irc.queueAside(records);
 			// The awaits above (image normalization / vision description) can span the run's
 			// settle, so the run may already be idle by the time the record lands in the aside
@@ -7304,6 +7316,7 @@ export class AgentSession {
 			this.agent.followUp({
 				role: "user",
 				content,
+				clientMessageId,
 				attribution,
 				timestamp: timestamp ?? Date.now(),
 			});
@@ -7313,6 +7326,7 @@ export class AgentSession {
 			this.agent.steer({
 				role: "user",
 				content,
+				clientMessageId,
 				steering: true,
 				attribution,
 				timestamp: timestamp ?? Date.now(),
