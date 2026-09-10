@@ -710,6 +710,11 @@ class DaemonBroker {
 		record.outputOffset = 0;
 		this.#persist(record);
 		try {
+			if (typeof Process.prototype.identity !== "function") {
+				throw new Error(
+					"OMP native addon lacks Process.identity; rebuild the matching fork before launching processes",
+				);
+			}
 			if (record.spec.detached) await this.#launchDetached(record, generation);
 			else if (record.spec.pty) await this.#launchPty(record, generation);
 			else this.#launchPipe(record, generation);
