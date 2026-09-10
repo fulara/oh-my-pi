@@ -7447,6 +7447,7 @@ export class AgentSession implements SettingsScope {
 				rawText: typedText,
 				onPromptAdmitted: options?.onPromptAdmitted,
 				promptGeneration: queueGeneration,
+				clientMessageId: options?.clientMessageId,
 			});
 			outcome.sessionClaimed = queued;
 			if (!queued && this.#promptGeneration !== queueGeneration && !options?.synthetic) {
@@ -7520,6 +7521,7 @@ export class AgentSession implements SettingsScope {
 				attribution: promptAttribution,
 				prependMessages: prependNotices,
 				rawText: typedText,
+				clientMessageId: options?.clientMessageId,
 				preprocessed: {
 					images: normalizedImages,
 					descriptionNotice: imageDescriptionNotice,
@@ -7545,7 +7547,13 @@ export class AgentSession implements SettingsScope {
 					synthetic: true,
 					userInitiated: options?.userInitiated === true ? true : undefined,
 				}
-			: { role: "user" as const, content: userContent, attribution: promptAttribution, timestamp: submittedAt };
+			: {
+					role: "user" as const,
+					content: userContent,
+					clientMessageId: options?.clientMessageId,
+					attribution: promptAttribution,
+					timestamp: submittedAt,
+				};
 
 		const preludeMessages: AgentMessage[] = [];
 		if (eagerTodoPrelude) {
@@ -8337,6 +8345,7 @@ export class AgentSession implements SettingsScope {
 			timestamp: submittedAt,
 			attribution: options?.attribution,
 			rawText: text,
+			clientMessageId: options?.clientMessageId,
 		});
 	}
 
@@ -8362,6 +8371,7 @@ export class AgentSession implements SettingsScope {
 				timestamp: submittedAt,
 				attribution: options?.attribution,
 				rawText: text,
+				clientMessageId: options?.clientMessageId,
 			});
 			return;
 		}
@@ -8451,6 +8461,7 @@ export class AgentSession implements SettingsScope {
 			 * message is not queued, matching prompt()'s idle drop.
 			 */
 			promptGeneration?: number;
+			clientMessageId?: string;
 		},
 	): Promise<boolean> {
 		const attribution = options?.attribution ?? "user";
@@ -8458,6 +8469,7 @@ export class AgentSession implements SettingsScope {
 		const rawText = options?.rawText ?? text;
 		const preprocessed = options?.preprocessed;
 		const prependMessages = options?.prependMessages ?? [];
+		const clientMessageId = options?.clientMessageId;
 		// Captured before any await below so the aside branch can detect a
 		// newSession()/switchSession() that completed while normalization/vision
 		// description was in flight and drop a record that would otherwise land in a
@@ -8494,7 +8506,7 @@ export class AgentSession implements SettingsScope {
 			if (await this.#sessionGenerationChanged(sessionGeneration)) return false;
 			const records: AgentMessage[] = [...prependMessages, ...attachmentSourceNotices];
 			if (imageDescriptionNotice) records.push(imageDescriptionNotice);
-			const userMessage: AgentMessage = { role: "user", content, attribution, timestamp: timestamp ?? Date.now() };
+			const userMessage: AgentMessage = { role: "user", content, clientMessageId, attribution, timestamp: timestamp ?? Date.now() };
 			this.#queuedMessageRawText.set(userMessage, rawText);
 			records.push(userMessage);
 			this.#irc.queueAside(records);
@@ -8517,6 +8529,7 @@ export class AgentSession implements SettingsScope {
 			const userMessage: AgentMessage = {
 				role: "user",
 				content,
+				clientMessageId,
 				attribution,
 				timestamp: timestamp ?? Date.now(),
 			};
@@ -8529,6 +8542,7 @@ export class AgentSession implements SettingsScope {
 			const userMessage: AgentMessage = {
 				role: "user",
 				content,
+				clientMessageId,
 				steering: true,
 				attribution,
 				timestamp: timestamp ?? Date.now(),
