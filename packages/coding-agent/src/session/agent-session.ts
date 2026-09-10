@@ -9324,6 +9324,7 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 				onPromptQueued: options?.onPromptQueued,
 				onPromptAdmitted: onPromptQueuedAdmitted,
 				promptGeneration: queueGeneration,
+				clientMessageId: options?.clientMessageId,
 			});
 			outcome.sessionClaimed = queued;
 			if (!queued) this.#reportDroppedPrompt(typedText, options, followUps);
@@ -9395,6 +9396,7 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 				attribution: promptAttribution,
 				prependMessages: prependNotices,
 				rawText: typedText,
+				clientMessageId: options?.clientMessageId,
 				preprocessed: {
 					images: normalizedImages,
 					descriptionNotice: imageDescriptionNotice,
@@ -9423,7 +9425,13 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 					synthetic: true,
 					userInitiated: options?.userInitiated === true ? true : undefined,
 				}
-			: { role: "user" as const, content: userContent, attribution: promptAttribution, timestamp: submittedAt };
+			: {
+					role: "user" as const,
+					content: userContent,
+					clientMessageId: options?.clientMessageId,
+					attribution: promptAttribution,
+					timestamp: submittedAt,
+				};
 
 		const preludeMessages: AgentMessage[] = [];
 		if (eagerTodoPrelude) {
@@ -10418,6 +10426,7 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 			prependMessages: queued.prependMessages,
 			rawText: text,
 			onPromptQueued: options?.onPromptQueued,
+			clientMessageId: options?.clientMessageId,
 		});
 	}
 
@@ -10490,6 +10499,7 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 				prependMessages: queued.prependMessages,
 				rawText: text,
 				onPromptQueued: options?.onPromptQueued,
+				clientMessageId: options?.clientMessageId,
 			});
 			return;
 		}
@@ -10689,6 +10699,7 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 			 * message is not queued, matching prompt()'s idle drop.
 			 */
 			promptGeneration?: number;
+			clientMessageId?: string;
 		},
 	): Promise<boolean> {
 		const attribution = options?.attribution ?? "user";
@@ -10696,6 +10707,7 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 		const rawText = options?.rawText ?? text;
 		const preprocessed = options?.preprocessed;
 		const prependMessages = options?.prependMessages ?? [];
+		const clientMessageId = options?.clientMessageId;
 		// Captured before any await below so the aside branch can detect a
 		// newSession()/switchSession() that completed while normalization/vision
 		// description was in flight and drop a record that would otherwise land in a
@@ -10748,7 +10760,7 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 			if (await this.#sessionGenerationChanged(sessionGeneration)) return false;
 			const records: AgentMessage[] = [...prependMessages, ...attachmentSourceNotices];
 			if (imageDescriptionNotice) records.push(imageDescriptionNotice);
-			const userMessage: AgentMessage = { role: "user", content, attribution, timestamp: timestamp ?? Date.now() };
+			const userMessage: AgentMessage = { role: "user", content, clientMessageId, attribution, timestamp: timestamp ?? Date.now() };
 			this.#queuedMessageRawText.set(userMessage, rawText);
 			records.push(userMessage);
 			this.#irc.queueAside(records);
@@ -10769,6 +10781,7 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 			attribution,
 			timestamp ?? Date.now(),
 			rawText,
+			clientMessageId,
 		);
 		options?.onPromptQueued?.(queued);
 		options?.onPromptAdmitted?.();
@@ -10792,12 +10805,13 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 		attribution: MessageAttribution,
 		timestamp: number,
 		rawText: string,
+		clientMessageId?: string,
 	): AgentMessage[] {
 		this.#allowQueuedMessageDrainRetry();
 		const userMessage: AgentMessage =
 			mode === "followUp"
-				? { role: "user", content, attribution, timestamp }
-				: { role: "user", content, steering: true, attribution, timestamp };
+				? { role: "user", content, clientMessageId, attribution, timestamp }
+				: { role: "user", content, clientMessageId, steering: true, attribution, timestamp };
 		this.#queuedMessageRawText.set(userMessage, rawText);
 		const group = [...companions, userMessage];
 		if (mode === "followUp") {
