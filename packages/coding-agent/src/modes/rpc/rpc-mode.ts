@@ -829,8 +829,6 @@ function extractRpcPlanReviewDetails(toolName: string, result: unknown): RpcPlan
 	};
 }
 
-
-
 export function createFuraRpcRuntime(
 	session: AgentSession,
 	output: RpcOutput = () => {},
@@ -1042,9 +1040,8 @@ export function createFuraRpcRuntime(
 		const { content: planContent, finalPlanFilePath } = details;
 		const previousTools = state.planPreviousTools ?? session.getEnabledToolNames();
 		const previousMountedTools = state.planPreviousMountedTools ?? session.getMountedXdevToolNames();
-		// Approved-plan prompts read the durable local:// plan file instead of
-		// embedding the plan inline, so execution must keep `read` available even
-		// when the pre-plan active tool set omitted it.
+		// Execution receives the reviewed plan inline. Keep `read` available for
+		// recovery from the durable local:// artifact after compaction or handoff.
 		const executionTools = previousTools.includes("read") ? previousTools : [...previousTools, "read"];
 		const approvalSessionId = session.sessionId;
 
