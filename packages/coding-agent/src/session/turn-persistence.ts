@@ -31,8 +31,8 @@ import type { AgentMessage } from "@oh-my-pi/pi-agent-core";
  *   disambiguate when it is not, e.g. local/dev models).
  * - `toolResult` — timestamp + toolCallId + toolName (toolCallId is unique
  *   per execution; toolName guards against synthetic reuse).
- * - `user` / `developer` — timestamp + attribution (attribution distinguishes
- *   user-typed vs hook-injected at the same wall-clock millisecond).
+ * - `user` — timestamp + attribution + optional client submission identity.
+ * - `developer` — timestamp + attribution (distinguishes initiators at the same instant).
  * - `fileMention` — timestamp.
  *
  * Returns `undefined` for message roles that are not persisted through this
@@ -53,6 +53,7 @@ export function sessionMessagePersistenceKey(message: AgentMessage): string | un
 		case "toolResult":
 			return `toolResult:${message.timestamp}:${message.toolCallId}:${message.toolName}`;
 		case "user":
+			return `user:${message.timestamp}:${message.attribution ?? ""}${message.clientMessageId === undefined ? "" : `:${message.clientMessageId}`}`;
 		case "developer":
 			return `${message.role}:${message.timestamp}:${message.attribution ?? ""}`;
 		case "fileMention":
