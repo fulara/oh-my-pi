@@ -6506,7 +6506,6 @@ describe("openai-codex streaming", () => {
 		// Open only after the second caller has joined the pending handshake.
 		await Promise.race([handshakeJoined.promise, prewarmPromise]);
 		for (const socket of sockets) socket.open();
-
 		await prewarmPromise;
 		const result = await streamResult;
 
