@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- User messages support optional `clientMessageId` metadata for persistent client submission correlation without changing provider prompt text.
+
 ## [18.1.17] - 2026-09-10
 
 ### Fixed
@@ -10,9 +14,6 @@
 - Ollama cache hits now populate cached-token usage: `prompt_eval_cached_count` from the `/api/chat` done chunk maps to `cacheRead`, with `input` reduced to the uncached portion, so status-line `cache_turn`/`cache_hit` segments and cache-prefix audits report real hit rates instead of false misses.
 - Fixed requests that run across a price change being costed at the newer rate; peak/off-peak estimates now use the rate in effect when the request started.
 - Fixed GitHub Copilot Business seats getting HTTP 403 on every model while the same token succeeds with a Chat client identity: chat and model-policy requests now identify as `copilot-chat`, denied requests retry once as the Copilot CLI (`copilot-developer-cli`), and `COPILOT_INTEGRATION_ID` pins the `Copilot-Integration-Id` header up front; model discovery keeps the CLI identity and the 403 message names the identity and the remedies ([#11372](https://github.com/can1357/oh-my-pi/issues/11372)).
-### Added
-
-- User messages support optional `clientMessageId` metadata for persistent client submission correlation without changing provider prompt text.
 
 ## [18.1.16] - 2026-09-09
 
