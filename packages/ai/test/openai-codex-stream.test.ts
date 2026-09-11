@@ -5402,12 +5402,12 @@ describe("openai-codex streaming", () => {
 		});
 
 		let constructorCount = 0;
-		const sockets: DeferredOpenWebSocket[] = [];
+		const { promise: socketCreated, resolve: socketReady } = Promise.withResolvers<DeferredOpenWebSocket>();
 		class DeferredOpenWebSocket extends MockWebSocket {
 			constructor(url: string, options?: { headers?: WsHeaders }) {
 				super(url, options);
 				constructorCount += 1;
-				sockets.push(this);
+				socketReady(this);
 			}
 
 			open(): void {
@@ -5437,16 +5437,29 @@ describe("openai-codex streaming", () => {
 			sessionId: "ws-join-session",
 			providerSessionState,
 		});
+		const socket = await socketCreated;
+		let readyState = socket.readyState;
+		// Open only when the second caller inspects the pending socket. A fixed
+		// sleep can expire before construction and leave the handshake unopened.
+		Object.defineProperty(socket, "readyState", {
+			get() {
+				if (readyState === MockWebSocket.CONNECTING) {
+					queueMicrotask(() => {
+						if (readyState === MockWebSocket.CONNECTING) socket.open();
+					});
+				}
+				return readyState;
+			},
+			set(value: number) {
+				readyState = value;
+			},
+		});
 		const streamResult = streamOpenAICodexResponses(model, createCodexTestContext(), {
 			fetch: fetchMock as FetchImpl,
 			apiKey: token,
 			sessionId: "ws-join-session",
 			providerSessionState,
 		}).result();
-
-		// Let both callers reach the handshake before the socket opens.
-		await Bun.sleep(5);
-		for (const socket of sockets) socket.open();
 
 		await prewarmPromise;
 		const result = await streamResult;
