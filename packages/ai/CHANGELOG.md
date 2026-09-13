@@ -110,6 +110,9 @@
 ### Fixed
 
 - Fixed Windows OAuth sign-in failing on every attempt after an upgrade when a previous run left a stale native callback registration behind; handlers registered by older binaries are now recognized as owned and rolled back instead of blocking recovery ([#11967](https://github.com/can1357/oh-my-pi/pull/11967) by [@H4vC](https://github.com/H4vC)).
+### Added
+
+- User messages support optional `clientMessageId` metadata for persistent client submission correlation without changing provider prompt text.
 
 ## [18.1.19] - 2026-09-12
 
@@ -144,9 +147,6 @@
 - GitHub Copilot streams remember the working `Copilot-Integration-Id` per credential after a denied chat identity retries as the Copilot CLI, so later streams start at the working shape instead of replaying the denial ([#11669](https://github.com/can1357/oh-my-pi/issues/11669)).
 - Fixed Anthropic OAuth requests omitting the tool-array cache breakpoint, so tool definitions are now cached across session rewrites and sibling subagents ([#11660](https://github.com/can1357/oh-my-pi/pull/11660) by [@camjac251](https://github.com/camjac251)).
 - Fixed Amazon Bedrock OpenAI models rejecting image-bearing tool results by sending each image as a sibling user content block ([#11681](https://github.com/can1357/oh-my-pi/issues/11681)).
-### Added
-
-- User messages support optional `clientMessageId` metadata for persistent client submission correlation without changing provider prompt text.
 
 ## [18.1.17] - 2026-09-10
 
