@@ -2682,9 +2682,10 @@ export class AgentSession implements SettingsScope {
 		this.#planProposalHandler = handler ?? undefined;
 	}
 
-	#sessionBeforeSwitchReconciler: (() => Promise<void>) | undefined;
+	#sessionBeforeSwitchReconciler: (() => Promise<void | (() => void)>) | undefined;
 
-	setSessionBeforeSwitchReconciler(reconciler: (() => Promise<void>) | null): void {
+	/** Quiesce before mutation; optional cleanup runs after the transition succeeds or fails. */
+	setSessionBeforeSwitchReconciler(reconciler: (() => Promise<void | (() => void)>) | null): void {
 		this.#sessionBeforeSwitchReconciler = reconciler ?? undefined;
 	}
 
@@ -9680,110 +9681,114 @@ export class AgentSession implements SettingsScope {
 			}
 		}
 
-		this.#disconnectFromAgent();
-		let advisorRecordersDetached = false;
-		await this.abort();
-		this.#cancelOwnAsyncJobs();
-		this.#closeAllProviderSessions("new session");
-		await this.#bash.flushPending();
-		const bashTransition = this.#bash.beginSessionTransition({ persistDetached: options?.drop !== true });
-		let sessionTransitioned = false;
+		const finishSessionSwitch = await this.#sessionBeforeSwitchReconciler?.();
 		try {
-			advisorRecordersDetached = true;
-			await this.#advisors.drainAndDetachRecorders();
+			this.#disconnectFromAgent();
+			let advisorRecordersDetached = false;
+			await this.abort();
+			this.#cancelOwnAsyncJobs();
+			this.#closeAllProviderSessions("new session");
+			await this.#bash.flushPending();
+			const bashTransition = this.#bash.beginSessionTransition({ persistDetached: options?.drop !== true });
+			let sessionTransitioned = false;
 			try {
-				this.#releaseQueuedTtsrReservations();
-				this.agent.reset();
-				this.tokenRate.reset();
-				if (options?.drop && previousSessionFile) {
-					try {
-						await this.sessionManager.dropSession(previousSessionFile);
-					} catch (err) {
-						logger.error("Failed to delete session during /delete", { err });
+				advisorRecordersDetached = true;
+				await this.#advisors.drainAndDetachRecorders();
+				try {
+					this.#releaseQueuedTtsrReservations();
+					this.agent.reset();
+					this.tokenRate.reset();
+					if (options?.drop && previousSessionFile) {
+						try {
+							await this.sessionManager.dropSession(previousSessionFile);
+						} catch (err) {
+							logger.error("Failed to delete session during /delete", { err });
+						}
+					} else {
+						await this.sessionManager.flush();
 					}
-				} else {
-					await this.sessionManager.flush();
+					await this.sessionManager.newSession({
+						...options,
+						additionalDirectories: this.settings.get("workspace.additionalDirectories"),
+					});
+					this.#bash.markSessionTransition(bashTransition);
+					// The new session owns the transcript from here, so the previous
+					// conversation's advisor spend is retired with it. Clearing at the commit
+					// point keeps the status line honest even if a later step below throws.
+					this.#advisors.clearCost();
+					sessionTransitioned = true;
+				} finally {
+					this.#bash.finishSessionTransition(bashTransition, sessionTransitioned);
 				}
-				await this.sessionManager.newSession({
-					...options,
-					additionalDirectories: cfgWorkspaceAdditionalDirectories.get(this.settings),
-				});
-				this.#bash.markSessionTransition(bashTransition);
-				// The new session owns the transcript from here, so the previous
-				// conversation's advisor spend is retired with it. Clearing at the commit
-				// point keeps the status line honest even if a later step below throws.
-				this.#advisors.clearCost();
-				sessionTransitioned = true;
+
+				this.#clearSessionScopedToolState();
+				this.#clearCheckpointRuntimeState();
+				this.setTodoPhases([]);
+				this.#freshProviderSessionId = undefined;
+				this.#clearInheritedProviderPromptCacheKey();
+				this.#syncAgentSessionId();
+				// Re-apply the configured selector so the new session does not inherit
+				// the previous session's auto-classified effort: auto stays auto but
+				// restarts at the provisional level; a pinned level re-resolves to itself.
+				this.#models.restoreThinkingLevel(this.configuredThinkingLevel());
+				// Drop the frozen system-prompt/tool snapshot and synced message bytes
+				// (mirrors freshSession()/resetSessionContext()): without this the first
+				// post-/new turns keep sending the previous session's StablePrefix, and
+				// #syncAppendOnlyContext only re-runs on model or setting changes.
+				this.agent.appendOnlyContext?.invalidateForModelChange();
+				this.#memory.rekeyForCurrentSessionId();
+				await this.#memory.resetContextForNewTranscript();
+				this.#pendingNextTurnMessages = [];
+				// The abort above may have skipped the loop's final aside poll (issue: stranded
+				// asides survive an aborted turn by design so a resumed session can still see
+				// them); discard here so they cannot leak into the new session's transcript via
+				// the first ordinary prompt's IrcBridge.flushPending(). Bump #sessionGeneration in
+				// the same breath so an aside-queueing call still awaiting normalization for the
+				// outgoing session also drops its record instead of landing in this new one.
+				this.#irc.clearPending();
+				this.#sessionGeneration++;
+				this.#scheduledHiddenNextTurnGeneration = undefined;
+				this.#queuedMessageDrainBlocked = false;
+				this.#usagePreflightReadyForNextModelCall = false;
+
+				this.sessionManager.appendThinkingLevelChange(this.thinkingLevel, this.configuredThinkingLevel());
+				this.sessionManager.appendServiceTierChange(this.#models.serviceTierEntry());
+
+				this.#todo.resetCycle();
+				this.#planReferenceSent = false;
+				this.#planReferencePath = "local://PLAN.md";
+				this.#advisors.resetSessionState();
+				advisorRecordersDetached = false;
+				this.#reconnectToAgent();
+				await this.#reconcileSessionAfterSwitch("new");
+				// Drop the process-lifetime context-file cache so the rebuild re-reads
+				// AGENTS.md and friends from disk: the user may have edited them since
+				// the previous session started, and refreshBaseSystemPrompt() re-runs
+				// discovery but would otherwise hit stale cached bytes (issue #9273).
+				// The workspace-roots block must also reflect the new session's
+				// directory set, not the previous session's — refresh before the next
+				// turn goes out.
+				resetCapabilities();
+				await this.refreshBaseSystemPrompt();
+
+				// Emit session_switch event with reason "new" to hooks
+				if (this.#extensionRunner) {
+					await this.#extensionRunner.emit({
+						type: "session_switch",
+						reason: "new",
+						previousSessionFile,
+					});
+				}
+
+				return true;
 			} finally {
-				this.#bash.finishSessionTransition(bashTransition, sessionTransitioned);
+				if (advisorRecordersDetached) {
+					if (sessionTransitioned) this.#advisors.resetSessionState();
+					else this.#advisors.reattachRecorderFeeds();
+				}
 			}
-
-			this.#clearSessionScopedToolState();
-			this.#clearCheckpointRuntimeState();
-			this.setTodoPhases([]);
-			this.#freshProviderSessionId = undefined;
-			this.#clearInheritedProviderPromptCacheKey();
-			this.#syncAgentSessionId();
-			await this.#prewalk.resetForNewSession(this.#agentKind === "main" && cfgPrewalkEnabled.get(this.settings));
-			// Re-apply the configured selector so the new session does not inherit
-			// the previous session's auto-classified effort: auto stays auto but
-			// restarts at the provisional level; a pinned level re-resolves to itself.
-			this.#models.restoreThinkingLevel(this.configuredThinkingLevel());
-			// Drop the frozen system-prompt/tool snapshot and synced message bytes
-			// (mirrors freshSession()/resetSessionContext()): without this the first
-			// post-/new turns keep sending the previous session's StablePrefix, and
-			// #syncAppendOnlyContext only re-runs on model or setting changes.
-			this.agent.appendOnlyContext?.invalidateForModelChange();
-			this.#memory.rekeyForCurrentSessionId();
-			await this.#memory.resetContextForNewTranscript();
-			this.#pendingNextTurnMessages = [];
-			// The abort above may have skipped the loop's final aside poll (issue: stranded
-			// asides survive an aborted turn by design so a resumed session can still see
-			// them); discard here so they cannot leak into the new session's transcript via
-			// the first ordinary prompt's IrcBridge.flushPending(). Bump #sessionGeneration in
-			// the same breath so an aside-queueing call still awaiting normalization for the
-			// outgoing session also drops its record instead of landing in this new one.
-			this.#irc.clearPending();
-			this.#sessionGeneration++;
-			this.#scheduledHiddenNextTurnGeneration = undefined;
-			this.#queuedMessageDrainBlocked = false;
-			this.#usagePreflightReadyForNextModelCall = false;
-
-			this.sessionManager.appendThinkingLevelChange(this.thinkingLevel, this.configuredThinkingLevel());
-			this.sessionManager.appendServiceTierChange(this.#models.serviceTierEntry());
-
-			this.#todo.resetCycle();
-			this.#planReferenceSent = false;
-			this.#planReferencePath = "local://PLAN.md";
-			this.#advisors.resetSessionState();
-			advisorRecordersDetached = false;
-			this.#reconnectToAgent();
-			await this.#reconcileSessionAfterSwitch("new");
-			// Drop the process-lifetime context-file cache so the rebuild re-reads
-			// AGENTS.md and friends from disk: the user may have edited them since
-			// the previous session started, and refreshBaseSystemPrompt() re-runs
-			// discovery but would otherwise hit stale cached bytes (issue #9273).
-			// The workspace-roots block must also reflect the new session's
-			// directory set, not the previous session's — refresh before the next
-			// turn goes out.
-			resetCapabilities();
-			await this.refreshBaseSystemPrompt();
-
-			// Emit session_switch event with reason "new" to hooks
-			if (this.#extensionRunner) {
-				await this.#extensionRunner.emit({
-					type: "session_switch",
-					reason: "new",
-					previousSessionFile,
-				});
-			}
-
-			return true;
 		} finally {
-			if (advisorRecordersDetached) {
-				if (sessionTransitioned) this.#advisors.resetSessionState();
-				else this.#advisors.reattachRecorderFeeds();
-			}
+			if (finishSessionSwitch) finishSessionSwitch();
 		}
 	}
 
@@ -9848,63 +9853,68 @@ export class AgentSession implements SettingsScope {
 			}
 		}
 
-		await this.flushToDisk();
-		// Work admitted during the hook or flush awaits would be copied mid-flight.
-		if (requireIdleFor) this.#assertIdleForSnapshot(requireIdleFor);
-		let advisorRecordersDetached = false;
+		const finishSessionSwitch = await this.#sessionBeforeSwitchReconciler?.();
 		try {
-			advisorRecordersDetached = true;
-			// Fork keeps the conversation, but still needs a quiet artifact boundary:
-			// stop and settle in-flight advisors before muting their feeds.
-			await this.#advisors.drainAndDetachRecorders();
-			const bashTransition = this.#bash.beginSessionTransition();
-
-			// Fork the session (creates new session file with same entries)
-			let forkResult: { oldSessionFile: string; newSessionFile: string } | undefined;
+			await this.flushToDisk();
+			// Work admitted during the hook or flush awaits would be copied mid-flight.
+			if (requireIdleFor) this.#assertIdleForSnapshot(requireIdleFor);
+			let advisorRecordersDetached = false;
 			try {
-				// No file means fork() is a no-op. Otherwise invalidate admitted
-				// prompt setup before the asynchronous identity rewrite begins.
-				if (previousSessionFile) this.#promptGeneration++;
-				forkResult = await this.sessionManager.fork();
-			} catch (error) {
-				this.#bash.finishSessionTransition(bashTransition, false);
-				throw error;
+				advisorRecordersDetached = true;
+				// Fork keeps the conversation, but still needs a quiet artifact boundary:
+				// stop and settle in-flight advisors before muting their feeds.
+				await this.#advisors.drainAndDetachRecorders();
+				const bashTransition = this.#bash.beginSessionTransition();
+
+				// Fork the session (creates new session file with same entries)
+				let forkResult: { oldSessionFile: string; newSessionFile: string } | undefined;
+				try {
+					// No file means fork() is a no-op. Otherwise invalidate admitted
+					// prompt setup before the asynchronous identity rewrite begins.
+					if (previousSessionFile) this.#promptGeneration++;
+					forkResult = await this.sessionManager.fork();
+				} catch (error) {
+					this.#bash.finishSessionTransition(bashTransition, false);
+					throw error;
+				}
+				if (!forkResult) {
+					this.#bash.finishSessionTransition(bashTransition, false);
+					return false;
+				}
+				this.#bash.markSessionTransition(bashTransition);
+				this.#bash.finishSessionTransition(bashTransition, true);
+				// The fork clones the transcript and keeps this recovery state running
+				// under a fresh id, so the work already produced is still this session's.
+				this.#recovery.reanchorServedAttribution(previousSessionId);
+
+				await copySessionArtifacts(forkResult.oldSessionFile, forkResult.newSessionFile);
+
+				// Update agent session ID
+				this.#freshProviderSessionId = undefined;
+				this.#adoptInheritedProviderPromptCacheKey();
+				this.#syncAgentSessionId();
+				this.#memory.rekeyForCurrentSessionId();
+				this.#advisors.reattachRecorderFeeds();
+				advisorRecordersDetached = false;
+				await this.#memory.resetContextForNewTranscript();
+
+				await this.#reconcileSessionAfterSwitch("fork");
+
+				// Emit session_switch event with reason "fork" to hooks
+				if (this.#extensionRunner) {
+					await this.#extensionRunner.emit({
+						type: "session_switch",
+						reason: "fork",
+						previousSessionFile,
+					});
+				}
+
+				return true;
+			} finally {
+				if (advisorRecordersDetached) this.#advisors.reattachRecorderFeeds();
 			}
-			if (!forkResult) {
-				this.#bash.finishSessionTransition(bashTransition, false);
-				return false;
-			}
-			this.#bash.markSessionTransition(bashTransition);
-			this.#bash.finishSessionTransition(bashTransition, true);
-			// The fork clones the transcript and keeps this recovery state running
-			// under a fresh id, so the work already produced is still this session's.
-			this.#recovery.reanchorServedAttribution(previousSessionId);
-
-			await copySessionArtifacts(forkResult.oldSessionFile, forkResult.newSessionFile);
-
-			// Update agent session ID
-			this.#freshProviderSessionId = undefined;
-			this.#adoptInheritedProviderPromptCacheKey();
-			this.#syncAgentSessionId();
-			this.#memory.rekeyForCurrentSessionId();
-			this.#advisors.reattachRecorderFeeds();
-			advisorRecordersDetached = false;
-			await this.#memory.resetContextForNewTranscript();
-
-			await this.#reconcileSessionAfterSwitch("fork");
-
-			// Emit session_switch event with reason "fork" to hooks
-			if (this.#extensionRunner) {
-				await this.#extensionRunner.emit({
-					type: "session_switch",
-					reason: "fork",
-					previousSessionFile,
-				});
-			}
-
-			return true;
 		} finally {
-			if (advisorRecordersDetached) this.#advisors.reattachRecorderFeeds();
+			if (finishSessionSwitch) finishSessionSwitch();
 		}
 	}
 
@@ -11248,9 +11258,10 @@ export class AgentSession implements SettingsScope {
 			}
 		}
 
+		const finishSessionSwitch = await this.#sessionBeforeSwitchReconciler?.();
+		try {
 		this.#disconnectFromAgent();
 		await this.abort({ goalReason: "internal" });
-		await this.#sessionBeforeSwitchReconciler?.();
 
 		await this.#bash.flushPending();
 		// Flush pending writes before switching so restore snapshots reflect committed state.
@@ -11595,6 +11606,9 @@ export class AgentSession implements SettingsScope {
 			if (error === SESSION_CWD_CHANGE_REJECTED) return false;
 			throw error;
 		}
+		} finally {
+			if (finishSessionSwitch) finishSessionSwitch();
+		}
 	}
 
 	/**
@@ -11685,85 +11699,87 @@ export class AgentSession implements SettingsScope {
 			if (requireIdleFor) this.#assertIdleForSnapshot(requireIdleFor);
 		}
 
-		await this.#bash.flushPending();
-		// Flush pending writes before branching
-		await this.sessionManager.flush();
-		// Last refusal point. Nothing below is rolled back when the transition stops, so an
-		// idle-only snapshot refuses here, after the flush awaits but before any state of the
-		// old session (pending messages, async jobs, auto-learn capture) is discarded.
-		if (requireIdleFor) this.#assertIdleForSnapshot(requireIdleFor);
-
-		// Clear pending messages (bound to old session state)
-		this.#pendingNextTurnMessages = [];
-		this.#scheduledHiddenNextTurnGeneration = undefined;
-		this.#queuedMessageDrainBlocked = false;
-		this.#usagePreflightReadyForNextModelCall = false;
-
-		const bashTransition = this.#bash.beginSessionTransition();
-		this.#cancelOwnAsyncJobs();
-		this.#abortAutolearnCapture();
-		await this.#drainAutolearnCapture();
-
-		let sessionTransitioned = false;
-		let advisorRecordersDetached = false;
+		const finishSessionSwitch = await this.#sessionBeforeSwitchReconciler?.();
 		try {
-			advisorRecordersDetached = true;
-			await this.#advisors.drainAndDetachRecorders();
+			await this.#bash.flushPending();
+			// Flush pending writes before branching
+			await this.sessionManager.flush();
+			// Refuse before discarding any state from the old session.
+			if (requireIdleFor) this.#assertIdleForSnapshot(requireIdleFor);
+
+			// Clear pending messages (bound to old session state)
+			this.#pendingNextTurnMessages = [];
+			this.#scheduledHiddenNextTurnGeneration = undefined;
+			this.#queuedMessageDrainBlocked = false;
+			this.#usagePreflightReadyForNextModelCall = false;
+
+			const bashTransition = this.#bash.beginSessionTransition();
+			this.#cancelOwnAsyncJobs();
+			this.#abortAutolearnCapture();
+			await this.#drainAutolearnCapture();
+
+			let sessionTransitioned = false;
+			let advisorRecordersDetached = false;
 			try {
-				// A prompt admitted during the drain awaits above belongs to the history
-				// being replaced; the generation bump drops its pending setup.
-				this.#promptGeneration++;
-				if (!leafId) {
-					const title = this.sessionManager.getSessionName();
-					const titleSource = this.sessionManager.titleSource;
-					await this.sessionManager.newSession({ parentSession: previousSessionFile });
-					if (title) await this.sessionManager.setSessionName(title, titleSource);
-				} else {
-					this.sessionManager.createBranchedSession(leafId, { copyArtifacts: options?.copyArtifacts });
+				advisorRecordersDetached = true;
+				await this.#advisors.drainAndDetachRecorders();
+				try {
+					// Pending prompt setup belongs to the history being replaced.
+					this.#promptGeneration++;
+					if (!leafId) {
+						const title = this.sessionManager.getSessionName();
+						const titleSource = this.sessionManager.titleSource;
+						await this.sessionManager.newSession({ parentSession: previousSessionFile });
+						if (title) await this.sessionManager.setSessionName(title, titleSource);
+					} else {
+						this.sessionManager.createBranchedSession(leafId, { copyArtifacts: options?.copyArtifacts });
+					}
+					this.#bash.markSessionTransition(bashTransition);
+					this.#advisors.clearCost();
+					sessionTransitioned = true;
+				} finally {
+					this.#bash.finishSessionTransition(bashTransition, sessionTransitioned);
 				}
-				this.#bash.markSessionTransition(bashTransition);
-				this.#advisors.clearCost();
-				sessionTransitioned = true;
+				this.#clearSessionScopedToolState();
+				this.#rehydrateCheckpointRewindState();
+				this.#todo.syncFromBranch();
+				this.#modelMentions.syncFromBranch();
+				this.#freshProviderSessionId = undefined;
+				this.#clearInheritedProviderPromptCacheKey();
+				this.#syncAgentSessionId();
+				this.#memory.rekeyForCurrentSessionId();
+				await this.#memory.resetContextForNewTranscript();
+
+				// Reload messages from entries (works for both file and in-memory mode)
+				const sessionContext = this.buildDisplaySessionContext();
+
+				// Emit session_branch event to hooks (after branch completes)
+				if (this.#extensionRunner) {
+					await this.#extensionRunner.emit({
+						type: "session_branch",
+						reason,
+						previousSessionFile,
+					});
+				}
+
+				if (!skipConversationRestore) {
+					this.agent.replaceMessages(sessionContext.messages);
+					this.#advisors.resetSessionState();
+					this.#closeCodexProviderSessionsForHistoryRewrite();
+				}
+
+				this.#advisors.reattachRecorderFeeds();
+				advisorRecordersDetached = false;
+				await this.#reconcileSessionAfterSwitch("fork");
+				return true;
 			} finally {
-				this.#bash.finishSessionTransition(bashTransition, sessionTransitioned);
+				if (advisorRecordersDetached) {
+					if (sessionTransitioned) this.#advisors.resetSessionState();
+					else this.#advisors.reattachRecorderFeeds();
+				}
 			}
-			this.#clearSessionScopedToolState();
-			this.#rehydrateCheckpointRewindState();
-			this.#todo.syncFromBranch();
-			this.#modelMentions.syncFromBranch();
-			this.#freshProviderSessionId = undefined;
-			this.#clearInheritedProviderPromptCacheKey();
-			this.#syncAgentSessionId();
-			this.#memory.rekeyForCurrentSessionId();
-			await this.#memory.resetContextForNewTranscript();
-
-			// Reload messages from entries (works for both file and in-memory mode)
-			const sessionContext = this.buildDisplaySessionContext();
-
-			// Emit session_branch event to hooks (after branch completes)
-			if (this.#extensionRunner) {
-				await this.#extensionRunner.emit({
-					type: "session_branch",
-					reason,
-					previousSessionFile,
-				});
-			}
-
-			if (!skipConversationRestore) {
-				this.agent.replaceMessages(sessionContext.messages);
-				this.#advisors.resetSessionState();
-				this.#closeCodexProviderSessionsForHistoryRewrite();
-			}
-
-			this.#advisors.reattachRecorderFeeds();
-			advisorRecordersDetached = false;
-			await this.#reconcileSessionAfterSwitch("fork");
-			return true;
 		} finally {
-			if (advisorRecordersDetached) {
-				if (sessionTransitioned) this.#advisors.resetSessionState();
-				else this.#advisors.reattachRecorderFeeds();
-			}
+			if (finishSessionSwitch) finishSessionSwitch();
 		}
 	}
 
