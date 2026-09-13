@@ -606,6 +606,8 @@
 - Daemon recovery requires the persisted native process identity before adopting or stopping a process. Unverifiable resources remain visible and unmanaged across broker restarts; lifecycle commands refuse to control them.
 - Eval kernel shutdown retains process identities before polite exit and cleans up owned descendants without signalling stale process groups; interpreter probes use the same guarded process utility.
 - Fura BTW requests preserve their captured main context alongside upstream structured side-conversation history.
+- Fura RPC cancels/releases queued BTW during serialized maintenance without aborting the main turn; a cancelled in-flight side turn remains exclusive until it settles.
+- Fura RPC session transitions cancel and drain old side work before mutating source context, reject drain timeouts, and block or invalidate new BTW starts throughout successful or failed transitions.
 
 ## [18.1.19] - 2026-09-12
 

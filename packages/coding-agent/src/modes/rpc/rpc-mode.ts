@@ -17,7 +17,7 @@ import * as path from "node:path";
 import type { AgentToolResult } from "@oh-my-pi/pi-agent-core";
 import { CompactionCancelledError } from "@oh-my-pi/pi-agent-core/compaction";
 import type { AssistantMessage, ImageContent } from "@oh-my-pi/pi-ai";
-import { $env, isEnoent, isRecord, logger, prompt, Snowflake } from "@oh-my-pi/pi-utils";
+import { $env, isEnoent, isRecord, logger, prompt, Snowflake, withTimeout } from "@oh-my-pi/pi-utils";
 import { reset as resetCapabilities } from "../../capability";
 import { clearPluginRootsAndCaches, resolveActiveProjectRegistryPath } from "../../discovery/helpers";
 import {
@@ -457,6 +457,9 @@ export function dispatchRpcInputFrame(parsed: unknown, deps: RpcInputFrameDeps):
 export class RpcInputDispatcher {
 	#tail: Promise<void> = Promise.resolve();
 	#tasks = new Set<Promise<void>>();
+	// Only accepted starts occupy this map; unknown control IDs never leave tombstones.
+	#pendingBtw = new Map<Extract<RpcCommand, { type: "btw_start" }>, boolean>();
+	#btwClosed = false;
 	readonly #deps: RpcInputFrameDeps;
 	readonly #afterSerialCommand: (() => Promise<void>) | undefined;
 
@@ -476,11 +479,23 @@ export class RpcInputDispatcher {
 				return;
 			}
 
-			const task = this.#tail.then(
-				() => this.#dispatchSerialCommand(command),
-				() => this.#dispatchSerialCommand(command),
-			);
-			this.#tail = task.catch(() => {});
+			let task: Promise<void>;
+			if (command.type === "btw_cancel" || command.type === "btw_release") {
+				let pending = false;
+				for (const start of this.#pendingBtw.keys()) {
+					if (start.btwId !== command.btwId) continue;
+					this.#pendingBtw.set(start, true);
+					pending = true;
+				}
+				task = this.#dispatchBtwControl(command, pending);
+			} else {
+				if (command.type === "btw_start") this.#pendingBtw.set(command, false);
+				task = this.#tail.then(
+					() => this.#dispatchSerialCommand(command),
+					() => this.#dispatchSerialCommand(command),
+				);
+				this.#tail = task.catch(() => {});
+			}
 			this.#tasks.add(task);
 			void task.finally(() => {
 				this.#tasks.delete(task);
@@ -488,6 +503,37 @@ export class RpcInputDispatcher {
 		} catch (err: unknown) {
 			const message = err instanceof Error ? err.message : String(err);
 			this.#deps.output(this.#deps.errorResponse(undefined, "parse", `Failed to parse command: ${message}`));
+		}
+	}
+
+	/** Invalidate accepted starts at a source-session boundary without reordering ordinary work. */
+	cancelPendingBtw(): void {
+		for (const command of this.#pendingBtw.keys()) this.#pendingBtw.set(command, true);
+	}
+
+	/** Stop side work before EOF/shutdown drains the ordinary command queue. */
+	closeBtw(): void {
+		this.#btwClosed = true;
+		this.cancelPendingBtw();
+	}
+
+	async #dispatchBtwControl(
+		command: Extract<RpcCommand, { type: "btw_cancel" | "btw_release" }>,
+		pending: boolean,
+	): Promise<void> {
+		try {
+			const response = await this.#deps.handleCommand(command);
+			if (pending) {
+				if (command.type === "btw_cancel" && !response.success) {
+					this.#deps.output({ type: "btw_update", btwId: command.btwId, state: "cancelled" });
+				}
+				this.#deps.output(successResponse(command.id, command.type, { btwId: command.btwId }));
+			} else {
+				this.#deps.output(response);
+			}
+		} catch (err: unknown) {
+			const message = err instanceof Error ? err.message : String(err);
+			this.#deps.output(this.#deps.errorResponse(command.id, command.type, message));
 		}
 	}
 
@@ -500,6 +546,16 @@ export class RpcInputDispatcher {
 
 	async #dispatchSerialCommand(command: RpcCommand): Promise<void> {
 		try {
+			if (command.type === "btw_start") {
+				const cancelled = this.#pendingBtw.get(command) || this.#btwClosed;
+				this.#pendingBtw.delete(command);
+				if (cancelled) {
+					this.#deps.output(
+						this.#deps.errorResponse(command.id, command.type, "BTW request cancelled before it started."),
+					);
+					return;
+				}
+			}
 			const awaited = dispatchRpcInputFrame(command, this.#deps);
 			if (awaited) await awaited;
 		} catch (err: unknown) {
@@ -844,10 +900,12 @@ export function createFuraRpcRuntime(
 	session: AgentSession,
 	output: RpcOutput = () => {},
 	state: RpcFuraRuntimeState = { planHasEntered: false },
+	cancelPendingBtw?: () => void,
 ): {
 	handleCommand(command: RpcCommand): Promise<RpcResponse | undefined>;
 	handleSessionEvent(event: AgentSessionEvent): Promise<void>;
 	reconcileSessionMode(): Promise<void>;
+	dispose(): Promise<void>;
 } {
 	const restorePlanTools = async (): Promise<void> => {
 		if (state.planPreviousTools !== undefined) {
@@ -1162,13 +1220,22 @@ export function createFuraRpcRuntime(
 		assistantMessage?: AssistantMessage;
 	};
 	const btwRequests = new Map<string, BtwRequest>();
+	// Cancellation hides output immediately; the source remains occupied until the turn actually settles.
+	let btwTask: Promise<void> | undefined;
+	let btwClosed = false;
+	let btwSessionTransitions = 0;
+	let btwDisposal: Promise<void> | undefined;
 	const canPromoteBtw = (request: BtwRequest): boolean =>
 		request.state === "completed" && session.sessionManager.getLeafId() === request.snapshot.sourceLeafId;
 
 	const startBtw = (command: Extract<RpcCommand, { type: "btw_start" }>): RpcResponse => {
 		const question = command.question.trim();
 		if (!question) return errorResponse(command.id, "btw_start", "BTW question must not be empty.");
-		if ([...btwRequests.values()].some(request => request.state === "running")) {
+		if (btwClosed) return errorResponse(command.id, "btw_start", "RPC BTW runtime is closed.");
+		if (btwSessionTransitions > 0) {
+			return errorResponse(command.id, "btw_start", "Cannot start BTW during a session transition.", "btw_active");
+		}
+		if (btwTask) {
 			return errorResponse(command.id, "btw_start", "A BTW request is already running.", "btw_active");
 		}
 		if (btwRequests.has(command.btwId)) {
@@ -1182,11 +1249,11 @@ export function createFuraRpcRuntime(
 			state: "running",
 		};
 		btwRequests.set(command.btwId, request);
-		queueMicrotask(() => {
-			if (btwRequests.get(command.btwId) !== request || request.state !== "running") return;
-			output({ type: "btw_update", btwId: command.btwId, state: "started", question });
-			void session
-				.runEphemeralTurn({
+		const task: Promise<void> = Promise.resolve()
+			.then(async () => {
+				if (btwRequests.get(command.btwId) !== request || request.state !== "running") return;
+				output({ type: "btw_update", btwId: command.btwId, state: "started", question });
+				const result = await session.runEphemeralTurn({
 					promptText:
 						"Answer this side question briefly and directly using only the captured conversation context. " +
 						"Do not ask follow-up questions and do not use tools.\n\n" +
@@ -1197,31 +1264,36 @@ export function createFuraRpcRuntime(
 						if (btwRequests.get(command.btwId) !== request || request.state !== "running") return;
 						output({ type: "btw_update", btwId: command.btwId, state: "streaming", delta });
 					},
-				})
-				.then(result => {
-					if (btwRequests.get(command.btwId) !== request || request.state !== "running") return;
-					request.state = "completed";
-					request.answer = result.replyText;
-					request.assistantMessage = result.assistantMessage;
-					output({
-						type: "btw_update",
-						btwId: command.btwId,
-						state: "completed",
-						answer: result.replyText,
-						canPromote: canPromoteBtw(request),
-					});
-				})
-				.catch(error => {
-					if (btwRequests.get(command.btwId) !== request || request.state !== "running") return;
-					request.state = "error";
-					output({
-						type: "btw_update",
-						btwId: command.btwId,
-						state: "error",
-						error: error instanceof Error ? error.message : String(error),
-					});
 				});
-		});
+				// The provider has drained; terminal listeners may immediately start another BTW.
+				btwTask = undefined;
+				if (btwRequests.get(command.btwId) !== request || request.state !== "running") return;
+				request.state = "completed";
+				request.answer = result.replyText;
+				request.assistantMessage = result.assistantMessage;
+				output({
+					type: "btw_update",
+					btwId: command.btwId,
+					state: "completed",
+					answer: result.replyText,
+					canPromote: canPromoteBtw(request),
+				});
+			})
+			.catch(error => {
+				if (btwTask === task) btwTask = undefined;
+				if (btwRequests.get(command.btwId) !== request || request.state !== "running") return;
+				request.state = "error";
+				output({
+					type: "btw_update",
+					btwId: command.btwId,
+					state: "error",
+					error: error instanceof Error ? error.message : String(error),
+				});
+			})
+			.finally(() => {
+				if (btwTask === task) btwTask = undefined;
+			});
+		btwTask = task;
 		return successResponse(command.id, "btw_start", { btwId: command.btwId });
 	};
 
@@ -1260,7 +1332,7 @@ export function createFuraRpcRuntime(
 		btwRequests.delete(command.btwId);
 		return successResponse(command.id, "btw_promote", { btwId: command.btwId, ...promoted });
 	};
-	const cancelAllBtw = (): void => {
+	const cancelAllBtw = async (): Promise<void> => {
 		for (const [btwId, request] of btwRequests) {
 			if (request.state !== "running") continue;
 			request.state = "cancelled";
@@ -1268,10 +1340,21 @@ export function createFuraRpcRuntime(
 			output({ type: "btw_update", btwId, state: "cancelled" });
 		}
 		btwRequests.clear();
+		if (btwTask) {
+			await withTimeout(btwTask, 3_000, "Timed out draining RPC BTW request");
+		}
+	};
+
+	const dispose = (): Promise<void> => {
+		btwClosed = true;
+		btwDisposal ??= cancelAllBtw().catch(error => {
+			logger.warn("RPC BTW request still draining at shutdown deadline", { error: String(error) });
+		});
+		return btwDisposal;
 	};
 
 	const reconcileSessionMode = async (): Promise<void> => {
-		cancelAllBtw();
+		await cancelAllBtw();
 		await restorePlanTools();
 		await restoreGoalTools();
 		state.planHasEntered = false;
@@ -1398,7 +1481,24 @@ export function createFuraRpcRuntime(
 		} satisfies RpcPlanReviewEvent);
 	};
 
-	return { handleCommand, handleSessionEvent, reconcileSessionMode };
+	session.setSessionBeforeSwitchReconciler?.(async () => {
+		btwSessionTransitions++;
+		const finish = (): void => {
+			// Starts can arrive while an extension-driven transition bypasses the RPC serial queue.
+			cancelPendingBtw?.();
+			btwSessionTransitions--;
+		};
+		try {
+			cancelPendingBtw?.();
+			await cancelAllBtw();
+			return finish;
+		} catch (error) {
+			finish();
+			throw error;
+		}
+	});
+
+	return { handleCommand, handleSessionEvent, reconcileSessionMode, dispose };
 }
 
 export function requestRpcEditor(
@@ -1618,7 +1718,7 @@ export async function runRpcMode(
 	const hostToolBridge = new RpcHostToolBridge(output);
 	const hostUriBridge = new RpcHostUriBridge(output);
 	const subagentRegistry = subagentEventBus ? new RpcSubagentRegistry(subagentEventBus, output) : undefined;
-	const furaRuntime = createFuraRpcRuntime(session, output);
+	const furaRuntime = createFuraRpcRuntime(session, output, undefined, () => inputDispatcher.cancelPendingBtw());
 
 	// Shutdown request flag (wrapped in object to allow mutation with const)
 	const shutdownState = { requested: false };
@@ -1825,6 +1925,7 @@ export async function runRpcMode(
 		},
 		onShutdown: () => {
 			shutdownState.requested = true;
+			void furaRuntime.dispose();
 		},
 		trackAgentInvokingMessage: task => {
 			extensionUserMessageTracker.trackAgentMessageTask(task);
@@ -2431,6 +2532,8 @@ export async function runRpcMode(
 	const shutdownCoordinator = new RpcShutdownCoordinator({
 		isShutdownRequested: () => shutdownState.requested,
 		performShutdown: async () => {
+			inputDispatcher.closeBtw();
+			await furaRuntime.dispose();
 			// Route through the idempotent session.dispose() so the browser
 			// reaper (releaseTabsForOwner) and other bounded teardown run before
 			// the process exits. dispose() also emits `session_shutdown`, so we
@@ -2473,6 +2576,8 @@ export async function runRpcMode(
 	pendingExtensionRequests.rejectAll("RPC client disconnected before extension UI response completed");
 	hostToolBridge.close("RPC client disconnected before host tool execution completed");
 	hostUriBridge.clear("RPC client disconnected before host URI request completed");
+	inputDispatcher.closeBtw();
+	await furaRuntime.dispose();
 	await inputDispatcher.drain();
 	await shutdownCoordinator.drain();
 	subagentRegistry?.dispose();
