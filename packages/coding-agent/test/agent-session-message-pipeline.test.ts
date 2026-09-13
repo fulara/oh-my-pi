@@ -2882,6 +2882,7 @@ describe("AgentSession message pipeline", () => {
 			const stream = new AssistantMessageEventStream();
 			queueMicrotask(() => {
 				const message = createAssistantMessage("Here is text");
+				message.stopReason = "toolUse";
 				message.content.push({
 					type: "toolCall",
 					id: "call_123",
@@ -2889,7 +2890,7 @@ describe("AgentSession message pipeline", () => {
 					arguments: {},
 				});
 				stream.push({ type: "text_delta", contentIndex: 0, delta: "Here is text", partial: message });
-				stream.push({ type: "done", reason: "stop", message });
+				stream.push({ type: "done", reason: "toolUse", message });
 			});
 			return stream;
 		});
@@ -2907,13 +2908,24 @@ describe("AgentSession message pipeline", () => {
 			maxTokens: 1024,
 		} as ModelSpec<Api>) as Model<Api>;
 
+		let toolExecuted = false;
+		const tool: AgentTool = {
+			name: "side_tool",
+			label: "Side Tool",
+			description: "Available but never executed by the side channel",
+			parameters: { type: "object", properties: {} },
+			execute: async () => {
+				toolExecuted = true;
+				return { content: [], details: {} };
+			},
+		};
 		const session = new AgentSession({
 			agent: new Agent({
 				initialState: {
 					model,
 					systemPrompt: ["system prompt"],
 					messages: [],
-					tools: [],
+					tools: [tool],
 				},
 			}),
 			sessionManager: SessionManager.inMemory(),
@@ -2926,6 +2938,6 @@ describe("AgentSession message pipeline", () => {
 
 		expect(result.replyText).toBe("Here is text");
 		expect(result.assistantMessage.content.some(block => block.type === "toolCall")).toBe(false);
-		expect(result.assistantMessage.content.every(block => block.type !== "toolCall")).toBe(true);
+		expect(toolExecuted).toBe(false);
 	});
 });
