@@ -104,6 +104,10 @@
 - Timed out stalled Chrome-for-Testing metadata requests after 30 seconds when looking up download metadata
 - Concurrent browser installations share one download without replacing a running browser, and stalled downloads time out with partial files cleaned up for retry.
 
+### Fixed
+
+- Subprocess cleanup retains the original native process handle instead of reopening its PID. Unix timeouts refuse an unproven process-group signal after the root exits, report the remaining pipe-holding resources, and still finish output collection at the deadline.
+
 ## [18.1.19] - 2026-09-12
 
 ### Added
@@ -124,7 +128,6 @@
 
 ### Fixed
 
-- Subprocess cleanup retains the original native process handle instead of reopening its PID. Unix timeouts refuse an unproven process-group signal after the root exits, report the remaining pipe-holding resources, and still finish output collection at the deadline.
 - Fixed `filterChildShellEnv` applying the omp process's own launch-environment provenance (the pre-dotenv `NODE_ENV` and launcher-owned names read from `/proc/self/environ`) to caller-supplied environment objects; launch provenance now only applies when filtering the live `process.env`/`Bun.env`, and an explicit env resolves its dotenv mode from its own `NODE_ENV`.
 
 ## [18.1.11] - 2026-09-05

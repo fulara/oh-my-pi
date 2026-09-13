@@ -1165,6 +1165,21 @@ describe("AgentSession message pipeline", () => {
 			expect(option.sessionId).toStartWith(`${session.sessionId}:side:`);
 		}
 		expect(options[0]?.maxTokens).toBe(321);
+		// Fura pins the main context at BTW start; upstream follow-ups append
+		// their own history without replacing that snapshot with the live session.
+		const baseMessages: AgentMessage[] = [{ role: "user", content: "Pinned main question", timestamp: 1 }];
+		await session.runEphemeralTurn({ promptText: "Detached followup?", baseMessages, history });
+		const detached = contexts[3]!;
+		expect(getConvertedUserText(detached.messages[0])).toBe("Pinned main question");
+		expect(detached.messages.map(message => message.role)).toEqual([
+			"user",
+			"developer",
+			"user",
+			"assistant",
+			"user",
+		]);
+		expect(detached.messages.at(-2)?.content).toEqual([{ type: "text", text: "Side answer" }]);
+		expect(getConvertedUserText(detached.messages.at(-1))).toBe("Detached followup?");
 		expect(history).toEqual(historySnapshot);
 		expect(agent.state.messages).toBe(mainMessages);
 		expect(agent.state.messages).toEqual(mainSnapshot);
