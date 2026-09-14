@@ -125,6 +125,9 @@
 - Added `TextJudge` and `chatTextBackend` for model-based judgments, with structured state rendering and safeguards that prevent embedded requests from being executed.
 - Added automatic format-correction retries to `TextJudge` when models return malformed output.
 - Added the `guardState` option to `TextBackend` to control whether safety guidance is included in prompts.
+### Added
+
+- User messages support optional `clientMessageId` metadata for persistent client submission correlation without changing provider prompt text.
 
 ## [18.2.3] - 2026-09-17
 
@@ -207,9 +210,6 @@
 ### Fixed
 
 - Fixed Windows OAuth sign-in failing on every attempt after an upgrade when a previous run left a stale native callback registration behind; handlers registered by older binaries are now recognized as owned and rolled back instead of blocking recovery ([#11967](https://github.com/can1357/oh-my-pi/pull/11967) by [@H4vC](https://github.com/H4vC)).
-### Added
-
-- User messages support optional `clientMessageId` metadata for persistent client submission correlation without changing provider prompt text.
 
 ## [18.1.19] - 2026-09-12
 

@@ -331,6 +331,7 @@ describe("pickElectronTarget", () => {
 				"--no-default-browser-check",
 				"--use-mock-keychain",
 				"--password-store=basic",
+				"about:blank",
 			];
 			const child = Bun.spawn(
 				[exe, ...flags, `--user-data-dir=${borrowedProfile}`, `--remote-debugging-port=${port}`],
@@ -473,6 +474,12 @@ describe("resolveSpawnArgs", () => {
 			"/tmp",
 		);
 		expect(args).toEqual(["--incognito", `--user-data-dir=${path.resolve("/tmp", "profile")}`]);
+	});
+
+	test("normalizes headless-shell profiles instead of silently using its default profile", () => {
+		expect(resolveSpawnArgs("/opt/chrome-headless-shell", ["--user-data-dir", "private-profile"], "/tmp")).toEqual([
+			`--user-data-dir=${path.resolve("/tmp", "private-profile")}`,
+		]);
 	});
 
 	test("isolates a Flatpak Chromium launcher without treating unrelated apps as browsers", () => {
