@@ -224,7 +224,7 @@ function findUserDataDirInArgs(args: string[] | undefined): string | null {
  * Matched against the basename without `.exe`.
  */
 const CHROMIUM_BROWSER_BASENAME =
-	/^(?:google[ -]chrome|chrome|chromium|microsoft[ -]edge|msedge|brave|vivaldi|opera|thorium|ungoogled[ -]chromium)(?:[ -](?:beta|dev|canary|unstable|stable|nightly|snapshot|browser|gx|for[ -]testing))*$/i;
+	/^(?:google[ -]chrome|chrome(?:-headless-shell)?|chromium|microsoft[ -]edge|msedge|brave|vivaldi|opera|thorium|ungoogled[ -]chromium)(?:[ -](?:beta|dev|canary|unstable|stable|nightly|snapshot|browser|gx|for[ -]testing))*$/i;
 const CHROMIUM_FLATPAK_IDS: Record<string, true> = {
 	"com.google.Chrome": true,
 	"org.chromium.Chromium": true,
