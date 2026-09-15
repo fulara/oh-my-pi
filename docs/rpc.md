@@ -128,6 +128,9 @@ Actual user messages retain it through preprocessing, queues, `message_start` /
 `details.clientMessageId` on their visible, user-attributed `custom` / `skill-prompt`
 message. It is metadata, not provider prompt text.
 
+Explicit `/skill:name` invocations retain `images` as image content blocks alongside
+the expanded text. Original typed input remains metadata, not a second provider message.
+
 An acknowledgement accepts dispatch/enqueue; it does not prove consumption.
 A matching message event/history entry proves acceptance into conversation context,
 not that a provider successfully used it. Local-only commands may produce no such
