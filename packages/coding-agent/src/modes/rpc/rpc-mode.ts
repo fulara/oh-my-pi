@@ -20,7 +20,7 @@ import { toolWireSchema } from "@oh-my-pi/pi-ai/utils/schema";
 import * as fs from "node:fs/promises";
 import type { AgentToolResult } from "@oh-my-pi/pi-agent-core";
 import { CompactionCancelledError } from "@oh-my-pi/pi-agent-core/compaction";
-import type { AssistantMessage, ImageContent } from "@oh-my-pi/pi-ai";
+import type { AssistantMessage, ImageContent, TextContent } from "@oh-my-pi/pi-ai";
 import { $env, isEnoent, isRecord, logger, prompt, Snowflake, withTimeout } from "@oh-my-pi/pi-utils";
 import { reset as resetCapabilities } from "../../capability";
 import { clearPluginRootsAndCaches, resolveActiveProjectRegistryPath } from "../../discovery/helpers";
@@ -296,10 +296,12 @@ export async function runRpcSkillCommand(
 	clientMessageId?: string,
 ): Promise<boolean> {
 	const built = prebuilt ?? (await buildSkillPromptMessage(invocation.skill, invocation, "user"));
+	const textBlock: TextContent = { type: "text", text: built.message };
+	const content = images && images.length > 0 ? [textBlock, ...images] : built.message;
 	return session.promptCustomMessage(
 		{
 			customType: SKILL_PROMPT_MESSAGE_TYPE,
-			content: images?.length ? [{ type: "text", text: built.message }, ...images] : built.message,
+			content,
 			display: true,
 			details: { ...built.details, clientMessageId },
 			attribution: "user",
@@ -325,11 +327,11 @@ export async function dispatchRpcSkillPrompt(input: {
 	session: RpcSkillCommandSession;
 	message: string;
 	clientMessageId?: string;
+	images?: ImageContent[];
 	streamingBehavior: "steer" | "followUp" | undefined;
 	results: RpcPromptResults;
 	onError: (error: Error) => void;
 	extensionUserMessageTracker: RpcExtensionUserMessageTracker;
-	images?: ImageContent[];
 	isCurrent?: () => boolean;
 }): Promise<RpcSkillCommandResult | "cancelled" | null> {
 	const invocation = resolveRpcSkillInvocation(input.session, input.message);
