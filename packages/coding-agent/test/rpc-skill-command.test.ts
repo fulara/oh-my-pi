@@ -384,7 +384,7 @@ describe("dispatchRpcSkillPrompt", () => {
 				onError: error => errors.push(error),
 				extensionUserMessageTracker: new RpcExtensionUserMessageTracker(),
 			});
-		const prebuilt = await buildSkillPromptMessage(skill, "fix this", "user");
+		const prebuilt = await buildSkillPromptMessage(skill, { args: "fix this" }, "user");
 		prebuilt.details.clientMessageId = "untrusted-source-id";
 		let injected = false;
 		session.agent.setOnBeforeYield(async () => {
