@@ -18,7 +18,7 @@ import { toolWireSchema } from "@oh-my-pi/pi-ai/utils/schema";
 import * as fs from "node:fs/promises";
 import type { AgentToolResult } from "@oh-my-pi/pi-agent-core";
 import { CompactionCancelledError } from "@oh-my-pi/pi-agent-core/compaction";
-import type { AssistantMessage, ImageContent } from "@oh-my-pi/pi-ai";
+import type { AssistantMessage, ImageContent, TextContent } from "@oh-my-pi/pi-ai";
 import { $env, isEnoent, isRecord, logger, prompt, Snowflake, withTimeout } from "@oh-my-pi/pi-utils";
 import { reset as resetCapabilities } from "../../capability";
 import { clearPluginRootsAndCaches, resolveActiveProjectRegistryPath } from "../../discovery/helpers";
@@ -190,12 +190,15 @@ export async function runRpcSkillCommand(
 	streamingBehavior: "steer" | "followUp" = "steer",
 	prebuilt?: BuiltSkillPromptMessage,
 	clientMessageId?: string,
+	images?: ImageContent[],
 ): Promise<boolean> {
 	const built = prebuilt ?? (await buildSkillPromptMessage(invocation.skill, invocation, "user"));
+	const textBlock: TextContent = { type: "text", text: built.message };
+	const content = images && images.length > 0 ? [textBlock, ...images] : built.message;
 	return session.promptCustomMessage(
 		{
 			customType: SKILL_PROMPT_MESSAGE_TYPE,
-			content: built.message,
+			content,
 			display: true,
 			details: { ...built.details, clientMessageId },
 			attribution: "user",
@@ -217,6 +220,7 @@ export async function dispatchRpcSkillPrompt(input: {
 	session: RpcSkillCommandSession;
 	message: string;
 	clientMessageId?: string;
+	images?: ImageContent[];
 	streamingBehavior: "steer" | "followUp" | undefined;
 	results: RpcPromptResults;
 	onError: (error: Error) => void;
@@ -233,7 +237,14 @@ export async function dispatchRpcSkillPrompt(input: {
 	watchAndReportPromptResult({
 		ticket: input.ticket,
 		startPrompt: () =>
-			runRpcSkillCommand(input.session, invocation, input.streamingBehavior ?? "steer", built, input.clientMessageId),
+			runRpcSkillCommand(
+				input.session,
+				invocation,
+				input.streamingBehavior ?? "steer",
+				built,
+				input.clientMessageId,
+				input.images,
+			),
 		results: input.results,
 		onError: input.onError,
 		extensionUserMessageTracker: input.extensionUserMessageTracker,
@@ -1987,6 +1998,7 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 						session,
 						message: command.message,
 						clientMessageId: command.clientMessageId,
+						images: command.images,
 						streamingBehavior: command.streamingBehavior,
 						results: promptResults,
 						onError: onPromptError(id, "prompt"),

@@ -3,6 +3,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { Agent } from "@oh-my-pi/pi-agent-core";
+import type { ImageContent } from "@oh-my-pi/pi-ai";
 import { createMockModel } from "@oh-my-pi/pi-ai/providers/mock";
 import { getBundledModel } from "@oh-my-pi/pi-catalog/models";
 import { ModelRegistry } from "@oh-my-pi/pi-coding-agent/config/model-registry";
@@ -16,6 +17,7 @@ import {
 import { AgentSession } from "@oh-my-pi/pi-coding-agent/session/agent-session";
 import { AuthStorage } from "@oh-my-pi/pi-coding-agent/session/auth-storage";
 import {
+	convertToLlm,
 	type CustomMessage,
 	SKILL_PROMPT_MESSAGE_TYPE,
 	type SkillPromptDetails,
@@ -334,6 +336,26 @@ describe("dispatchRpcSkillPrompt", () => {
 		const dir = await fs.mkdtemp(path.join(os.tmpdir(), `omp-rpc-skill-identity-${Snowflake.next()}-`));
 		const skillPath = path.join(dir, "SKILL.md");
 		await Bun.write(skillPath, "---\nname: reviewer\ndescription: Review code\n---\n\nReview the supplied code.\n");
+		const images: ImageContent[] = [
+			{
+				type: "image",
+				mimeType: "image/png",
+				data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=",
+			},
+			{
+				type: "image",
+				mimeType: "image/png",
+				data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC",
+			},
+		];
+		// Stay inside the model's no-resize bounds so byte/order loss is observable.
+		for (const image of images) {
+			const bytes = await new Bun.Image(Buffer.from(image.data, "base64"))
+				.resize(200, 200, { filter: "nearest" })
+				.png()
+				.bytes();
+			image.data = Buffer.from(bytes).toBase64();
+		}
 		const skill = {
 			name: "reviewer",
 			description: "Review code",
@@ -353,6 +375,7 @@ describe("dispatchRpcSkillPrompt", () => {
 				getApiKey: () => "test-key",
 				initialState: { model, systemPrompt: ["Test"], tools: [] },
 				streamFn: mock.stream,
+				convertToLlm,
 			}),
 			sessionManager,
 			settings: Settings.isolated({ "compaction.enabled": false }),
@@ -379,6 +402,7 @@ describe("dispatchRpcSkillPrompt", () => {
 				clientMessageId,
 				session,
 				message: "fix this /skill:reviewer",
+				images,
 				streamingBehavior,
 				output: () => {},
 				onError: error => errors.push(error),
@@ -393,6 +417,12 @@ describe("dispatchRpcSkillPrompt", () => {
 			const clock = vi.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
 			try {
 				await dispatch("client-steer", "steer");
+				// ACK is not queue admission: images normalize asynchronously.
+				await settleUntil(() =>
+					session.agent
+						.peekSteeringQueue()
+						.some(message => message.role === "custom" && message.customType === SKILL_PROMPT_MESSAGE_TYPE),
+				);
 				await dispatch("client-follow-up", "followUp");
 				// Source/prebuilt metadata cannot override runtime correlation or
 				// claim an identity when the caller supplied none.
@@ -419,6 +449,19 @@ describe("dispatchRpcSkillPrompt", () => {
 			expect(errors).toEqual([]);
 			const expectedIds = ["client-root", "client-steer", "runtime-id", undefined, "client-follow-up"];
 			expect(consumed.map(message => message.details?.clientMessageId)).toEqual(expectedIds);
+			for (const message of consumed.filter(message =>
+				["client-root", "client-steer", "client-follow-up"].includes(message.details?.clientMessageId ?? ""),
+			)) {
+				expect(Array.isArray(message.content)).toBe(true);
+				if (typeof message.content === "string") throw new Error("RPC skill dropped image attachments");
+				expect(message.content.filter(block => block.type === "image")).toEqual(images);
+				expect(message.content[0]?.type).toBe("text");
+			}
+			const firstUserMessage = mock.calls[0]?.context.messages.find(message => message.role === "user");
+			if (!firstUserMessage || typeof firstUserMessage.content === "string") {
+				throw new Error("Provider request omitted the skill image content");
+			}
+			expect(firstUserMessage.content.filter(block => block.type === "image")).toEqual(images);
 			for (const message of consumed) {
 				expect(message.display).toBe(true);
 				expect(message.attribution).toBe("user");

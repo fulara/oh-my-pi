@@ -787,6 +787,7 @@
 
 ### Fixed
 
+- RPC skill invocations retain image attachments alongside expanded text through provider input and persisted replay.
 - Fixed `app.path` with `chrome-headless-shell` using an unintended default profile when `--user-data-dir` was passed as a separate argument; isolated browser profiles now normalize consistently.
 - Supervised process launch refuses a native addon without the fork's process-identity API before starting a child, avoiding untracked processes when source and addon builds differ.
 - Distinct correlated user submissions with identical timestamps and content remain separate in persisted history.
