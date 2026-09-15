@@ -445,6 +445,13 @@ import {
 	type DetachedBranchSnapshot,
 	type SessionManager,
 } from "./session-manager";
+import {
+	SessionSkills,
+	type SessionSkillsApplyRequest,
+	type SessionSkillsCatalogResult,
+	type SessionSkillsIdentity,
+	type SessionSkillsState,
+} from "./session-skills";
 import { SessionMemory, type SessionMemoryHost } from "./session-memory";
 import { buildSessionMetadata } from "./session-metadata";
 import { SessionProviderBoundary, type SessionProviderBoundaryHost } from "./session-provider-boundary";
@@ -459,6 +466,7 @@ import { YieldQueue } from "./yield-queue";
 
 export * from "./agent-session-events";
 export * from "./agent-session-types";
+export type * from "./session-skills";
 export type { AdvisorStats, AdvisorStatusOverviewEntry, PerAdvisorStat } from "./session-advisors";
 
 const SESSION_STOP_CONTINUATION_CAP = 8;
@@ -897,6 +905,9 @@ export class AgentSession implements SettingsScope {
 	#commandMetadataChangedListeners: CommandMetadataChangedListener[] = [];
 	#sessionChangeCallbacks = new Set<() => void>();
 	#observedSessionId: string | undefined;
+	readonly #sessionSkills: SessionSkills;
+	#unsubscribeSessionSkills?: () => void;
+	#lastSessionSkillsContextRevision: string | undefined;
 
 	/** Messages queued to be included with the next user prompt as context ("asides"). */
 	#pendingNextTurnMessages: CustomMessage[] = [];
@@ -1146,6 +1157,7 @@ export class AgentSession implements SettingsScope {
 			this.#sessionTransitionSettled = undefined;
 			this.#resolveSessionTransition = undefined;
 			resolve?.();
+			this.#emit({ type: "session_skills_updated", sessionSkills: this.getSessionSkillsState() });
 		},
 	};
 	#promptSequence = 0;
@@ -1671,6 +1683,26 @@ export class AgentSession implements SettingsScope {
 		this.#modelRegistry = config.modelRegistry;
 		this.#allowSessionModelFallback = config.allowSessionModelFallback === true;
 		this.#interactivePrompts = config.interactivePrompts !== false;
+		this.#sessionSkills = new SessionSkills(
+			this.sessionManager,
+			() => ({ sessionId: this.sessionId, journalSessionId: this.sessionManager.getSessionId() }),
+			() => this.skills,
+			() => this.isStreaming,
+			() => this.#sessionTransitionDepth > 0 || this.#isDisposed,
+			state => this.#emit({ type: "session_skills_updated", sessionSkills: state }),
+			text => this.#obfuscateTextForProvider(text) ?? text,
+		);
+		this.#unsubscribeSessionSkills = this.agent.addContextTransform(messages => {
+			const transformed = this.#sessionSkills.capture(messages);
+			const revision = this.#sessionSkills.activeRevision;
+			if (revision !== this.#lastSessionSkillsContextRevision) {
+				if (this.#lastSessionSkillsContextRevision !== undefined || transformed !== messages) {
+					this.agent.appendOnlyContext?.invalidateForModelChange();
+				}
+				this.#lastSessionSkillsContextRevision = revision;
+			}
+			return transformed;
+		});
 		this.#extensionRoots =
 			config.extensionRoots ??
 			(() => ({
@@ -3218,6 +3250,9 @@ export class AgentSession implements SettingsScope {
 
 	/** Emit an event to all listeners */
 	#emit(event: AgentSessionEvent): void {
+		if (event.type === "agent_end") {
+			this.#emit({ type: "session_skills_updated", sessionSkills: this.getSessionSkillsState() });
+		}
 		// Listener array is copy-on-write (see `subscribe`), so iterating the
 		// current array is safe against (un)subscribes made by a listener.
 		for (const l of this.#eventListeners) {
@@ -5369,7 +5404,9 @@ export class AgentSession implements SettingsScope {
 	}
 
 	#beginSessionTransition(): Disposable {
+		if (this.#sessionSkills.applying) throw new Error("Session skills Apply is in progress");
 		if (this.#sessionTransitionDepth++ === 0) {
+			this.#sessionSkills.beginTransition();
 			const settled = Promise.withResolvers<void>();
 			this.#sessionTransitionSettled = settled.promise;
 			this.#resolveSessionTransition = settled.resolve;
@@ -5741,6 +5778,7 @@ export class AgentSession implements SettingsScope {
 			this.#cacheWarmer.onRefreshEnd = undefined;
 			this.#cacheWarmer.cancel();
 		}
+		await this.#sessionSkills.waitForApply();
 		this.#recordSessionExit(options.reason ?? "dispose");
 		this.#cancelExitRecorder?.();
 		this.#cancelExitRecorder = undefined;
@@ -5809,6 +5847,8 @@ export class AgentSession implements SettingsScope {
 		this.setHindsightSessionState(undefined);
 		hindsightState?.dispose();
 		this.#disconnectFromAgent();
+		this.#unsubscribeSessionSkills?.();
+		this.#unsubscribeSessionSkills = undefined;
 		// beginDispose() drained the rest; this catches registrations made during teardown.
 		for (const dispose of this.#disposers.splice(0)) dispose();
 		this.#eventListeners = [];
@@ -5927,7 +5967,9 @@ export class AgentSession implements SettingsScope {
 	}
 
 	freshSession(): FreshSessionResult | undefined {
+		if (this.#sessionSkills.applying) throw new Error("Session skills Apply is in progress");
 		if (this.isStreaming) return undefined;
+		using _transition = this.#beginSessionTransition();
 		const previousSessionId = this.sessionId;
 		const closedProviderSessions = this.#providerSessionState.size;
 		this.#closeAllProviderSessions("fresh session");
@@ -9323,6 +9365,18 @@ export class AgentSession implements SettingsScope {
 		return this.#tools.skillHintVisible;
 	}
 
+	getSessionSkillsState(): SessionSkillsState {
+		return this.#sessionSkills.state();
+	}
+
+	getSessionSkillsCatalog(identity: SessionSkillsIdentity): Promise<SessionSkillsCatalogResult> {
+		return this.#sessionSkills.catalog(identity);
+	}
+
+	setSessionSkills(request: SessionSkillsApplyRequest): Promise<SessionSkillsState> {
+		return this.#sessionSkills.apply(request);
+	}
+
 	/** Skill loading warnings captured by SDK */
 	get skillWarnings(): readonly SkillWarning[] {
 		return this.#tools.skillWarnings;
@@ -10678,6 +10732,8 @@ export class AgentSession implements SettingsScope {
 	}
 
 	async #applyRewind(report: string, activeMessages?: AgentMessage[], turn?: AgentTurnEndContext): Promise<void> {
+		while (this.#sessionSkills.applying) await this.#sessionSkills.waitForApply();
+		using _transition = this.#beginSessionTransition();
 		const checkpointState = this.#checkpointState;
 		if (!checkpointState) {
 			return;
@@ -12091,6 +12147,9 @@ export class AgentSession implements SettingsScope {
 	}
 
 	captureBtwBranchSnapshot(): DetachedBranchSnapshot {
+		if (this.#sessionSkills.applying)
+			throw new Error("Cannot capture /btw while session skills Apply is in progress");
+		this.getSessionSkillsState();
 		const snapshot = this.sessionManager.captureDetachedBranchSnapshot();
 		const liveMessage = this.isStreaming ? this.agent.state.streamMessage : undefined;
 		if (liveMessage?.role === "assistant") {
@@ -12100,10 +12159,14 @@ export class AgentSession implements SettingsScope {
 	}
 
 	btwMessagesFromSnapshot(snapshot: DetachedBranchSnapshot): AgentMessage[] {
-		return [
-			...this.sessionManager.buildDetachedBranchContext(snapshot).messages,
-			...structuredClone(snapshot.transientMessages),
-		];
+		return SessionSkills.fromSnapshot(
+			[
+				...this.sessionManager.buildDetachedBranchContext(snapshot).messages,
+				...structuredClone(snapshot.transientMessages),
+			],
+			snapshot.entries,
+			text => this.#obfuscateTextForProvider(text) ?? text,
+		);
 	}
 
 	async promoteBtwBranch(

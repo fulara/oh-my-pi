@@ -1,0 +1,31 @@
+{
+  "id": "cmd-skills-stale-1",
+  "type": "response",
+  "command": "set_session_skills",
+  "success": false,
+  "error": "Session skills changed; reload before applying.",
+  "data": {
+    "state": {
+      "sessionId": "session-1",
+      "journalSessionId": "journal-session-1",
+      "revision": "revision-2",
+      "selected": [
+        {
+          "id": "/tmp/skills/review/SKILL.md",
+          "name": "review",
+          "hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "activeRevision": "revision-2",
+      "active": [
+        {
+          "id": "/tmp/skills/review/SKILL.md",
+          "name": "review",
+          "hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "pending": false,
+      "applying": false
+    }
+  }
+}
