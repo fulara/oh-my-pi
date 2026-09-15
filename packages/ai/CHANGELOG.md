@@ -1,6 +1,7 @@
 # Changelog
 
 ## [Unreleased]
+
 ### Added
 
 - User messages support optional `clientMessageId` metadata for persistent client submission correlation without changing provider prompt text.

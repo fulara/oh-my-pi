@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Subprocess cleanup retains the original native process handle instead of reopening its PID. Unix timeouts refuse an unproven process-group signal after the root exits, report the remaining pipe-holding resources, and still finish output collection at the deadline.
+
 ## [18.2.0] - 2026-09-15
 
 ### Breaking Changes
@@ -42,7 +46,6 @@
 
 - Timed out stalled Chrome-for-Testing metadata requests after 30 seconds when looking up download metadata
 - Concurrent browser installations share one download without replacing a running browser, and stalled downloads time out with partial files cleaned up for retry.
-- Subprocess cleanup retains the original native process handle instead of reopening its PID. Unix timeouts refuse an unproven process-group signal after the root exits, report the remaining pipe-holding resources, and still finish output collection at the deadline.
 
 ## [18.1.19] - 2026-09-12
 
