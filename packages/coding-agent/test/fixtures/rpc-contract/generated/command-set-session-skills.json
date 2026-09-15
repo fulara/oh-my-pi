@@ -1,0 +1,10 @@
+{
+  "id": "cmd-skills-set-1",
+  "type": "set_session_skills",
+  "sessionId": "session-1",
+  "journalSessionId": "journal-session-1",
+  "expectedRevision": "revision-1",
+  "skillIds": [
+    "/tmp/skills/review/SKILL.md"
+  ]
+}

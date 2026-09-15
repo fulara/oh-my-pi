@@ -30,7 +30,7 @@ type RpcContractFrame =
 	| RpcAvailableCommandsUpdateFrame
 	| RpcPromptResultFrame
 	| RpcBtwUpdateFrame
-	| Extract<AgentSessionEvent, { type: "goal_updated" }>
+	| Extract<AgentSessionEvent, { type: "goal_updated" | "session_skills_updated" }>
 	| AgentEvent
 	| RpcExtensionUIRequest
 	| RpcHostToolCallRequest
@@ -243,6 +243,17 @@ const availableCommands = [
 	},
 ] satisfies RpcAvailableSlashCommand[];
 
+const sessionSkills = {
+	sessionId: "session-1",
+	journalSessionId: "journal-session-1",
+	revision: "revision-2",
+	selected: [{ id: "/tmp/skills/review/SKILL.md", name: "review", hash: "a".repeat(64) }],
+	activeRevision: "revision-2",
+	active: [{ id: "/tmp/skills/review/SKILL.md", name: "review", hash: "a".repeat(64) }],
+	pending: false,
+	applying: false,
+} satisfies NonNullable<RpcSessionState["sessionSkills"]>;
+
 export const rpcContractFixtures = [
 	{
 		name: "ready",
@@ -298,6 +309,80 @@ export const rpcContractFixtures = [
 		name: "command-get-state",
 		category: "command",
 		frame: { id: "cmd-state-1", type: "get_state" } satisfies Extract<RpcCommand, { type: "get_state" }>,
+	},
+	{
+		name: "command-get-session-skills",
+		category: "command",
+		frame: {
+			id: "cmd-skills-get-1",
+			type: "get_session_skills",
+			sessionId: "session-1",
+			journalSessionId: "journal-session-1",
+		} satisfies Extract<RpcCommand, { type: "get_session_skills" }>,
+	},
+	{
+		name: "command-set-session-skills",
+		category: "command",
+		frame: {
+			id: "cmd-skills-set-1",
+			type: "set_session_skills",
+			sessionId: "session-1",
+			journalSessionId: "journal-session-1",
+			expectedRevision: "revision-1",
+			skillIds: ["/tmp/skills/review/SKILL.md"],
+		} satisfies Extract<RpcCommand, { type: "set_session_skills" }>,
+	},
+	{
+		name: "response-get-session-skills",
+		category: "response",
+		frame: {
+			id: "cmd-skills-get-1",
+			type: "response",
+			command: "get_session_skills",
+			success: true,
+			data: {
+				state: sessionSkills,
+				catalog: [
+					{
+						id: "/tmp/skills/review/SKILL.md",
+						name: "review",
+						description: "Review carefully",
+						status: "available",
+					},
+				],
+			},
+		} satisfies Extract<RpcResponse, { command: "get_session_skills"; success: true }>,
+	},
+	{
+		name: "response-set-session-skills",
+		category: "response",
+		frame: {
+			id: "cmd-skills-set-1",
+			type: "response",
+			command: "set_session_skills",
+			success: true,
+			data: sessionSkills,
+		} satisfies Extract<RpcResponse, { command: "set_session_skills"; success: true }>,
+	},
+	{
+		name: "response-session-skills-error",
+		category: "response",
+		frame: {
+			id: "cmd-skills-stale-1",
+			type: "response",
+			command: "set_session_skills",
+			success: false,
+			error: "Session skills changed; reload before applying.",
+			data: { state: sessionSkills },
+		} satisfies Extract<RpcResponse, { success: false }>,
+	},
+	{
+		name: "event-session-skills-updated",
+		category: "event",
+		frame: {
+			type: "session_skills_updated",
+			sessionSkills: { ...sessionSkills, active: [], activeRevision: "revision-1", pending: true },
+		} satisfies Extract<AgentSessionEvent, { type: "session_skills_updated" }>,
 	},
 	{
 		name: "command-fork",
@@ -734,6 +819,7 @@ export const rpcContractFixtures = [
 				],
 				planMode,
 				goalMode,
+				sessionSkills,
 				systemPrompt: ["You are a reliable coding agent."],
 				dumpTools: [{ name: "read", description: "Read files", parameters: { type: "object" } }],
 				contextUsage: { tokens: 1234, contextWindow: 200000, percent: 0.617 },

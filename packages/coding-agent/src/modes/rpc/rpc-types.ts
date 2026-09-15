@@ -25,6 +25,7 @@ import type { PlanModeState } from "../../plan-mode/state";
 import type { AgentSessionEvent, SessionStats } from "../../session/agent-session";
 import type { FileEntry, SessionEntry, SessionTreeNode } from "../../session/session-entries";
 import type { UsageLimitState } from "../../session/usage-limit";
+import type { SessionSkillsCatalogResult, SessionSkillsState } from "../../session/session-skills";
 import type { AvailableSlashCommandSource } from "../../slash-commands/available-commands";
 import type { AgentProgress } from "@oh-my-pi/pi-tui/tools/task";
 import type { SubagentEventPayload, SubagentLifecyclePayload, SubagentProgressPayload } from "../../task";
@@ -85,6 +86,15 @@ export type RpcCommand =
 
 	// State
 	| { id?: string; type: "get_state" }
+	| { id?: string; type: "get_session_skills"; sessionId: string; journalSessionId: string }
+	| {
+			id?: string;
+			type: "set_session_skills";
+			sessionId: string;
+			journalSessionId: string;
+			expectedRevision: string;
+			skillIds: string[];
+	  }
 	| { id?: string; type: "set_fast_mode"; enabled: boolean }
 	| { id?: string; type: "set_slow_mode"; enabled: boolean }
 	| {
@@ -261,6 +271,7 @@ export interface RpcSessionState {
 	todoPhases: TodoPhase[];
 	planMode: PlanModeState | null;
 	goalMode: GoalModeState | null;
+	sessionSkills?: SessionSkillsState;
 	/** For session dump / export (plain-text parity with /dump). */
 	systemPrompt?: string[];
 	dumpTools?: Array<{ name: string; description: string; parameters: unknown; examples?: readonly ToolExample[] }>;
@@ -531,6 +542,8 @@ export type RpcResponse =
 
 	// State
 	| { id?: string; type: "response"; command: "get_state"; success: true; data: RpcSessionState }
+	| { id?: string; type: "response"; command: "get_session_skills"; success: true; data: SessionSkillsCatalogResult }
+	| { id?: string; type: "response"; command: "set_session_skills"; success: true; data: SessionSkillsState }
 	| {
 			id?: string;
 			type: "response";
@@ -767,7 +780,15 @@ export type RpcResponse =
 	  }
 
 	// Error response (any command can fail); `code` is an optional machine-readable reason.
-	| { id?: string; type: "response"; command: string; success: false; error: string; code?: string };
+	| {
+			id?: string;
+			type: "response";
+			command: string;
+			success: false;
+			error: string;
+			code?: string;
+			data?: { state: SessionSkillsState };
+	  };
 
 // ============================================================================
 // Side question (/btw) frames (stdout)
