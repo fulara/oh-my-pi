@@ -389,6 +389,13 @@ import {
 	type DetachedBranchSnapshot,
 	type SessionManager,
 } from "./session-manager";
+import {
+	SessionSkills,
+	type SessionSkillsApplyRequest,
+	type SessionSkillsCatalogResult,
+	type SessionSkillsIdentity,
+	type SessionSkillsState,
+} from "./session-skills";
 import { SessionMemory, type SessionMemoryHost } from "./session-memory";
 import { buildSessionMetadata } from "./session-metadata";
 import { SessionProviderBoundary, type SessionProviderBoundaryHost } from "./session-provider-boundary";
@@ -403,6 +410,7 @@ import { YieldQueue } from "./yield-queue";
 
 export * from "./agent-session-events";
 export * from "./agent-session-types";
+export type * from "./session-skills";
 export type { AdvisorStats, AdvisorStatusOverviewEntry, PerAdvisorStat } from "./session-advisors";
 
 const SESSION_STOP_CONTINUATION_CAP = 8;
@@ -643,6 +651,9 @@ export class AgentSession {
 	#commandMetadataChangedListeners: CommandMetadataChangedListener[] = [];
 	#sessionChangeCallbacks = new Set<() => void>();
 	#observedSessionId: string | undefined;
+	readonly #sessionSkills: SessionSkills;
+	#unsubscribeSessionSkills?: () => void;
+	#lastSessionSkillsContextRevision: string | undefined;
 
 	/** Messages queued to be included with the next user prompt as context ("asides"). */
 	#pendingNextTurnMessages: CustomMessage[] = [];
@@ -855,6 +866,7 @@ export class AgentSession {
 			this.#sessionTransitionSettled = undefined;
 			this.#resolveSessionTransition = undefined;
 			resolve?.();
+			this.#emit({ type: "session_skills_updated", sessionSkills: this.getSessionSkillsState() });
 		},
 	};
 	#promptSequence = 0;
@@ -1305,6 +1317,26 @@ export class AgentSession {
 		this.settings = config.settings;
 		this.memoryEnabled = config.memoryEnabled ?? true;
 		this.#modelRegistry = config.modelRegistry;
+		this.#sessionSkills = new SessionSkills(
+			this.sessionManager,
+			() => ({ sessionId: this.sessionId, journalSessionId: this.sessionManager.getSessionId() }),
+			() => this.skills,
+			() => this.isStreaming,
+			() => this.#sessionTransitionDepth > 0 || this.#isDisposed,
+			state => this.#emit({ type: "session_skills_updated", sessionSkills: state }),
+			text => this.#obfuscateTextForProvider(text) ?? text,
+		);
+		this.#unsubscribeSessionSkills = this.agent.addContextTransform(messages => {
+			const transformed = this.#sessionSkills.capture(messages);
+			const revision = this.#sessionSkills.activeRevision;
+			if (revision !== this.#lastSessionSkillsContextRevision) {
+				if (this.#lastSessionSkillsContextRevision !== undefined || transformed !== messages) {
+					this.agent.appendOnlyContext?.invalidateForModelChange();
+				}
+				this.#lastSessionSkillsContextRevision = revision;
+			}
+			return transformed;
+		});
 		this.#extensionRoots =
 			config.extensionRoots ??
 			(() => ({
@@ -2452,6 +2484,9 @@ export class AgentSession {
 
 	/** Emit an event to all listeners */
 	#emit(event: AgentSessionEvent): void {
+		if (event.type === "agent_end") {
+			this.#emit({ type: "session_skills_updated", sessionSkills: this.getSessionSkillsState() });
+		}
 		// Copy array before iteration to avoid mutation during iteration.
 		const listeners = [...this.#eventListeners];
 		for (const l of listeners) {
@@ -4482,7 +4517,9 @@ export class AgentSession {
 	}
 
 	#beginSessionTransition(): Disposable {
+		if (this.#sessionSkills.applying) throw new Error("Session skills Apply is in progress");
 		if (this.#sessionTransitionDepth++ === 0) {
+			this.#sessionSkills.beginTransition();
 			const settled = Promise.withResolvers<void>();
 			this.#sessionTransitionSettled = settled.promise;
 			this.#resolveSessionTransition = settled.resolve;
@@ -4832,6 +4869,7 @@ export class AgentSession {
 
 	async #doDispose(options: AgentSessionDisposeOptions = {}): Promise<void> {
 		this.beginDispose();
+		await this.#sessionSkills.waitForApply();
 		this.#recordSessionExit(options.reason ?? "dispose");
 		this.#cancelExitRecorder?.();
 		this.#cancelExitRecorder = undefined;
@@ -4900,6 +4938,8 @@ export class AgentSession {
 		this.setHindsightSessionState(undefined);
 		hindsightState?.dispose();
 		this.#disconnectFromAgent();
+		this.#unsubscribeSessionSkills?.();
+		this.#unsubscribeSessionSkills = undefined;
 		if (this.#unsubscribeAppendOnly) {
 			this.#unsubscribeAppendOnly();
 			this.#unsubscribeAppendOnly = undefined;
@@ -5031,7 +5071,9 @@ export class AgentSession {
 	}
 
 	freshSession(): FreshSessionResult | undefined {
+		if (this.#sessionSkills.applying) throw new Error("Session skills Apply is in progress");
 		if (this.isStreaming) return undefined;
+		using _transition = this.#beginSessionTransition();
 		const previousSessionId = this.sessionId;
 		const closedProviderSessions = this.#providerSessionState.size;
 		this.#closeAllProviderSessions("fresh session");
@@ -7919,6 +7961,18 @@ export class AgentSession {
 		return this.#tools.skills;
 	}
 
+	getSessionSkillsState(): SessionSkillsState {
+		return this.#sessionSkills.state();
+	}
+
+	getSessionSkillsCatalog(identity: SessionSkillsIdentity): Promise<SessionSkillsCatalogResult> {
+		return this.#sessionSkills.catalog(identity);
+	}
+
+	setSessionSkills(request: SessionSkillsApplyRequest): Promise<SessionSkillsState> {
+		return this.#sessionSkills.apply(request);
+	}
+
 	/** Skill loading warnings captured by SDK */
 	get skillWarnings(): readonly SkillWarning[] {
 		return this.#tools.skillWarnings;
@@ -8838,6 +8892,8 @@ export class AgentSession {
 	}
 
 	async #applyRewind(report: string, activeMessages?: AgentMessage[]): Promise<void> {
+		while (this.#sessionSkills.applying) await this.#sessionSkills.waitForApply();
+		using _transition = this.#beginSessionTransition();
 		const checkpointState = this.#checkpointState;
 		if (!checkpointState) {
 			return;
@@ -9980,6 +10036,9 @@ export class AgentSession {
 	}
 
 	captureBtwBranchSnapshot(): DetachedBranchSnapshot {
+		if (this.#sessionSkills.applying)
+			throw new Error("Cannot capture /btw while session skills Apply is in progress");
+		this.getSessionSkillsState();
 		const snapshot = this.sessionManager.captureDetachedBranchSnapshot();
 		const liveMessage = this.isStreaming ? this.agent.state.streamMessage : undefined;
 		if (liveMessage?.role === "assistant") {
@@ -9989,10 +10048,14 @@ export class AgentSession {
 	}
 
 	btwMessagesFromSnapshot(snapshot: DetachedBranchSnapshot): AgentMessage[] {
-		return [
-			...this.sessionManager.buildDetachedBranchContext(snapshot).messages,
-			...structuredClone(snapshot.transientMessages),
-		];
+		return SessionSkills.fromSnapshot(
+			[
+				...this.sessionManager.buildDetachedBranchContext(snapshot).messages,
+				...structuredClone(snapshot.transientMessages),
+			],
+			snapshot.entries,
+			text => this.#obfuscateTextForProvider(text) ?? text,
+		);
 	}
 
 	async promoteBtwBranch(

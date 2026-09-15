@@ -2168,6 +2168,7 @@ export async function runRpcMode(
 					messageCount: session.messages.length,
 					planMode: session.getPlanModeState() ?? null,
 					goalMode: session.getGoalModeState() ?? null,
+					sessionSkills: session.getSessionSkillsState(),
 					systemPrompt: session.systemPrompt,
 					dumpTools: session.agent.state.tools.map(tool => ({
 						name: tool.name,
@@ -2178,6 +2179,26 @@ export async function runRpcMode(
 					contextUsage: session.getContextUsage(),
 				};
 				return success(id, "get_state", state);
+			}
+
+			case "get_session_skills":
+			case "set_session_skills": {
+				try {
+					const data =
+						command.type === "get_session_skills"
+							? await session.getSessionSkillsCatalog(command)
+							: await session.setSessionSkills(command);
+					return success(id, command.type, data);
+				} catch (cause) {
+					return {
+						id,
+						type: "response",
+						command: command.type,
+						success: false,
+						error: cause instanceof Error ? cause.message : String(cause),
+						data: { state: session.getSessionSkillsState() },
+					};
+				}
 			}
 
 			case "set_fast_mode": {
