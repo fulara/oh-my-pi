@@ -1,0 +1,6 @@
+{
+  "id": "cmd-skills-get-1",
+  "type": "get_session_skills",
+  "sessionId": "session-1",
+  "journalSessionId": "journal-session-1"
+}
