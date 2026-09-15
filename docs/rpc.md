@@ -158,6 +158,42 @@ activity, text, or aggregate queue counts.
 - `{ id?, type: "get_subagents" }`
 - `{ id?, type: "get_subagent_messages", subagentId?: string, sessionFile?: string, fromByte?: number }`
 
+### Session skills
+
+- `{ id?, type: "get_session_skills", sessionId: string, journalSessionId: string }`
+- `{ id?, type: "set_session_skills", sessionId: string, journalSessionId: string, expectedRevision: string, skillIds: string[] }`
+
+`get_state` exposes optional `data.sessionSkills`. Absence means unsupported, not an
+empty selection. Use its two identities and opaque `revision`; do not substitute a
+transport identifier or reconstruct a revision. `get_session_skills` returns
+`data: { state, catalog }`; `set_session_skills` returns the committed state in `data`.
+
+State contains `sessionId`, `journalSessionId`, `revision`, `selected`,
+`activeRevision`, `active`, `pending`, `applying`, and optional `error`.
+Selected/active descriptors contain `{ id, name, hash }`; catalog entries contain
+`{ id, name, description, status: "available" | "changed" | "missing" }`.
+Bodies are not exposed through these state/catalog responses.
+`session_skills_updated` events carry `{ type, sessionSkills: state }`.
+
+Apply replaces the full ordered set, including an empty set, with an atomic
+journal snapshot. It validates canonical catalog IDs and the source/revision again
+before commit. Limits are 32 skills, 1 MiB per source file, 2 MiB total source bytes,
+and 4 MiB rendered guidance. A changed definition refreshes only on Apply; a missing
+selected definition stays pinned until removed. Ordinary failures keep the old
+selection; indeterminate persistence fails closed rather than reporting success.
+Error responses may include authoritative `data.state`; reload after conflicts or
+uncertain state instead of retrying a stale revision.
+
+Selection does not call the model or execute tasks. One captured user-level preamble
+is prepared for each main request without accumulating messages in the journal.
+During work, `active` describes the already captured request and `selected` describes
+the next preparation; when idle, `active` is the confirmed next-request snapshot.
+Compaction/reopen retain the active-branch selection; fork and rewind use the
+selection at their branch point. `resetSessionContext` clears conversation context
+but retains selected guidance; `newSession` starts empty. BTW uses its
+captured selection independently; promotion inherits that captured branch metadata.
+Guidance does not enforce model compliance, and referenced resources are not pinned.
+
 ### Model
 
 - `{ id?, type: "set_model", provider: string, modelId: string }`

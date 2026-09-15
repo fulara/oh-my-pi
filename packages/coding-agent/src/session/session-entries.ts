@@ -18,6 +18,9 @@ export const SESSION_TITLE_SLOT_ENTRY_TYPE = "title";
 
 export const TITLE_CHANGE_ENTRY_TYPE = "title_change";
 
+/** Reserved metadata namespace for bounded, hash-verified session skill snapshots. */
+export const SESSION_SKILLS_CUSTOM_TYPE = "session-skills";
+
 export type SessionTitleSource = "auto" | "user";
 
 /** Fixed-width first-line slot carrying the mutable current session title. */
