@@ -380,6 +380,7 @@ export class Agent {
 	#abortController?: AbortController;
 	#convertToLlm: (messages: AgentMessage[]) => Message[] | Promise<Message[]>;
 	#transformContext?: (messages: AgentMessage[], signal?: AbortSignal) => Promise<AgentMessage[]>;
+	#contextTransforms = new Set<(messages: AgentMessage[]) => AgentMessage[]>();
 	#transformProviderContext?: (context: Context, model: Model) => Context | Promise<Context>;
 	#steeringQueue: AgentMessage[] = [];
 	#followUpQueue: AgentMessage[] = [];
@@ -834,6 +835,13 @@ export class Agent {
 		const registration = (signal?: AbortSignal) => hook(signal);
 		this.#beforeModelCallHooks.add(registration);
 		return () => this.#beforeModelCallHooks.delete(registration);
+	}
+
+	/** Register a synchronous main-request transform before the configured async transform. */
+	addContextTransform(transform: (messages: AgentMessage[]) => AgentMessage[]): () => void {
+		const registration = (messages: AgentMessage[]) => transform(messages);
+		this.#contextTransforms.add(registration);
+		return () => this.#contextTransforms.delete(registration);
 	}
 
 	async #runBeforeModelCallHooks(signal?: AbortSignal): Promise<void> {
@@ -1452,7 +1460,10 @@ export class Agent {
 			preferWebsockets: this.#preferWebsockets,
 			convertToLlm: this.#convertToLlm,
 			transformProviderContext: this.#transformProviderContext,
-			transformContext: this.#transformContext,
+			transformContext: async (messages, signal) => {
+				for (const transform of this.#contextTransforms) messages = transform(messages);
+				return this.#transformContext ? this.#transformContext(messages, signal) : messages;
+			},
 			onPayload: this.#onPayload,
 			onResponse: this.#onResponse,
 			onSseEvent: this.#onSseEvent,

@@ -7,6 +7,7 @@ import type { Goal, GoalModeState } from "../goals/state";
 import type { ConfiguredThinkingLevel } from "../thinking";
 import type { TodoItem } from "../tools/todo";
 import type { CustomMessage } from "./messages";
+import type { SessionSkillsState } from "./session-skills";
 
 /** Session-specific events that extend the core AgentEvent. */
 export type AgentSessionEvent =
@@ -48,6 +49,7 @@ export type AgentSessionEvent =
 	| { type: "retry_fallback_applied"; from: string; to: string; role: string }
 	| { type: "retry_fallback_succeeded"; model: string; role: string }
 	| { type: "model_changed" }
+	| { type: "session_skills_updated"; sessionSkills: SessionSkillsState }
 	| { type: "config_warnings_changed" }
 	| { type: "advisor_cost_changed" }
 	| { type: "advisor_yielded" }

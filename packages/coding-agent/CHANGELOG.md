@@ -5,6 +5,7 @@
 ### Added
 
 - RPC `prompt`, `steer`, and `follow_up` accept optional `clientMessageId` metadata that survives queued consumption, skill expansion, and persisted replay.
+- Added durable session-skill selection through `get_session_skills` / `set_session_skills`: pinned definitions, revision-checked Apply, captured main/BTW request context, and branch-aware restore without extra transcript messages or model calls on selection.
 
 ### Fixed
 

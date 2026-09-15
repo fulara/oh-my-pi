@@ -6,7 +6,7 @@ import {
 	isBlobRef,
 	isImageDataUrl,
 } from "./blob-store";
-import type { FileEntry } from "./session-entries";
+import { type FileEntry, SESSION_SKILLS_CUSTOM_TYPE } from "./session-entries";
 
 const MAX_PERSIST_CHARS = 500_000;
 const TRUNCATION_NOTICE = "\n\n[Session persistence truncated large content]";
@@ -330,5 +330,8 @@ function stripReplayedReasoningSignatures(entry: FileEntry): FileEntry {
 }
 
 export function prepareEntryForPersistence(entry: FileEntry, blobStore: BlobStore): FileEntry {
+	// SessionSkills validates its own byte limits and hashes before commit.
+	// Generic display truncation would corrupt those immutable body snapshots.
+	if (entry.type === "custom" && entry.customType === SESSION_SKILLS_CUSTOM_TYPE) return entry;
 	return truncateForPersistence(stripReplayedReasoningSignatures(entry), blobStore) as FileEntry;
 }

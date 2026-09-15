@@ -55,6 +55,11 @@
     "file": "command-get-messages-page.json"
   },
   {
+    "name": "command-get-session-skills",
+    "category": "command",
+    "file": "command-get-session-skills.json"
+  },
+  {
     "name": "command-get-state",
     "category": "command",
     "file": "command-get-state.json"
@@ -93,6 +98,11 @@
     "name": "command-set-plan-mode",
     "category": "command",
     "file": "command-set-plan-mode.json"
+  },
+  {
+    "name": "command-set-session-skills",
+    "category": "command",
+    "file": "command-set-session-skills.json"
   },
   {
     "name": "config-update",
@@ -168,6 +178,11 @@
     "name": "event-plan-review",
     "category": "event",
     "file": "event-plan-review.json"
+  },
+  {
+    "name": "event-session-skills-updated",
+    "category": "event",
+    "file": "event-session-skills-updated.json"
   },
   {
     "name": "event-tool-execution-end",
@@ -325,6 +340,11 @@
     "file": "response-get-messages-page-stale-cursor.json"
   },
   {
+    "name": "response-get-session-skills",
+    "category": "response",
+    "file": "response-get-session-skills.json"
+  },
+  {
     "name": "response-get-session-stats",
     "category": "response",
     "file": "response-get-session-stats.json"
@@ -345,6 +365,11 @@
     "file": "response-negotiate-protocol.json"
   },
   {
+    "name": "response-session-skills-error",
+    "category": "response",
+    "file": "response-session-skills-error.json"
+  },
+  {
     "name": "response-set-active-tools",
     "category": "response",
     "file": "response-set-active-tools.json"
@@ -353,6 +378,11 @@
     "name": "response-set-plan-mode",
     "category": "response",
     "file": "response-set-plan-mode.json"
+  },
+  {
+    "name": "response-set-session-skills",
+    "category": "response",
+    "file": "response-set-session-skills.json"
   },
   {
     "name": "rpc-chunk",
