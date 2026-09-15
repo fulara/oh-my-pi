@@ -45,6 +45,9 @@
 - Fixed provider-local usage-limit reset timestamps making `waitForUsageReset` sessions resume up to eight hours late while preserving longest-window semantics for naive UTC timestamps ([#11014](https://github.com/can1357/oh-my-pi/issues/11014)).
 - `registerStdioDisconnectHandling()` now drives graceful shutdown from `process.stdout`'s own `error` event, so a closed stdout consumer exits cleanly while an unrelated write EPIPE (subprocess stdin, socket) stays fatal ([#10930](https://github.com/can1357/oh-my-pi/issues/10930)).
 - Fixed Linux `ptree` timeout cleanup occasionally leaving session-escaped descendants running during subreaper adoption.
+### Fixed
+
+- Subprocess cleanup retains the original native process handle instead of reopening its PID. Unix timeouts refuse an unproven process-group signal after the root exits, report the remaining pipe-holding resources, and still finish output collection at the deadline.
 
 ## [18.2.0] - 2026-09-15
 
@@ -86,7 +89,6 @@
 
 - Timed out stalled Chrome-for-Testing metadata requests after 30 seconds when looking up download metadata
 - Concurrent browser installations share one download without replacing a running browser, and stalled downloads time out with partial files cleaned up for retry.
-- Subprocess cleanup retains the original native process handle instead of reopening its PID. Unix timeouts refuse an unproven process-group signal after the root exits, report the remaining pipe-holding resources, and still finish output collection at the deadline.
 
 ## [18.1.19] - 2026-09-12
 

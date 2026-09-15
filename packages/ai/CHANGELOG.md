@@ -28,6 +28,7 @@
 - Added `TextJudge` and `chatTextBackend` for model-based judgments, with structured state rendering and safeguards that prevent embedded requests from being executed.
 - Added automatic format-correction retries to `TextJudge` when models return malformed output.
 - Added the `guardState` option to `TextBackend` to control whether safety guidance is included in prompts.
+
 ### Added
 
 - User messages support optional `clientMessageId` metadata for persistent client submission correlation without changing provider prompt text.
