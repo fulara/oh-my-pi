@@ -31,10 +31,10 @@ mod platform {
 	/// Stable Linux process reference backed by a pidfd.
 	#[derive(Clone)]
 	pub struct Process {
-		pid: i32,
-		pidfd: Arc<OwnedFd>,
+		pid:        i32,
+		pidfd:      Arc<OwnedFd>,
 		start_time: u64,
-		boot_id: &'static str,
+		boot_id:    &'static str,
 	}
 
 	impl Process {
@@ -268,8 +268,8 @@ mod platform {
 	/// original target.
 	#[derive(Clone)]
 	pub struct Process {
-		pid: i32,
-		start_tvsec: u64,
+		pid:          i32,
+		start_tvsec:  u64,
 		start_tvusec: u64,
 	}
 
@@ -536,8 +536,8 @@ mod platform {
 	/// the kernel-reported creation time, which pins identity even if the PID is
 	/// recycled while we hold the handle.
 	pub struct Process {
-		pid: i32,
-		handle: Arc<OwnedHandle>,
+		pid:           i32,
+		handle:        Arc<OwnedHandle>,
 		creation_time: u64,
 	}
 
@@ -977,7 +977,7 @@ impl Process {
 /// Shared signal guard. Unix parentage is live and revalidated; Windows PPIDs
 /// can refer to recycled processes, so only the host itself is protected there.
 struct HostProtection {
-	pids: HashSet<i32>,
+	pids:   HashSet<i32>,
 	#[cfg(unix)]
 	groups: HashSet<i32>,
 }
@@ -1174,7 +1174,7 @@ pub const KILL_SIGNAL: i32 = 9;
 /// on platforms that do not expose process groups.
 #[derive(Default)]
 pub struct TerminationTargets {
-	pgids: Vec<i32>,
+	pgids:     Vec<i32>,
 	processes: Vec<Process>,
 	seen_pids: HashSet<i32>,
 }
