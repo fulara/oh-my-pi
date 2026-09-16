@@ -13,10 +13,12 @@ import { obfuscateProviderContext, SecretObfuscator } from "@oh-my-pi/pi-coding-
 import { AgentSession } from "@oh-my-pi/pi-coding-agent/session/agent-session";
 import { AuthStorage } from "@oh-my-pi/pi-coding-agent/session/auth-storage";
 import { convertToLlm } from "@oh-my-pi/pi-coding-agent/session/messages";
+import { CURRENT_SESSION_VERSION, SESSION_SKILLS_CUSTOM_TYPE } from "@oh-my-pi/pi-coding-agent/session/session-entries";
 import {
 	SessionManager,
 	SessionPersistenceIndeterminateError,
 } from "@oh-my-pi/pi-coding-agent/session/session-manager";
+import { SessionSkills } from "@oh-my-pi/pi-coding-agent/session/session-skills";
 import { MemorySessionStorage, type WriteTextAtomicOptions } from "@oh-my-pi/pi-coding-agent/session/session-storage";
 import { TempDir } from "@oh-my-pi/pi-utils";
 import { assistantMsg, userMsg } from "./utilities";
@@ -128,6 +130,185 @@ function text(context: Context): string {
 }
 
 describe("AgentSession session skills", () => {
+	// Run ancestry regressions under an external process deadline when testing
+	// older source: Bun's same-thread test timeout cannot interrupt these loops.
+	for (const shape of ["valid chain", "self-cycle", "multi-node cycle", "missing parent"] as const) {
+		it(`validates loaded skill ancestry: ${shape}`, async () => {
+			const storage = new MemorySessionStorage();
+			const cwd = "/skill-ancestry";
+			const file = `${cwd}/sessions/fixture.jsonl`;
+			const timestamp = "2026-01-01T00:00:00.000Z";
+			const body = "OLDER_SELECTION";
+			const selection = {
+				type: "custom",
+				id: "selection",
+				parentId: shape === "missing parent" ? "missing" : "root",
+				timestamp,
+				customType: SESSION_SKILLS_CUSTOM_TYPE,
+				data: {
+					version: 1,
+					skills: [
+						{
+							id: `${cwd}/SKILL.md`,
+							name: "older",
+							baseDir: cwd,
+							body,
+							hash: new Bun.CryptoHasher("sha256").update(body).digest("hex"),
+							sourceBytes: Buffer.byteLength(body),
+						},
+					],
+				},
+			};
+			const rows = [
+				{ type: "session", version: CURRENT_SESSION_VERSION, id: "ancestry", timestamp, cwd },
+				{ type: "message", id: "root", parentId: null, timestamp, message: userMsg("root") },
+				selection,
+				{
+					type: "message",
+					id: "a",
+					parentId: shape === "multi-node cycle" ? "b" : "selection",
+					timestamp,
+					message: userMsg("middle"),
+				},
+				{
+					type: "message",
+					id: "b",
+					parentId: shape === "self-cycle" ? "b" : "a",
+					timestamp,
+					message: userMsg("leaf"),
+				},
+			];
+			await storage.writeText(file, `${rows.map(row => JSON.stringify(row)).join("\n")}\n`);
+			const manager = await SessionManager.open(file, `${cwd}/sessions`, storage, { suppressBreadcrumb: true });
+			const skills = new SessionSkills(
+				manager,
+				() => ({ sessionId: "runtime", journalSessionId: manager.getSessionId() }),
+				() => [],
+				() => false,
+				() => false,
+				() => {},
+				text => text,
+			);
+			const journal = await storage.readText(file);
+			const entries = structuredClone(manager.getEntries());
+			const state = skills.state();
+			if (shape === "valid chain") {
+				expect(state.error).toBeUndefined();
+				expect(state.selected.map(skill => skill.name)).toEqual(["older"]);
+				expect(JSON.stringify(skills.capture([userMsg("task")]))).toContain(body);
+				manager.appendMessage(userMsg("incremental"));
+				expect(skills.state().revision).toBe(state.revision);
+				expect(skills.state().selected).toEqual(state.selected);
+			} else {
+				expect(state.error).toBeDefined();
+				expect(state.selected).toEqual([]);
+				expect(state.active).toEqual([]);
+				expect(skills.state()).toEqual(state);
+				expect(() => skills.capture([userMsg("must fail")])).toThrow();
+				await expect(skills.apply({ ...state, expectedRevision: state.revision, skillIds: [] })).rejects.toThrow();
+				expect(manager.getEntries()).toEqual(entries);
+				expect(await storage.readText(file)).toBe(journal);
+				// New valid metadata cannot turn an invalid cached boundary into
+				// an accepted branch or resurrect the older pinned selection.
+				manager.appendCustomEntry(SESSION_SKILLS_CUSTOM_TYPE, selection.data);
+				expect(skills.state().error).toBeDefined();
+				expect(skills.state().selected).toEqual([]);
+				expect(() => skills.capture([userMsg("still invalid")])).toThrow();
+			}
+			await manager.flush();
+		});
+	}
+
+	it("rejects skill ancestry mutated behind an unchanged cached leaf", async () => {
+		const h = await harness();
+		const root = h.manager.appendMessage(userMsg("root"));
+		await apply(h.session, [await h.skill("alpha", "OLDER_SELECTION")]);
+		h.manager.appendMessage(userMsg("cached leaf"));
+		expect(h.session.getSessionSkillsState().selected).toHaveLength(1);
+		const entry = h.manager.getEntry(root)!;
+		const parentId = entry.parentId;
+		try {
+			entry.parentId = "missing";
+			expect(h.session.getSessionSkillsState().error).toBeDefined();
+			expect(h.session.getSessionSkillsState().selected).toEqual([]);
+			await expect(apply(h.session, [])).rejects.toThrow();
+			await h.agent.prompt("must not reach provider");
+			expect(h.mock.calls).toHaveLength(0);
+		} finally {
+			entry.parentId = parentId;
+		}
+	});
+
+	for (const mutation of [
+		"valid append",
+		"self-cycle",
+		"multi-node cycle",
+		"missing parent",
+		"starting leaf cycle",
+		"older ancestor cycle",
+	] as const) {
+		it(`revalidates skill ancestry during Apply: ${mutation}`, async () => {
+			const storage = new MemorySessionStorage();
+			const manager = SessionManager.create("/skill-apply", "/skill-apply/sessions", storage);
+			const h = await harness({ manager });
+			const root = manager.appendMessage(userMsg("root"));
+			const a = await h.skill("alpha", "OLDER_SELECTION");
+			const b = await h.skill("beta", "MUST_NOT_COMMIT");
+			await apply(h.session, [a]);
+			const startingLeaf = manager.appendMessage(userMsg("starting leaf"));
+			const entered = Promise.withResolvers<void>();
+			const release = Promise.withResolvers<void>();
+			const original = manager.appendEntriesAtomically.bind(manager);
+			const spy = spyOn(manager, "appendEntriesAtomically").mockImplementation(async append => {
+				entered.resolve();
+				await release.promise;
+				return original(append);
+			});
+			const pending = apply(h.session, [b]);
+			await entered.promise;
+			let changed = manager.getEntry(startingLeaf)!;
+			let parentId = changed.parentId;
+			try {
+				if (mutation === "valid append") {
+					manager.appendMessage(userMsg("concurrent transcript"));
+				} else if (mutation === "starting leaf cycle" || mutation === "older ancestor cycle") {
+					changed = manager.getEntry(mutation === "starting leaf cycle" ? startingLeaf : root)!;
+					parentId = changed.parentId;
+					changed.parentId = changed.id;
+				} else {
+					const first = manager.appendMessage(userMsg("concurrent first"));
+					const second =
+						mutation === "multi-node cycle" ? manager.appendMessage(userMsg("concurrent second")) : first;
+					changed = manager.getEntry(first)!;
+					parentId = changed.parentId;
+					changed.parentId = mutation === "missing parent" ? "missing" : second;
+				}
+				const entries = structuredClone(manager.getEntries());
+				release.resolve();
+				if (mutation === "valid append") {
+					expect((await pending).selected.map(skill => skill.id)).toEqual([b]);
+					await h.agent.prompt("uses new guidance");
+					expect(text(h.mock.calls[0].context)).toContain("MUST_NOT_COMMIT");
+				} else {
+					await expect(pending).rejects.toThrow();
+					expect(h.session.getSessionSkillsState().applying).toBe(false);
+					expect(h.session.getSessionSkillsState().error).toBeDefined();
+					expect(h.session.getSessionSkillsState().selected).toEqual([]);
+					// Native atomic callback rejection may rewrite during rollback;
+					// it must not change logical entries or publish the new selection.
+					expect(manager.getEntries()).toEqual(entries);
+					expect(await storage.readText(h.session.sessionFile!)).not.toContain("MUST_NOT_COMMIT");
+					await expect(apply(h.session, [b])).rejects.toThrow();
+				}
+			} finally {
+				changed.parentId = parentId;
+				release.resolve();
+				await pending.catch(() => {});
+				spy.mockRestore();
+			}
+		});
+	}
+
 	it("commits ordered guidance without calls or transcript messages, encodes user-priority input before obfuscation, and removes it on deselection", async () => {
 		const h = await harness();
 		const a = await h.skill(
