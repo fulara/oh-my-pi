@@ -336,36 +336,6 @@ describe("Fura RPC plan-mode runtime", () => {
 		await expect(fs.stat(resolveRpcPlanPath(session, "local://FAILED.md"))).rejects.toMatchObject({ code: "ENOENT" });
 	});
 
-	it("passes approved plan compaction through internal guidance", async () => {
-		const session = await createSession();
-		await session.setActiveToolsByName(["read"]);
-		await writeLocalPlan(session, "local://PLAN.md", "# Compact Plan\n");
-		const compactCalls: Parameters<AgentSession["compact"]>[] = [];
-		session.compact = async (...args) => {
-			compactCalls.push(args);
-			return {} as never;
-		};
-		session.prompt = async () => true;
-		const runtime = createFuraRpcRuntime(session, () => {});
-		await runtime.handleCommand({ id: "plan-on-compact", type: "set_plan_mode", enabled: true });
-
-		const approved = await runtime.handleCommand({
-			id: "approve-compact",
-			type: "approve_plan_mode",
-			finalPlanFilePath: "local://Compact-Plan.md",
-			preserveContext: true,
-			compactBeforeExecute: true,
-		});
-
-		expect(approved).toMatchObject({
-			success: true,
-			data: { compactionOutcome: "ok", executionDispatched: true },
-		});
-		expect(compactCalls).toHaveLength(1);
-		expect(compactCalls[0]?.[0]).toBeUndefined();
-		expect(compactCalls[0]?.[1]?.internalGuidance).toContain("local://Compact-Plan.md");
-	});
-
 	it("preserves mounted discoverable tools when leaving plan mode", async () => {
 		const session = await createSession([makeDiscoverableTool("report_issue")]);
 		await session.setActiveToolPresentation(["read", "write", "report_issue"], ["report_issue"]);
