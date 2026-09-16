@@ -1561,7 +1561,7 @@ export function createFuraRpcRuntime(
 					planFilePath: finalPlanFilePath,
 				});
 				try {
-					await session.compact(undefined, { internalGuidance: compactionPrompt });
+					await session.compact(undefined, { internalGuidance: compactionPrompt, suppressContinuation: true });
 					compactionOutcome = "ok";
 				} catch (error) {
 					compactionOutcome = error instanceof CompactionCancelledError ? "cancelled" : "failed";
