@@ -496,6 +496,9 @@ describe("AgentSession session skills", () => {
 		expect(resumed.session.getSessionSkillsState().selected.map(x => x.id)).toEqual([a]);
 		await resumed.agent.prompt("after fork");
 		expect(text(resumed.mock.calls.at(-1)!.context)).toContain("PINNED_MARK");
+		// The resumed manager wrote the source journal before forking. Reopen it
+		// before another writer edits that history; stale writes must be rejected.
+		await h.session.switchSession(h.session.sessionFile!);
 		await apply(h.session, []);
 		await h.agent.prompt("before rewind without guidance");
 		expect(text(h.mock.calls.at(-1)!.context)).not.toContain("PINNED_MARK");

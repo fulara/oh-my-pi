@@ -588,6 +588,13 @@ Common event types:
 - `todo_reminder`, `todo_auto_clear`
 - `irc_message`, `notice`, `goal_updated`
 
+Persistence failures are emitted as `notice` frames with `level: "error"`,
+`message`, and `source: "session-persistence"`, including failures detected while
+closing the session store. Hosts should surface these even if the RPC child then
+exits; an unresolved durability failure is not a successful save. Fura maps the
+notice to its existing session/controller error surface without changing turn
+status.
+
 Extension runner errors are emitted separately as:
 
 ```json

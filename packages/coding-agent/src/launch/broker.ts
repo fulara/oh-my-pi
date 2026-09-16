@@ -368,7 +368,8 @@ async function holdsLiveForeignLease(pidPath: string, endpoint: string): Promise
  */
 async function acquireBrokerLease(runtimeDir: string, endpoint: string): Promise<BrokerLease | null> {
 	const pidPath = path.join(runtimeDir, PID_FILE);
-	const lock = FileLock.tryAcquire(pidPath);
+	// Never unlink the flock inode: queued openers must contend on the same file.
+	const lock = FileLock.tryAcquire(path.join(runtimeDir, "broker.lock"));
 	if (!lock.acquired) return null;
 	try {
 		// A broker from a build without the native lock cannot be seen through it;
