@@ -1380,6 +1380,11 @@
 - Fixed browser reuse for Chromium installed behind Linux wrapper scripts and prevented duplicate launches when a profile is locked ([#12236](https://github.com/can1357/oh-my-pi/pull/12236) by [@shivamklr](https://github.com/shivamklr)).
 
 Older entries are archived in [packages/coding-agent/CHANGELOG.md@1e3cc3ab94d0](https://github.com/can1357/oh-my-pi/blob/1e3cc3ab94d05617e79fb12d95711d58161747d3/packages/coding-agent/CHANGELOG.md).
+### Fixed
+
+- Fura RPC plan approval keeps ownership of the execution turn when compacting context.
+- Daemon broker restarts retain a stable exclusion lock on macOS, preventing concurrent starters from acquiring separate lock-file generations.
+
 ## [18.2.1] - 2026-09-15
 
 ### Breaking Changes

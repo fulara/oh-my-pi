@@ -918,6 +918,13 @@ transcript, even after they cease to be removable. Render the queue from this
 event rather than tracking chips independently, and treat removal replies as
 confirmation of a change rather than independent queue state.
 
+Persistence failures are emitted as `notice` frames with `level: "error"`,
+`message`, and `source: "session-persistence"`, including failures detected while
+closing the session store. Hosts should surface these even if the RPC child then
+exits; an unresolved durability failure is not a successful save. Fura maps the
+notice to its existing session/controller error surface without changing turn
+status.
+
 Extension runner errors are emitted separately as:
 
 ```json

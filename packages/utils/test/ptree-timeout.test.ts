@@ -159,6 +159,19 @@ sleep 30
 			await fs.chmod(launcher, 0o755);
 
 			const controller = new AbortController();
+			const nativeFromPid = Process.fromPid.bind(Process);
+			let controlledSubreaper: Process | undefined;
+			const fromPid = spyOn(Process, "fromPid").mockImplementation(pid => {
+				const pinned = nativeFromPid(pid);
+				if (!pinned) return pinned;
+				return new Proxy(pinned, {
+					get(target, key) {
+						const receiver = controlledSubreaper ?? target;
+						const value = Reflect.get(receiver, key);
+						return typeof value === "function" ? value.bind(receiver) : value;
+					},
+				});
+			});
 			using child = spawn([launcher], {
 				signal: controller.signal,
 				subreaper: true,
@@ -177,9 +190,9 @@ sleep 30
 				expect(await pidFileExists(), "the launcher must create its worker").toBe(true);
 
 				const workerPid = Number.parseInt((await Bun.file(pidFile).text()).trim(), 10);
-				const subreaper = Process.fromPid(child.pid);
+				const subreaper = nativeFromPid(child.pid);
 				const command = subreaper?.children()[0];
-				const worker = Process.fromPid(workerPid);
+				const worker = nativeFromPid(workerPid);
 				if (!subreaper || !command || !worker) throw new Error("failed to capture the subreaper process tree");
 				cleanupProcesses.push(worker, command, subreaper);
 				expect(worker.ppid, "the worker must initially belong to the supervised command").toBe(command.pid);
@@ -200,7 +213,7 @@ sleep 30
 				} as unknown as Process;
 				let snapshots = 0;
 				let observedAdoption = false;
-				const controlledSubreaper = {
+				controlledSubreaper = {
 					children: (): Process[] => {
 						snapshots++;
 						if (snapshots === 1) return [commandSnapshot];
@@ -213,10 +226,6 @@ sleep 30
 					killTree: () => killOnly(subreaper.pid),
 					terminate: () => Promise.resolve(killOnly(subreaper.pid) > 0),
 				} as unknown as Process;
-				const nativeFromPid = Process.fromPid.bind(Process);
-				const fromPid = spyOn(Process, "fromPid").mockImplementation(pid =>
-					pid === child.pid ? controlledSubreaper : nativeFromPid(pid),
-				);
 
 				try {
 					child.kill(new TimeoutError(1, ""), -1);
@@ -229,9 +238,10 @@ sleep 30
 						ProcessStatus.Running,
 					);
 				} finally {
-					fromPid.mockRestore();
+					controlledSubreaper = undefined;
 				}
 			} finally {
+				fromPid.mockRestore();
 				for (const processHandle of cleanupProcesses) processHandle.killTree(9);
 				await fs.rm(testRoot, { recursive: true, force: true });
 			}
