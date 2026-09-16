@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "bun:test";
 import { scheduler } from "node:timers/promises";
+import * as fs from "node:fs/promises";
 import { Agent, AgentBusyError } from "@oh-my-pi/pi-agent-core";
 import { CompactionCancelledError } from "@oh-my-pi/pi-agent-core/compaction";
 import { getBundledModel } from "@oh-my-pi/pi-catalog/models";
@@ -8,6 +9,7 @@ import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import { ExtensionRuntime, loadExtensionFromFactory } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/loader";
 import { ExtensionRunner } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/runner";
 import type { CompactOptions } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/types";
+import { createFuraRpcRuntime } from "@oh-my-pi/pi-coding-agent/modes/rpc/rpc-mode";
 import { AgentSession, type AgentSessionEvent } from "@oh-my-pi/pi-coding-agent/session/agent-session";
 import { AuthStorage } from "@oh-my-pi/pi-coding-agent/session/auth-storage";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
@@ -537,6 +539,54 @@ describe("AgentSession auto-compaction queue resume", () => {
 		await session.waitForIdle();
 
 		expect(promptSpy).not.toHaveBeenCalled();
+	});
+
+	it("RPC compact approval dispatches only the approved execution, not the interrupted turn", async () => {
+		session.settings.set("compaction.keepRecentTokens", 1);
+		session.settings.override("compaction.autoContinue", true);
+		sessionManager.appendMessage({
+			role: "assistant",
+			content: [{ type: "text", text: "previous answer" }],
+			api: "anthropic-messages",
+			provider: "anthropic",
+			model: "claude-sonnet-4-5",
+			stopReason: "stop",
+			usage: {
+				input: 1_000,
+				output: 100,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 1_100,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			timestamp: Date.now(),
+		});
+		session.agent.replaceMessages(session.buildDisplaySessionContext().messages);
+		const plan = tempDir.join("approved-plan.md");
+		await fs.writeFile(plan, "# Approved execution\n\nKeep this plan.");
+		const runtime = createFuraRpcRuntime(session, () => {});
+		await runtime.handleCommand({ type: "set_plan_mode", enabled: true, planFilePath: plan });
+		session.agent.state.isStreaming = true;
+		vi.spyOn(session, "abort").mockImplementation(async () => {
+			session.agent.state.isStreaming = false;
+		});
+		const execution = Promise.withResolvers<void>();
+		const promptSpy = vi.spyOn(session.agent, "prompt").mockImplementation(async () => {
+			execution.resolve();
+		});
+
+		const result = await runtime.handleCommand({
+			type: "approve_plan_mode",
+			planFilePath: plan,
+			finalPlanFilePath: plan,
+			preserveContext: true,
+			compactBeforeExecute: true,
+		});
+		await execution.promise;
+		await session.waitForIdle();
+
+		expect(result).toMatchObject({ success: true, data: { executionDispatched: true, compactionOutcome: "ok" } });
+		expect(promptSpy).toHaveBeenCalledTimes(1);
 	});
 
 	it("lets a prompt submitted during the compaction supersede the resume", async () => {
