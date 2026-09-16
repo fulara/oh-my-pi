@@ -788,6 +788,8 @@
 
 ### Fixed
 
+- Session-skill state and Apply reject cyclic or missing-parent ancestry without hanging or restoring stale guidance.
+- `attachment://N` resolves images from visible user-invoked skill prompts while ignoring hidden, agent-attributed, and unrelated custom messages.
 - RPC skill invocations retain image attachments alongside expanded text through provider input and persisted replay.
 - Fixed `app.path` with `chrome-headless-shell` using an unintended default profile when `--user-data-dir` was passed as a separate argument; isolated browser profiles now normalize consistently.
 - Supervised process launch refuses a native addon without the fork's process-identity API before starting a child, avoiding untracked processes when source and addon builds differ.

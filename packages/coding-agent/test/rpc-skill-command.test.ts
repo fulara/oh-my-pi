@@ -1,10 +1,10 @@
-import { describe, expect, test, vi } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test, vi } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { Agent } from "@oh-my-pi/pi-agent-core";
 import type { ImageContent } from "@oh-my-pi/pi-ai";
-import { createMockModel } from "@oh-my-pi/pi-ai/providers/mock";
+import { createMockModel, type MockModel } from "@oh-my-pi/pi-ai/providers/mock";
 import { getBundledModel } from "@oh-my-pi/pi-catalog/models";
 import { ModelRegistry } from "@oh-my-pi/pi-coding-agent/config/model-registry";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
@@ -23,7 +23,17 @@ import {
 	type SkillPromptDetails,
 } from "@oh-my-pi/pi-coding-agent/session/messages";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
+import { ReadTool } from "@oh-my-pi/pi-coding-agent/tools/read";
 import { removeWithRetries, Snowflake } from "@oh-my-pi/pi-utils";
+
+const RED_PNG_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC";
+const BLUE_PNG_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNgYPgPAAEDAQAIicLsAAAAAElFTkSuQmCC";
+
+async function attachmentImage(data: string): Promise<ImageContent> {
+	// Stay inside the model's no-resize bounds so byte/order loss is observable.
+	const bytes = await new Bun.Image(Buffer.from(data, "base64")).resize(200, 200, { filter: "nearest" }).png().bytes();
+	return { type: "image", mimeType: "image/png", data: Buffer.from(bytes).toBase64() };
+}
 
 describe("tryRunRpcSkillCommand", () => {
 	test("dispatches registered /skill commands as skill prompt messages", async () => {
@@ -336,26 +346,12 @@ describe("dispatchRpcSkillPrompt", () => {
 		const dir = await fs.mkdtemp(path.join(os.tmpdir(), `omp-rpc-skill-identity-${Snowflake.next()}-`));
 		const skillPath = path.join(dir, "SKILL.md");
 		await Bun.write(skillPath, "---\nname: reviewer\ndescription: Review code\n---\n\nReview the supplied code.\n");
-		const images: ImageContent[] = [
-			{
-				type: "image",
-				mimeType: "image/png",
-				data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=",
-			},
-			{
-				type: "image",
-				mimeType: "image/png",
-				data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC",
-			},
-		];
-		// Stay inside the model's no-resize bounds so byte/order loss is observable.
-		for (const image of images) {
-			const bytes = await new Bun.Image(Buffer.from(image.data, "base64"))
-				.resize(200, 200, { filter: "nearest" })
-				.png()
-				.bytes();
-			image.data = Buffer.from(bytes).toBase64();
-		}
+		const images = await Promise.all([
+			attachmentImage(
+				"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=",
+			),
+			attachmentImage(RED_PNG_BASE64),
+		]);
 		const skill = {
 			name: "reviewer",
 			description: "Review code",
@@ -497,5 +493,168 @@ describe("dispatchRpcSkillPrompt", () => {
 			authStorage.close();
 			await removeWithRetries(dir);
 		}
+	});
+});
+
+describe("RPC skill attachment reads after idle", () => {
+	let dir: string;
+	let session: AgentSession;
+	let authStorage: AuthStorage;
+	let mock: MockModel;
+	let readTool: ReadTool;
+	let red: ImageContent;
+	let blue: ImageContent;
+	let errors: Error[];
+
+	beforeEach(async () => {
+		dir = await fs.mkdtemp(path.join(os.tmpdir(), `omp-rpc-skill-attachments-${Snowflake.next()}-`));
+		const skillPath = path.join(dir, "SKILL.md");
+		await Bun.write(
+			skillPath,
+			"---\nname: reviewer\ndescription: Review images\n---\n\nInspect the supplied images.\n",
+		);
+		[red, blue] = await Promise.all([attachmentImage(RED_PNG_BASE64), attachmentImage(BLUE_PNG_BASE64)]);
+		authStorage = await AuthStorage.create(":memory:");
+		authStorage.setRuntimeApiKey("anthropic", "test-key");
+		const model = getBundledModel("anthropic", "claude-sonnet-4-5")!;
+		mock = createMockModel({ handler: { content: ["Done"] } });
+		errors = [];
+		const settings = Settings.isolated({
+			"compaction.enabled": false,
+			"images.autoResize": false,
+			"images.describeForTextModels": false,
+		});
+		const sessionManager = SessionManager.create(dir, path.join(dir, "sessions"));
+		session = new AgentSession({
+			agent: new Agent({
+				getApiKey: () => "test-key",
+				initialState: { model, systemPrompt: ["Test"], tools: [] },
+				streamFn: mock.stream,
+				convertToLlm,
+			}),
+			sessionManager,
+			settings,
+			modelRegistry: new ModelRegistry(authStorage, path.join(dir, "models.yml")),
+			skills: [
+				{ name: "reviewer", description: "Review images", filePath: skillPath, baseDir: dir, source: "project" },
+			],
+			skillsSettings: { enableSkillCommands: true },
+		});
+		readTool = new ReadTool({
+			cwd: dir,
+			hasUI: false,
+			settings,
+			sessionManager,
+			getSessionFile: () => sessionManager.getSessionFile() ?? null,
+			getSessionSpawns: () => "*",
+			getActiveModel: () => model,
+			getImageAttachments: () => session.getImageAttachments(),
+		});
+	});
+
+	afterEach(async () => {
+		await session?.dispose();
+		authStorage?.close();
+		await removeWithRetries(dir);
+	});
+
+	async function dispatch(images?: ImageContent[]): Promise<void> {
+		const previousCalls = mock.calls.length;
+		expect(
+			await dispatchRpcSkillPrompt({
+				id: `attachment-${previousCalls}`,
+				session,
+				message: "/skill:reviewer inspect",
+				images,
+				streamingBehavior: undefined,
+				output: () => {},
+				onError: error => errors.push(error),
+				extensionUserMessageTracker: new RpcExtensionUserMessageTracker(),
+			}),
+		).toEqual({ agentInvoked: true });
+		// The RPC acknowledgement precedes dispatch. Do not mistake it for idle.
+		await settleUntil(() => mock.calls.length > previousCalls || errors.length > 0);
+		await session.waitForIdle();
+		expect(errors).toEqual([]);
+	}
+
+	function expectLatestProviderImages(expected: ImageContent[]): void {
+		const call = mock.calls.at(-1);
+		if (!call) throw new Error("Expected a controlled provider call");
+		const imageGroups = call.context.messages.flatMap(message => {
+			if (!Array.isArray(message.content)) return [];
+			const images = message.content.filter(block => block.type === "image");
+			return images.length > 0 ? [images] : [];
+		});
+		expect(imageGroups.at(-1) ?? []).toEqual(expected);
+	}
+
+	async function expectAttachmentReads(expected: ImageContent[]): Promise<void> {
+		await session.waitForIdle();
+		for (const [index, image] of expected.entries()) {
+			const result = await readTool.execute(`read-${index}`, { path: `attachment://${index + 1}` });
+			expect(result.content.filter(block => block.type === "image")).toEqual([image]);
+		}
+		await expect(
+			readTool.execute("read-unavailable", { path: `attachment://${expected.length + 1}` }),
+		).rejects.toThrow("Could not resolve image attachment");
+	}
+
+	test("reads a fresh BLUE RPC skill image after idle", async () => {
+		await dispatch([blue]);
+		expectLatestProviderImages([blue]);
+		await expectAttachmentReads([blue]);
+	});
+
+	test("reads BLUE from the latest skill instead of an older ordinary RED image", async () => {
+		await session.prompt("Inspect red", { images: [red] });
+		await session.waitForIdle();
+		expectLatestProviderImages([red]);
+		await expectAttachmentReads([red]);
+		await dispatch([blue]);
+		expectLatestProviderImages([blue]);
+		await expectAttachmentReads([blue]);
+	});
+
+	test.each(["user", "developer"] as const)("preserves ordinary %s image attachments", async role => {
+		await dispatch([blue]);
+		await session.prompt("Inspect red", { images: [red], synthetic: role === "developer" });
+		await session.waitForIdle();
+		expectLatestProviderImages([red]);
+		await expectAttachmentReads([red]);
+	});
+
+	test("preserves multiple skill image order across later text-only prompts", async () => {
+		await dispatch([blue, red]);
+		expectLatestProviderImages([blue, red]);
+		await expectAttachmentReads([blue, red]);
+		await dispatch();
+		await session.prompt("Continue without another image");
+		await session.waitForIdle();
+		expectLatestProviderImages([blue, red]);
+		await expectAttachmentReads([blue, red]);
+	});
+
+	test.each([
+		{ name: "hidden user skill", customType: SKILL_PROMPT_MESSAGE_TYPE, display: false, attribution: "user" },
+		{ name: "autoload skill", customType: SKILL_PROMPT_MESSAGE_TYPE, display: false, attribution: "agent" },
+		{ name: "visible agent skill", customType: SKILL_PROMPT_MESSAGE_TYPE, display: true, attribution: "agent" },
+		{ name: "unattributed skill", customType: SKILL_PROMPT_MESSAGE_TYPE, display: true, attribution: undefined },
+		{ name: "unrelated visible custom", customType: "test-injection", display: true, attribution: "user" },
+	] as const)("excludes $name images from attachment reads", async ({ name: _name, ...message }) => {
+		const injection = {
+			...message,
+			content: [{ type: "text" as const, text: "/skill:reviewer inspect this image" }, red],
+		};
+		await session.promptCustomMessage(injection);
+		await session.waitForIdle();
+		// These images may reach provider context, but are not user attachments.
+		expectLatestProviderImages([red]);
+		await expectAttachmentReads([]);
+		await dispatch([blue]);
+		await session.promptCustomMessage(injection);
+		await session.waitForIdle();
+		expectLatestProviderImages([red]);
+		await expectAttachmentReads([blue]);
 	});
 });
