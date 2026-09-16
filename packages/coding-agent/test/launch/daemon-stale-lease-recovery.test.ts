@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import { FileLock } from "@oh-my-pi/pi-natives";
 import { createDaemonBrokerClient, type DaemonBrokerClient } from "../../src/launch/client";
 
 const TEST_TIMEOUT_MS = 30_000;
@@ -37,6 +38,41 @@ async function withScope(
 }
 
 describe("daemon broker lease recovery", () => {
+	it(
+		"keeps the exclusion lock usable after broker metadata is removed",
+		async () => {
+			const root = await fs.mkdtemp(path.join(os.tmpdir(), "omp-stable-lease-"));
+			const runtimeDir = path.join(root, "run");
+			const lockPath = path.join(runtimeDir, "broker.lock");
+			let inode: number | undefined;
+			try {
+				await withScope(path.join(root, "project"), runtimeDir, async client => {
+					await client.request({ op: "ping" });
+					if (process.platform !== "linux" && process.platform !== "win32") inode = (await fs.stat(lockPath)).ino;
+					const contender = FileLock.tryAcquire(lockPath);
+					try {
+						expect(contender.acquired, "a second broker must not acquire the live scope").toBe(false);
+					} finally {
+						contender.release();
+					}
+				});
+				expect(await waitForFileGone(path.join(runtimeDir, "broker.pid"), 5_000)).toBe(true);
+				// A waiter may already hold an open descriptor before shutdown. Replacing
+				// this inode would let it and a new opener acquire independent locks.
+				if (inode !== undefined) expect((await fs.stat(lockPath)).ino).toBe(inode);
+				const successor = FileLock.tryAcquire(lockPath);
+				try {
+					expect(successor.acquired, "shutdown must release, not strand, the scope").toBe(true);
+				} finally {
+					successor.release();
+				}
+			} finally {
+				await fs.rm(root, { recursive: true, force: true });
+			}
+		},
+		TEST_TIMEOUT_MS,
+	);
+
 	it(
 		"starts a broker when broker.pid records a live but unrelated PID (issue #11080)",
 		async () => {
