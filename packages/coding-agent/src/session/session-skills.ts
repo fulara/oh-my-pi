@@ -236,21 +236,46 @@ export class SessionSkills {
 		this.#epoch = Bun.randomUUIDv7();
 	}
 
+	#ancestry(boundary: SessionEntry | undefined): {
+		latest: SessionEntry | undefined;
+		includesBoundary: boolean;
+	} {
+		const seen = new Set<string>();
+		let id = this.manager.getLeafId();
+		let latest: SessionEntry | undefined;
+		let includesBoundary = boundary === undefined;
+		// Entries are mutable, so even a cached leaf/boundary must be checked
+		// through to the root before trusting its selection.
+		while (id !== null) {
+			if (seen.has(id)) throw new Error("Invalid session skill ancestry: cycle");
+			seen.add(id);
+			const entry = this.manager.getEntry(id);
+			if (!entry) throw new Error("Invalid session skill ancestry: missing entry");
+			if (entry === boundary) includesBoundary = true;
+			if (!latest && entry.type === "custom" && entry.customType === SESSION_SKILLS_CUSTOM_TYPE) latest = entry;
+			id = entry.parentId;
+		}
+		return { latest, includesBoundary };
+	}
+
 	#reconcile(): void {
 		if (this.applying) return;
 		const journalId = this.manager.getSessionId();
 		const leafId = this.manager.getLeafId();
 		const leaf = leafId ? this.manager.getEntry(leafId) : undefined;
-		if (journalId === this.#journalId && leaf === this.#leaf) return;
-		let current = leaf;
 		let latest: SessionEntry | undefined;
-		while (current) {
-			if (journalId === this.#journalId && current === this.#leaf) break;
-			if (!latest && current.type === "custom" && current.customType === SESSION_SKILLS_CUSTOM_TYPE)
-				latest = current;
-			current = current.parentId ? this.manager.getEntry(current.parentId) : undefined;
+		let includesBoundary: boolean;
+		try {
+			({ latest, includesBoundary } = this.#ancestry(this.#leaf));
+		} catch (error) {
+			if (journalId !== this.#journalId || leaf !== this.#leaf || !this.#invalid) this.#epoch = Bun.randomUUIDv7();
+			this.#journalId = journalId;
+			this.#leaf = leaf;
+			this.#snapshot = EMPTY;
+			this.#invalid = error instanceof Error ? error.message : String(error);
+			return;
 		}
-		const continuesBranch = journalId === this.#journalId && current === this.#leaf;
+		const continuesBranch = journalId === this.#journalId && includesBoundary;
 		if (!continuesBranch) {
 			this.#epoch = Bun.randomUUIDv7();
 			// A branch cut is not authoritative persistence recovery. Only a new
@@ -261,7 +286,7 @@ export class SessionSkills {
 		}
 		this.#journalId = journalId;
 		this.#leaf = leaf;
-		if (!latest && continuesBranch) return;
+		if (continuesBranch && !this.#invalid && (latest?.id ?? EMPTY.recordId) === this.#snapshot.recordId) return;
 		try {
 			this.#snapshot = restore(latest, this.obfuscate);
 			this.#invalid = undefined;
@@ -404,13 +429,9 @@ export class SessionSkills {
 				this.#validate(request, request.expectedRevision);
 				if (this.unavailable()) throw new Error("Session changed before skill commit");
 				// Normal transcript appends are allowed. A branch replacement is not.
-				let entry = this.manager.getLeafId() ? this.manager.getEntry(this.manager.getLeafId()!) : undefined;
-				while (entry && entry !== startingLeaf) {
-					if (entry.type === "custom" && entry.customType === SESSION_SKILLS_CUSTOM_TYPE)
-						throw new Error("Session skill ancestry changed before commit");
-					entry = entry.parentId ? this.manager.getEntry(entry.parentId) : undefined;
-				}
-				if (entry !== startingLeaf) throw new Error("Session skill ancestry changed before commit");
+				const ancestry = this.#ancestry(startingLeaf);
+				if (!ancestry.includesBoundary || (ancestry.latest?.id ?? EMPTY.recordId) !== this.#snapshot.recordId)
+					throw new Error("Session skill ancestry changed before commit");
 				return this.manager.appendCustomEntry(SESSION_SKILLS_CUSTOM_TYPE, {
 					version: 1,
 					skills,

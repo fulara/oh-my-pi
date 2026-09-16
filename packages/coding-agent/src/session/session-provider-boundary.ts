@@ -16,7 +16,7 @@ import { normalizeModelContextImages } from "../utils/image-loading";
 import { imageAttachmentSource } from "@oh-my-pi/pi-tui/prompt/image-source";
 import { describeAttachedImagesForTextModel, shouldDescribeImagesForTextModel } from "../utils/image-vision-fallback";
 import { blobExtensionForImageMimeType } from "@oh-my-pi/pi-tui/prompt/image-format";
-import { type CustomMessage, convertToLlm } from "./messages";
+import { type CustomMessage, convertToLlm, isUserInvokedSkillPrompt } from "./messages";
 import { IMAGE_ATTACHMENT_DESCRIPTION_TYPE } from "./queued-messages";
 import {
 	getReadableCompactionEntry,
@@ -75,7 +75,11 @@ export class SessionProviderBoundary {
 		for (let i = this.#host.agent.state.messages.length - 1; i >= 0; i--) {
 			const message = this.#host.agent.state.messages[i];
 			if (!message) continue;
-			if ((message.role !== "user" && message.role !== "developer") || !Array.isArray(message.content)) continue;
+			const carriesUserImages =
+				message.role === "user" ||
+				message.role === "developer" ||
+				(message.role === "custom" && message.display === true && isUserInvokedSkillPrompt(message));
+			if (!carriesUserImages || !Array.isArray(message.content)) continue;
 			const images = message.content.filter((part): part is ImageContent => part.type === "image");
 			if (images.length === 0) continue;
 			return images.flatMap((image, index) => {
