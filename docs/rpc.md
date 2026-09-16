@@ -130,6 +130,10 @@ message. It is metadata, not provider prompt text.
 
 Explicit `/skill:name` invocations retain `images` as image content blocks alongside
 the expanded text. Original typed input remains metadata, not a second provider message.
+Their images are also addressable through `attachment://N`, in original order.
+The resolver uses the latest image-bearing ordinary user/developer message or
+visible user-attributed skill prompt; hidden and agent-attributed custom content
+does not replace those attachments.
 
 An acknowledgement accepts dispatch/enqueue; it does not prove consumption.
 A matching message event/history entry proves acceptance into conversation context,
@@ -178,6 +182,10 @@ selected definition stays pinned until removed. Ordinary failures keep the old
 selection; indeterminate persistence fails closed rather than reporting success.
 Error responses may include authoritative `data.state`; reload after conflicts or
 uncertain state instead of retrying a stale revision.
+Cycles or missing entries in the active ancestry yield `state.error` and an empty
+`selected` set; new guidance capture and Apply reject that state. Reading it does
+not repair the journal or fall back to an older selection. An already captured
+in-flight request retains its snapshot.
 
 Selection does not call the model or execute tasks. One captured user-level preamble
 is prepared for each main request without accumulating messages in the journal.

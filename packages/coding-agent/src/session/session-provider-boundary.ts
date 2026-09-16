@@ -17,7 +17,7 @@ import { stripPendingSecretPlaceholderSuffix } from "../secrets/placeholder";
 import { normalizeModelContextImages } from "../utils/image-loading";
 import { describeAttachedImagesForTextModel } from "../utils/image-vision-fallback";
 import { blobExtensionForImageMimeType } from "@oh-my-pi/pi-tui/prompt/image-format";
-import { type CustomMessage, convertToLlm } from "./messages";
+import { type CustomMessage, convertToLlm, isUserInvokedSkillPrompt } from "./messages";
 import { IMAGE_ATTACHMENT_DESCRIPTION_TYPE } from "./queued-messages";
 import type { BuildSessionContextOptions, SessionContext } from "./session-context";
 import type { SessionManager } from "./session-manager";
@@ -53,7 +53,13 @@ export class SessionProviderBoundary {
 	getImageAttachments(): { label: string; uri: string; image: ImageContent; sourcePath: string }[] {
 		for (let i = this.#host.agent.state.messages.length - 1; i >= 0; i--) {
 			const message = this.#host.agent.state.messages[i];
-			if (!message || (message.role !== "user" && message.role !== "developer") || !Array.isArray(message.content)) {
+			if (
+				!message ||
+				(message.role !== "user" &&
+					message.role !== "developer" &&
+					!(message.role === "custom" && message.display === true && isUserInvokedSkillPrompt(message))) ||
+				!Array.isArray(message.content)
+			) {
 				continue;
 			}
 			const images = message.content.filter((part): part is ImageContent => part.type === "image");
