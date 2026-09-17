@@ -10622,7 +10622,6 @@ export class AgentSession implements SettingsScope {
 					else this.#advisors.reattachRecorderFeeds();
 				}
 			}
-
 		} finally {
 			if (finishSessionSwitch) finishSessionSwitch();
 		}

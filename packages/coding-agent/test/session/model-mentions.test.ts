@@ -73,7 +73,7 @@ describe("model mentions", () => {
 		try {
 			await agentSession.prompt("ask ^a/x", { synthetic: true });
 			expect(agentSession.getSessionAgents()).toEqual([]);
-			await agentSession.prompt("ask ^b/y");
+			await agentSession.prompt("ask ^b/y", { clientMessageId: "fura-model-mention" });
 			expect(agentSession.modelMentions).toEqual([{ agent: "m1", selector: "b/y", name: "Y" }]);
 			const promptText = agent.state.messages
 				.filter(message => message.role === "user" || message.role === "developer")
@@ -86,6 +86,12 @@ describe("model mentions", () => {
 								.join(""),
 				);
 			expect(promptText).toEqual(["ask ^a/x", 'ask <model agent="m1" name="Y"/>']);
+			const users = agent.state.messages.filter(message => message.role === "user");
+			expect(users.map(message => message.clientMessageId)).toEqual(["fura-model-mention"]);
+			const persistedUsers = session
+				.getBranch()
+				.flatMap(entry => (entry.type === "message" && entry.message.role === "user" ? [entry.message] : []));
+			expect(persistedUsers).toEqual(users);
 		} finally {
 			await agentSession.dispose();
 		}
