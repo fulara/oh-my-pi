@@ -10029,7 +10029,6 @@ export class AgentSession {
 					else this.#advisors.reattachRecorderFeeds();
 				}
 			}
-
 		} finally {
 			if (finishSessionSwitch) finishSessionSwitch();
 		}
