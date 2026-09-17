@@ -85,15 +85,22 @@ describe("RpcClient.start", () => {
 	}, 30000);
 
 	test("rejects when RPC process exits immediately", async () => {
-		using client = new RpcClient({
-			cliPath: path.join(import.meta.dir, "..", "src", "cli.ts"),
-			cwd: path.join(import.meta.dir, ".."),
-			provider: "__missing_provider__",
-			model: "claude-sonnet-4-5",
-			env: { PI_NO_TITLE: "1" },
-		});
+		const root = await fs.mkdtemp(path.join(os.tmpdir(), "omp-rpc-invalid-provider-"));
+		try {
+			using client = new RpcClient({
+				cliPath: path.join(import.meta.dir, "..", "src", "cli.ts"),
+				cwd: root,
+				sessionDir: path.join(root, "sessions"),
+				provider: "__missing_provider__",
+				model: "claude-sonnet-4-5",
+				env: { HOME: root, PI_CODING_AGENT_DIR: path.join(root, "config"), PI_NO_TITLE: "1" },
+				args: ["--no-extensions", "--no-skills", "--no-rules", "--no-lsp", "--no-tools"],
+			});
 
-		await expect(client.start()).rejects.toThrow(/Unknown provider.*__missing_provider__/);
+			await expect(client.start()).rejects.toThrow(/Unknown provider.*__missing_provider__/);
+		} finally {
+			await fs.rm(root, { recursive: true, force: true });
+		}
 	});
 	test("launcher builder receives the complete agent argv", async () => {
 		let received: string[] | undefined;
