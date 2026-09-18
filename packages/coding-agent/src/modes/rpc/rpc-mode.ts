@@ -45,7 +45,7 @@ import {
 	type SkillPromptInput,
 } from "../../extensibility/skills";
 import { loadSlashCommands } from "../../extensibility/slash-commands";
-import type { Goal } from "../../goals/state";
+import type { Goal } from "@oh-my-pi/pi-tui/tools/goal";
 import { resolveLocalUrlToPath } from "../../internal-urls";
 import { type Theme, theme } from "@oh-my-pi/pi-tui/theme";
 import { AgentLifecycleManager } from "../../registry/agent-lifecycle";
@@ -71,8 +71,9 @@ import { buildAvailableSlashCommands } from "../../slash-commands/available-comm
 import { listLogoutAccounts, logoutCredential } from "../../slash-commands/helpers/logout";
 import { defaultLoadModeForToolName } from "../../tools/essential-tools";
 import { normalizeLocalScheme, resolveToCwd } from "../../tools/path-utils";
-import { PROPOSE_DEVICE_NAME, writeDeviceDispatch } from "../../tools/resolve";
-import { ToolError } from "../../tools/tool-errors";
+import { PROPOSE_DEVICE_NAME } from "@oh-my-pi/pi-tui/tools/resolve";
+import { ToolError } from "@oh-my-pi/pi-tui/tools/tool-errors";
+import { writeDeviceDispatch } from "../../tools/resolve";
 import type { EventBus } from "../../utils/event-bus";
 import { selectRpcEntries } from "./rpc-compat";
 import {
