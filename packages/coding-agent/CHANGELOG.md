@@ -297,12 +297,30 @@
 - Fixed llama.cpp discovery and routing for PrismML Bonsai 2 27B GGUF models, including support for cached models and the Qwen 3.8 thinking-level ladder.
 
 ## [18.2.6] - 2026-09-18
+### Added
+
+- RPC `prompt`, `steer`, and `follow_up` accept optional `clientMessageId` metadata that survives queued consumption, skill expansion, and persisted replay.
+- Added durable session-skill selection through `get_session_skills` / `set_session_skills`: pinned definitions, revision-checked Apply, captured main/BTW request context, and branch-aware restore without extra transcript messages or model calls on selection.
 
 ### Fixed
 
 - Fixed clipboard paste stalling on an empty clipboard; image and text clipboard reads now run concurrently so the empty-clipboard status surfaces after the slower read instead of the sum of both.
 - Fixed memory recall blocks carrying a minute-resolution `Current time` stamp that dirtied the cached system prompt on every refresh; recall rows already carry dates, so the stamp is removed.
 - Fixed `omp auth-broker token` and `omp auth-gateway token` exiting silently without creating a token on Windows when no token file exists yet; token and config reads now use `node:fs` instead of `Bun.file`.
+- Fura RPC remains compatible with the shared UI/domain module layout in OMP 18.2.5, preserving plan approval, goal state and prompt correlation.
+- Fura RPC plan approval keeps ownership of the execution turn when compacting context.
+- Daemon broker restarts retain a stable exclusion lock on macOS, preventing concurrent starters from acquiring separate lock-file generations.
+- Session-skill state and Apply reject cyclic or missing-parent ancestry without hanging or restoring stale guidance.
+- `attachment://N` resolves images from visible user-invoked skill prompts while ignoring hidden, agent-attributed, and unrelated custom messages.
+- RPC skill invocations retain image attachments alongside expanded text through provider input and persisted replay.
+- Fixed `app.path` with `chrome-headless-shell` using an unintended default profile when `--user-data-dir` was passed as a separate argument; isolated browser profiles now normalize consistently.
+- Supervised process launch refuses a native addon without the fork's process-identity API before starting a child, avoiding untracked processes when source and addon builds differ.
+- Distinct correlated user submissions with identical timestamps and content remain separate in persisted history.
+- Daemon recovery requires the persisted native process identity before adopting or stopping a process. Unverifiable resources remain visible and unmanaged across broker restarts; lifecycle commands refuse to control them.
+- Eval kernel shutdown retains process identities before polite exit and cleans up owned descendants without signalling stale process groups; interpreter probes use the same guarded process utility.
+- Fura BTW requests preserve their captured main context alongside upstream structured side-conversation history.
+- Fura RPC cancels/releases queued BTW during serialized maintenance without aborting the main turn; a cancelled in-flight side turn remains exclusive until it settles.
+- Fura RPC session transitions cancel and drain old side work before mutating source context, reject drain timeouts, and block or invalidate new BTW starts throughout successful or failed transitions.
 
 ## [18.2.5] - 2026-09-17
 
@@ -417,11 +435,6 @@
 - A corrupted or externally modified session file no longer leaves the session impossible to close; a subsequent Ctrl+C exits without rewriting the session log.
 - Fixed silent MCP requests being terminated by an undeclared idle timeout; closing a legacy SSE connection now also cancels pending requests and notifications.
 - Fixed browser reuse for Chromium installed behind Linux wrapper scripts and prevented duplicate launches when a profile is locked ([#12236](https://github.com/can1357/oh-my-pi/pull/12236) by [@shivamklr](https://github.com/shivamklr)).
-
-### Fixed
-
-- Fura RPC plan approval keeps ownership of the execution turn when compacting context.
-- Daemon broker restarts retain a stable exclusion lock on macOS, preventing concurrent starters from acquiring separate lock-file generations.
 
 ## [18.2.1] - 2026-09-15
 
@@ -788,22 +801,6 @@
 ### Removed
 
 - Removed the dangling `MCPManager.setOnNotification` single-slot setter, which had no callers in the runtime. Replaced by `MCPManager.addNotificationListener` — multi-listener, per-listener error isolation, returns an unsubscribe function.
-- RPC `prompt`, `steer`, and `follow_up` accept optional `clientMessageId` metadata that survives queued consumption, skill expansion, and persisted replay.
-- Added durable session-skill selection through `get_session_skills` / `set_session_skills`: pinned definitions, revision-checked Apply, captured main/BTW request context, and branch-aware restore without extra transcript messages or model calls on selection.
-
-### Fixed
-
-- Session-skill state and Apply reject cyclic or missing-parent ancestry without hanging or restoring stale guidance.
-- `attachment://N` resolves images from visible user-invoked skill prompts while ignoring hidden, agent-attributed, and unrelated custom messages.
-- RPC skill invocations retain image attachments alongside expanded text through provider input and persisted replay.
-- Fixed `app.path` with `chrome-headless-shell` using an unintended default profile when `--user-data-dir` was passed as a separate argument; isolated browser profiles now normalize consistently.
-- Supervised process launch refuses a native addon without the fork's process-identity API before starting a child, avoiding untracked processes when source and addon builds differ.
-- Distinct correlated user submissions with identical timestamps and content remain separate in persisted history.
-- Daemon recovery requires the persisted native process identity before adopting or stopping a process. Unverifiable resources remain visible and unmanaged across broker restarts; lifecycle commands refuse to control them.
-- Eval kernel shutdown retains process identities before polite exit and cleans up owned descendants without signalling stale process groups; interpreter probes use the same guarded process utility.
-- Fura BTW requests preserve their captured main context alongside upstream structured side-conversation history.
-- Fura RPC cancels/releases queued BTW during serialized maintenance without aborting the main turn; a cancelled in-flight side turn remains exclusive until it settles.
-- Fura RPC session transitions cancel and drain old side work before mutating source context, reject drain timeouts, and block or invalidate new BTW starts throughout successful or failed transitions.
 
 ## [18.2.0] - 2026-09-15
 
