@@ -304,6 +304,17 @@
 
 ### Fixed
 
+- Added `Target.getTargets` to the browser relay's CDP surface so clients can enumerate eligible pages without attaching to or claiming them.
+- RPC `prompt`, `steer`, and `follow_up` accept optional `clientMessageId` metadata that survives queued consumption, skill expansion, and persisted replay.
+- Added durable session-skill selection through `get_session_skills` / `set_session_skills`: pinned definitions, revision-checked Apply, captured main/BTW request context, and branch-aware restore without extra transcript messages or model calls on selection.
+
+### Fixed
+
+- Fixed resume clutter: elide 0-turn sessions from the /resume menu; -c similarly skips empty sessions.
+- Fixed Edit calls getting stuck generating repeated closing tags after an empty `SM:AFTER` insertion.
+- Fixed Edit previews and application panicking on Unicode no-op edits and overlapping duplicate matches.
+- Fixed live subagent messages getting stuck behind persisted-agent discovery, and roster discovery looping on dot-named transcripts.
+- Fixed llama.cpp discovery of PrismML Bonsai 2 27B GGUFs: built-in and custom-named providers now share catalog rules for chat-completions routing and the Qwen 3.8 thinking ladder (`low`/`medium`/`xhigh`), including cached models.
 - Fura RPC remains compatible with the shared UI/domain module layout in OMP 18.2.5, preserving plan approval, goal state and prompt correlation.
 - Fura RPC plan approval keeps ownership of the execution turn when compacting context.
 - Daemon broker restarts retain a stable exclusion lock on macOS, preventing concurrent starters from acquiring separate lock-file generations.
@@ -318,7 +329,6 @@
 - Fura BTW requests preserve their captured main context alongside upstream structured side-conversation history.
 - Fura RPC cancels/releases queued BTW during serialized maintenance without aborting the main turn; a cancelled in-flight side turn remains exclusive until it settles.
 - Fura RPC session transitions cancel and drain old side work before mutating source context, reject drain timeouts, and block or invalidate new BTW starts throughout successful or failed transitions.
-
 
 ## [18.2.6] - 2026-09-18
 ### Fixed
