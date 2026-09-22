@@ -70,6 +70,9 @@
 - Fixed Kimi usage reporting so monthly totals and code quotas are shown alongside the five-hour usage window.
 - Bedrock no longer sends provider-invalid payloads when an errored tool result contains an image; the image is hoisted into a sibling block ([#12865](https://github.com/can1357/oh-my-pi/pull/12865) by [@roboomp](https://github.com/roboomp)).
 - Gemini, Vertex, and Cloud Code Assist requests no longer include the unsupported `minP`/`repetitionPenalty` sampling fields, which caused 400s when set globally ([#12850](https://github.com/can1357/oh-my-pi/pull/12850) by [@roboomp](https://github.com/roboomp)).
+### Added
+
+- User messages support optional `clientMessageId` metadata for persistent client submission correlation without changing provider prompt text.
 
 ## [18.2.8] - 2026-09-21
 
@@ -100,12 +103,7 @@
 - Fixed error handling for provider responses that do not include token usage information.
 
 ## [18.2.6] - 2026-09-18
-### Added
 
-- User messages support optional `clientMessageId` metadata for persistent client submission correlation without changing provider prompt text.
-
-
-## [18.2.6] - 2026-09-18
 ### Fixed
 
 - Fixed Anthropic prompt-cache head re-baselining on every memory recall refresh: the system breakpoint now anchors on the last stable segment instead of the volatile recall suffix, and the stable-system fingerprint ignores recall blocks, so a recall refresh re-bills only the suffix instead of the whole tools+system head.

@@ -233,6 +233,27 @@
 - Edits targeting auto-generated files now return a tool-scoped rejection instead of aborting the whole turn ([#12499](https://github.com/can1357/oh-my-pi/pull/12499) by [@Dante-dan](https://github.com/Dante-dan)).
 - Subagents with an ordered model fallback keep it reachable on startup when the parent default role shares the same primary model ([#12377](https://github.com/can1357/oh-my-pi/pull/12377) by [@Dante-dan](https://github.com/Dante-dan)).
 - omp-plugins MCP servers now substitute `${CLAUDE_PLUGIN_ROOT}`/`${OMP_PLUGIN_ROOT}` in `command`, `args`, and `cwd` ([#12801](https://github.com/can1357/oh-my-pi/pull/12801) by [@holny](https://github.com/holny)).
+- RPC `prompt`, `steer`, and `follow_up` accept optional `clientMessageId` metadata that survives queued consumption, skill expansion, and persisted replay.
+- Added durable session-skill selection through `get_session_skills` / `set_session_skills`: pinned definitions, revision-checked Apply, captured main/BTW request context, and branch-aware restore without extra transcript messages or model calls on selection.
+
+- `find` (and `omp find`) accepts an `omp://` docs scope: `omp://` searches every embedded harness doc and `omp://<file>.md` searches one, reporting hits as canonical `omp://` URLs that `read` opens directly, including with `:start-end` selectors ([#12758](https://github.com/can1357/oh-my-pi/pull/12758) by [@H4vC](https://github.com/H4vC)).
+
+### Fixed
+
+- Fura RPC remains compatible with the shared UI/domain module layout in OMP 18.2.5, preserving plan approval, goal state and prompt correlation.
+- Fura RPC plan approval keeps ownership of the execution turn when compacting context.
+- Daemon broker restarts retain a stable exclusion lock on macOS, preventing concurrent starters from acquiring separate lock-file generations.
+- Session-skill state and Apply reject cyclic or missing-parent ancestry without hanging or restoring stale guidance.
+- `attachment://N` resolves images from visible user-invoked skill prompts while ignoring hidden, agent-attributed, and unrelated custom messages.
+- RPC skill invocations retain image attachments alongside expanded text through provider input and persisted replay.
+- Fixed `app.path` with `chrome-headless-shell` using an unintended default profile when `--user-data-dir` was passed as a separate argument; isolated browser profiles now normalize consistently.
+- Supervised process launch refuses a native addon without the fork's process-identity API before starting a child, avoiding untracked processes when source and addon builds differ.
+- Distinct correlated user submissions with identical timestamps and content remain separate in persisted history.
+- Daemon recovery requires the persisted native process identity before adopting or stopping a process. Unverifiable resources remain visible and unmanaged across broker restarts; lifecycle commands refuse to control them.
+- Eval kernel shutdown retains process identities before polite exit and cleans up owned descendants without signalling stale process groups; interpreter probes use the same guarded process utility.
+- Fura BTW requests preserve their captured main context alongside upstream structured side-conversation history.
+- Fura RPC cancels/releases queued BTW during serialized maintenance without aborting the main turn; a cancelled in-flight side turn remains exclusive until it settles.
+- Fura RPC session transitions cancel and drain old side work before mutating source context, reject drain timeouts, and block or invalidate new BTW starts throughout successful or failed transitions.
 
 ## [18.2.8] - 2026-09-21
 
@@ -297,40 +318,7 @@
 - Fixed llama.cpp discovery and routing for PrismML Bonsai 2 27B GGUF models, including support for cached models and the Qwen 3.8 thinking-level ladder.
 
 ## [18.2.6] - 2026-09-18
-### Added
 
-- RPC `prompt`, `steer`, and `follow_up` accept optional `clientMessageId` metadata that survives queued consumption, skill expansion, and persisted replay.
-- Added durable session-skill selection through `get_session_skills` / `set_session_skills`: pinned definitions, revision-checked Apply, captured main/BTW request context, and branch-aware restore without extra transcript messages or model calls on selection.
-
-### Fixed
-
-- Added `Target.getTargets` to the browser relay's CDP surface so clients can enumerate eligible pages without attaching to or claiming them.
-- RPC `prompt`, `steer`, and `follow_up` accept optional `clientMessageId` metadata that survives queued consumption, skill expansion, and persisted replay.
-- Added durable session-skill selection through `get_session_skills` / `set_session_skills`: pinned definitions, revision-checked Apply, captured main/BTW request context, and branch-aware restore without extra transcript messages or model calls on selection.
-
-### Fixed
-
-- Fixed resume clutter: elide 0-turn sessions from the /resume menu; -c similarly skips empty sessions.
-- Fixed Edit calls getting stuck generating repeated closing tags after an empty `SM:AFTER` insertion.
-- Fixed Edit previews and application panicking on Unicode no-op edits and overlapping duplicate matches.
-- Fixed live subagent messages getting stuck behind persisted-agent discovery, and roster discovery looping on dot-named transcripts.
-- Fixed llama.cpp discovery of PrismML Bonsai 2 27B GGUFs: built-in and custom-named providers now share catalog rules for chat-completions routing and the Qwen 3.8 thinking ladder (`low`/`medium`/`xhigh`), including cached models.
-- Fura RPC remains compatible with the shared UI/domain module layout in OMP 18.2.5, preserving plan approval, goal state and prompt correlation.
-- Fura RPC plan approval keeps ownership of the execution turn when compacting context.
-- Daemon broker restarts retain a stable exclusion lock on macOS, preventing concurrent starters from acquiring separate lock-file generations.
-- Session-skill state and Apply reject cyclic or missing-parent ancestry without hanging or restoring stale guidance.
-- `attachment://N` resolves images from visible user-invoked skill prompts while ignoring hidden, agent-attributed, and unrelated custom messages.
-- RPC skill invocations retain image attachments alongside expanded text through provider input and persisted replay.
-- Fixed `app.path` with `chrome-headless-shell` using an unintended default profile when `--user-data-dir` was passed as a separate argument; isolated browser profiles now normalize consistently.
-- Supervised process launch refuses a native addon without the fork's process-identity API before starting a child, avoiding untracked processes when source and addon builds differ.
-- Distinct correlated user submissions with identical timestamps and content remain separate in persisted history.
-- Daemon recovery requires the persisted native process identity before adopting or stopping a process. Unverifiable resources remain visible and unmanaged across broker restarts; lifecycle commands refuse to control them.
-- Eval kernel shutdown retains process identities before polite exit and cleans up owned descendants without signalling stale process groups; interpreter probes use the same guarded process utility.
-- Fura BTW requests preserve their captured main context alongside upstream structured side-conversation history.
-- Fura RPC cancels/releases queued BTW during serialized maintenance without aborting the main turn; a cancelled in-flight side turn remains exclusive until it settles.
-- Fura RPC session transitions cancel and drain old side work before mutating source context, reject drain timeouts, and block or invalidate new BTW starts throughout successful or failed transitions.
-
-## [18.2.6] - 2026-09-18
 ### Fixed
 
 - Fixed clipboard paste stalling on an empty clipboard; image and text clipboard reads now run concurrently so the empty-clipboard status surfaces after the slower read instead of the sum of both.
@@ -922,7 +910,6 @@
 - Fixed background task cards missing their final completion or failure after an early result or live-session focus replay.
 - Ranged reads on Windows no longer intermittently open the selector-suffixed path when filesystem probes return transient errors ([#11284](https://github.com/can1357/oh-my-pi/issues/11284)).
 
-
 ## [18.1.19] - 2026-09-12
 
 - Fixed `--mode json` returning exit 0 on a turn-fatal provider/auth/network error ([#11498](https://github.com/can1357/oh-my-pi/issues/11498)).
@@ -1110,6 +1097,7 @@
 ### Fixed
 
 - Fixed GPT-6 Astra requiring `/extended-context` for its full context window: it now keeps the documented 1.05M-token window with the setting on or off, and explicit per-model `contextWindow` overrides still win.
+
 ## [18.1.12] - 2026-09-06
 
 - Fixed edit and write results to report the formatted bytes actually committed by LSP writethrough.
