@@ -112,6 +112,20 @@
 - Added `/annotate` for attaching notes to diffs, replies, session messages, files, or quoted text and inserting or sending those notes in prompts and reviews.
 - Added configurable MCP startup behavior through `MCP_STARTUP_TIMEOUT_MS`/`mcp.startupTimeoutMs` and `OMP_MCP_REQUIRE_READY=1`, allowing headless runs to require MCP servers to become ready before the first turn.
 - Added native judgment usage reporting, including error stop reasons and messages, and added `openrouter/~typesafe/jev-latest` as a native judge candidate.
+- Introduced `question` field for TTSR rules, enabling semantic judgment of assistant output
+- Implemented judge-model integration using `noul` (yes/no) questions for completed assistant replies, thinking, and tool calls
+- Added support for `astCondition` triggers for structural code-matching during tool-write operations
+- Added `/omfg` rule generation and validation support for judged questions and structural AST patterns
+- Introduced Skillshare registry support for searching, installing, and managing skill extensions
+- Added CLI `skill` and TUI `/skills` commands for registry interactions
+- Implemented project-scoped and global skill installation with integrity validation
+- Added StepFun to the `/login` provider list and `STEPFUN_API_KEY` to the `--help` environment list ([#12918](https://github.com/can1357/oh-my-pi/pull/12918) by [@ArpitMishra17](https://github.com/ArpitMishra17)).
+- Added `maxContextWindow` to custom `models` entries and `modelOverrides`, so `/extended-context on` can use a larger window on custom providers ([#12923](https://github.com/can1357/oh-my-pi/pull/12923) by [@LingLambda](https://github.com/LingLambda)).
+- Added the `before_subagent_spawn` extension event to reroute or block each subagent before it resolves its model ([#12907](https://github.com/can1357/oh-my-pi/pull/12907) by [@aloyzzz](https://github.com/aloyzzz)).
+- Added Pi-compatible `get_entries`, `get_tree`, and `get_available_thinking_levels` RPC commands ([#12900](https://github.com/can1357/oh-my-pi/pull/12900) by [@44madfire](https://github.com/44madfire)).
+- Model fallback warnings now explain why the fallback happened, and fallback events carry the cause for extensions and RPC clients ([#12904](https://github.com/can1357/oh-my-pi/pull/12904) by [@lockwo](https://github.com/lockwo)).
+- RPC `prompt`, `steer`, and `follow_up` accept optional `clientMessageId` metadata that survives queued consumption, skill expansion, and persisted replay.
+- Added durable session-skill selection through `get_session_skills` / `set_session_skills`: pinned definitions, revision-checked Apply, captured main/BTW request context, and branch-aware restore without extra transcript messages or model calls on selection.
 
 ### Changed
 
@@ -144,6 +158,27 @@
 - Fixed browser `tab.fill` timing out on pages whose animation frames stall.
 - Fixed the first LSP diagnostics request returning no results while a newly started language server is still analyzing.
 - `/shake thinking` now reports the number of tokens freed.
+- The Todo tracker now reflects nested `eval` Todo updates, including when a cell fails after committing ([#12921](https://github.com/can1357/oh-my-pi/pull/12921) by [@tommymorgan](https://github.com/tommymorgan)).
+- Output schemas written as JSON Schema without a root `type` keep their `items` and `required` keywords, so structured-output tools no longer fail strict-mode validation ([#12893](https://github.com/can1357/oh-my-pi/issues/12893))
+- TTSR whole-buffer lookahead conditions now avoid repeated starting-position scans during streamed writes ([#12261](https://github.com/can1357/oh-my-pi/issues/12261), [#12887](https://github.com/can1357/oh-my-pi/pull/12887) by [@Dante-dan](https://github.com/Dante-dan)).
+- Fixed plural browser queries failing when compiled binaries expose shallow stack traces ([#12902](https://github.com/can1357/oh-my-pi/pull/12902) by [@Dante-dan](https://github.com/Dante-dan)).
+- Fixed browser `tab.fill` timing out after 8 seconds on pages whose animation frames stall ([#12892](https://github.com/can1357/oh-my-pi/issues/12892))
+- Fixed LSP diagnostics returning an empty result on the first edit while a freshly started server is still analyzing ([#12889](https://github.com/can1357/oh-my-pi/issues/12889))
+- `/shake thinking` now reports how many tokens it freed ([#12916](https://github.com/can1357/oh-my-pi/pull/12916) by [@Gablinas](https://github.com/Gablinas))
+- Fura RPC remains compatible with the shared UI/domain module layout in OMP 18.2.5, preserving plan approval, goal state and prompt correlation.
+- Fura RPC plan approval keeps ownership of the execution turn when compacting context.
+- Daemon broker restarts retain a stable exclusion lock on macOS, preventing concurrent starters from acquiring separate lock-file generations.
+- Session-skill state and Apply reject cyclic or missing-parent ancestry without hanging or restoring stale guidance.
+- `attachment://N` resolves images from visible user-invoked skill prompts while ignoring hidden, agent-attributed, and unrelated custom messages.
+- RPC skill invocations retain image attachments alongside expanded text through provider input and persisted replay.
+- Fixed `app.path` with `chrome-headless-shell` using an unintended default profile when `--user-data-dir` was passed as a separate argument; isolated browser profiles now normalize consistently.
+- Supervised process launch refuses a native addon without the fork's process-identity API before starting a child, avoiding untracked processes when source and addon builds differ.
+- Distinct correlated user submissions with identical timestamps and content remain separate in persisted history.
+- Daemon recovery requires the persisted native process identity before adopting or stopping a process. Unverifiable resources remain visible and unmanaged across broker restarts; lifecycle commands refuse to control them.
+- Eval kernel shutdown retains process identities before polite exit and cleans up owned descendants without signalling stale process groups; interpreter probes use the same guarded process utility.
+- Fura BTW requests preserve their captured main context alongside upstream structured side-conversation history.
+- Fura RPC cancels/releases queued BTW during serialized maintenance without aborting the main turn; a cancelled in-flight side turn remains exclusive until it settles.
+- Fura RPC session transitions cancel and drain old side work before mutating source context, reject drain timeouts, and block or invalidate new BTW starts throughout successful or failed transitions.
 
 ## [18.2.10] - 2026-09-22
 
@@ -233,27 +268,8 @@
 - Edits targeting auto-generated files now return a tool-scoped rejection instead of aborting the whole turn ([#12499](https://github.com/can1357/oh-my-pi/pull/12499) by [@Dante-dan](https://github.com/Dante-dan)).
 - Subagents with an ordered model fallback keep it reachable on startup when the parent default role shares the same primary model ([#12377](https://github.com/can1357/oh-my-pi/pull/12377) by [@Dante-dan](https://github.com/Dante-dan)).
 - omp-plugins MCP servers now substitute `${CLAUDE_PLUGIN_ROOT}`/`${OMP_PLUGIN_ROOT}` in `command`, `args`, and `cwd` ([#12801](https://github.com/can1357/oh-my-pi/pull/12801) by [@holny](https://github.com/holny)).
-- RPC `prompt`, `steer`, and `follow_up` accept optional `clientMessageId` metadata that survives queued consumption, skill expansion, and persisted replay.
-- Added durable session-skill selection through `get_session_skills` / `set_session_skills`: pinned definitions, revision-checked Apply, captured main/BTW request context, and branch-aware restore without extra transcript messages or model calls on selection.
 
 - `find` (and `omp find`) accepts an `omp://` docs scope: `omp://` searches every embedded harness doc and `omp://<file>.md` searches one, reporting hits as canonical `omp://` URLs that `read` opens directly, including with `:start-end` selectors ([#12758](https://github.com/can1357/oh-my-pi/pull/12758) by [@H4vC](https://github.com/H4vC)).
-
-### Fixed
-
-- Fura RPC remains compatible with the shared UI/domain module layout in OMP 18.2.5, preserving plan approval, goal state and prompt correlation.
-- Fura RPC plan approval keeps ownership of the execution turn when compacting context.
-- Daemon broker restarts retain a stable exclusion lock on macOS, preventing concurrent starters from acquiring separate lock-file generations.
-- Session-skill state and Apply reject cyclic or missing-parent ancestry without hanging or restoring stale guidance.
-- `attachment://N` resolves images from visible user-invoked skill prompts while ignoring hidden, agent-attributed, and unrelated custom messages.
-- RPC skill invocations retain image attachments alongside expanded text through provider input and persisted replay.
-- Fixed `app.path` with `chrome-headless-shell` using an unintended default profile when `--user-data-dir` was passed as a separate argument; isolated browser profiles now normalize consistently.
-- Supervised process launch refuses a native addon without the fork's process-identity API before starting a child, avoiding untracked processes when source and addon builds differ.
-- Distinct correlated user submissions with identical timestamps and content remain separate in persisted history.
-- Daemon recovery requires the persisted native process identity before adopting or stopping a process. Unverifiable resources remain visible and unmanaged across broker restarts; lifecycle commands refuse to control them.
-- Eval kernel shutdown retains process identities before polite exit and cleans up owned descendants without signalling stale process groups; interpreter probes use the same guarded process utility.
-- Fura BTW requests preserve their captured main context alongside upstream structured side-conversation history.
-- Fura RPC cancels/releases queued BTW during serialized maintenance without aborting the main turn; a cancelled in-flight side turn remains exclusive until it settles.
-- Fura RPC session transitions cancel and drain old side work before mutating source context, reject drain timeouts, and block or invalidate new BTW starts throughout successful or failed transitions.
 
 ## [18.2.8] - 2026-09-21
 
