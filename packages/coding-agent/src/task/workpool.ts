@@ -108,6 +108,7 @@ const DELIVERY_OUTPUT_LIMIT = 6_000;
 export class WorkPool {
 	readonly name: string;
 	readonly ownerId: string;
+	readonly ownerSessionId?: string;
 	readonly session: ToolSession;
 	readonly policy: EffectiveSubagentPolicy;
 	readonly context?: string;
@@ -130,6 +131,7 @@ export class WorkPool {
 	constructor(session: ToolSession, options: WorkPoolCreateOptions) {
 		this.name = options.name;
 		this.ownerId = session.getAgentId?.() ?? MAIN_AGENT_ID;
+		this.ownerSessionId = session.sessionManager?.getSessionId?.() ?? session.getSessionId?.() ?? undefined;
 		this.session = session;
 		this.policy = options.policy;
 		this.context = options.context;
@@ -200,7 +202,7 @@ export class WorkPool {
 					signal.removeEventListener("abort", onAbort);
 				}
 			},
-			{ id: this.name, ownerId: this.ownerId, queued: true },
+			{ id: this.name, ownerId: this.ownerId, ownerSessionId: this.ownerSessionId, queued: true },
 		);
 		if (id !== this.name) {
 			manager.cancel(id, { ownerId: this.ownerId });
@@ -380,6 +382,7 @@ export class WorkPool {
 					if (agent.turns === 0) {
 						const execution = await runStructuredSubagent({
 							session: this.session,
+							parentSessionId: this.ownerSessionId,
 							invocationKind: "eval",
 							assignment: message,
 							...(this.context ? { context: this.context } : {}),
@@ -420,7 +423,7 @@ export class WorkPool {
 				}
 				return this.#settleTurn(agent, batch, result);
 			},
-			{ id: batch.id, agentId: agent.id, ownerId: this.ownerId },
+			{ id: batch.id, agentId: agent.id, ownerId: this.ownerId, ownerSessionId: this.ownerSessionId },
 		);
 		batch.jobId = jobId;
 		agent.jobId = jobId;

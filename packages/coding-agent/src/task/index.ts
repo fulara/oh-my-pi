@@ -736,6 +736,8 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 		agentId?: string;
 		detached: boolean;
 	}): SpawnRun {
+		const parentSessionId =
+			this.session.sessionManager?.getSessionId?.() ?? this.session.getSessionId?.() ?? undefined;
 		return new SpawnRun(
 			this.#permit,
 			run =>
@@ -749,6 +751,7 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 					spawn.detached,
 					run.timing,
 					spawn.detached ? run.onArtifactsRetained : undefined,
+					parentSessionId,
 				),
 			{ agentId: spawn.agentId, detached: spawn.detached },
 		);
@@ -1274,6 +1277,8 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 			onUpdate,
 			onSettled,
 		} = options;
+		const ownerSessionId =
+			this.session.sessionManager?.getSessionId?.() ?? this.session.getSessionId?.() ?? undefined;
 		const buildFollowUpHint = async (aborted: boolean): Promise<string> => {
 			// Isolated runs are parked without a reviver once the run ends
 			// (`finalizeSubagentLifecycle`), so "message it" would point the
@@ -1444,6 +1449,8 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 				agentId,
 				queued: true,
 				ownerId: this.session.getAgentId?.() ?? undefined,
+				ownerSessionId,
+				toolCallId,
 				onProgress: text => {
 					onUpdate?.({ content: [{ type: "text", text }], details: buildDetails() });
 				},
@@ -1606,6 +1613,7 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 		detached = false,
 		launchTiming?: { invokedAt: number; acquiredAt: number },
 		onArtifactsRetained?: (cleanup: () => Promise<void>) => void,
+		parentSessionId = this.session.sessionManager?.getSessionId?.() ?? this.session.getSessionId?.() ?? undefined,
 	): Promise<AgentToolResult<TaskToolDetails>> {
 		const startTime = Date.now();
 		const assignment = (params.task ?? "").trim();
@@ -1614,6 +1622,7 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 		try {
 			const execution = await runStructuredSubagent({
 				session: this.session,
+				parentSessionId,
 				invocationKind: "task",
 				assignment,
 				context,

@@ -120,6 +120,8 @@ export interface StructuredSubagentRequest {
 	identity?: StructuredSubagentIdentity;
 	index?: number;
 	parentToolCallId?: string;
+	/** Logical parent identity captured before any queued launch or asynchronous preflight. */
+	parentSessionId?: string;
 	detached?: boolean;
 	invokedAt?: number;
 	acquiredAt?: number;
@@ -532,6 +534,7 @@ function buildExecutorOptions(
 		additionalDirectories: session.additionalDirectories,
 		getApiKey: session.getApiKey,
 		credentialSourceSessionId: session.getCredentialSourceSessionId?.(),
+		parentSessionId: request.parentSessionId,
 		agent: policy.effectiveAgent,
 		task: renderSubagentPrompt(request.assignment),
 		assignment: request.assignment.trim(),
@@ -748,6 +751,14 @@ function describeSalvagedWork(result: SingleResult): string {
  * lease or child dispatch; callers keep responsibility for their result text.
  */
 export async function runStructuredSubagent(request: StructuredSubagentRequest): Promise<StructuredSubagentResult> {
+	request = {
+		...request,
+		parentSessionId:
+			request.parentSessionId ??
+			request.session.sessionManager?.getSessionId?.() ??
+			request.session.getSessionId?.() ??
+			undefined,
+	};
 	const policy = await applySpawnHook(request, await resolveEffectiveSubagentPolicy(request));
 	const lease = await leaseArtifacts(request.session, request.invocationKind);
 	let changesApplied: boolean | null = null;
