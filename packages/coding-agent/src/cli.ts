@@ -100,6 +100,7 @@ const PREPAINT_SAFE_FLAGS: Record<string, true> = {
 	"--offline": true,
 	"--no-lsp": true,
 	"--no-title": true,
+	"--no-recap": true,
 	"--no-prewalk": true,
 	"--no-pty": true,
 };

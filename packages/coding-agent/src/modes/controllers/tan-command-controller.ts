@@ -401,7 +401,7 @@ export class TanCommandController {
 						}
 					}
 				},
-				{ ownerId, agentId: cloneId, request: trimmedWork },
+				{ ownerId, ownerSessionId: parentLocalSessionId, agentId: cloneId, request: trimmedWork },
 			);
 		} catch (error) {
 			if (cloneFile) await removeCloneSession(cloneFile);

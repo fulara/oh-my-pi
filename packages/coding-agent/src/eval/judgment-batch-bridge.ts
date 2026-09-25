@@ -172,6 +172,7 @@ function ownerOf(session: ToolSession): string {
 export class JudgmentBatch {
 	readonly id: string;
 	readonly ownerId: string;
+	readonly ownerSessionId?: string;
 	readonly intent: string;
 	readonly total: number;
 	readonly #inputs: BatchInput[];
@@ -202,6 +203,7 @@ export class JudgmentBatch {
 	) {
 		this.id = `jdgb-${Snowflake.next()}`;
 		this.ownerId = ownerOf(session);
+		this.ownerSessionId = session.sessionManager?.getSessionId?.() ?? session.getSessionId?.() ?? undefined;
 		this.intent = intent;
 		this.total = inputs.length;
 		this.#inputs = inputs;
@@ -237,7 +239,7 @@ export class JudgmentBatch {
 						if (this.#error) throw new Error(this.#error);
 						return this.#summary();
 					},
-					{ id: this.id, ownerId: this.ownerId },
+					{ id: this.id, ownerId: this.ownerId, ownerSessionId: this.ownerSessionId },
 				);
 				return;
 			} catch (error) {

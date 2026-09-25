@@ -50,6 +50,7 @@ export interface ServiceStart {
 	 * name (`local://…`, a URL `cwd`), then the functions and aliases of the session starting it.
 	 */
 	seed?: string;
+	toolCallId?: string;
 }
 
 /** The script a service's shell sources, beside the daemon's other per-service files. */
@@ -249,6 +250,30 @@ export async function listServicesTolerant(
 	}
 }
 
+/** Inspect only this logical session without launching a broker or subscribing to delivery. */
+export async function inspectSessionServices(cwd: string, sessionId: string): Promise<DaemonSnapshot[]> {
+	const result = await inspectExistingDaemonBroker(cwd, { op: "inspect-list", ownerSessionId: sessionId });
+	if (result.op !== "inspect-list") throw new Error("Service inspection unavailable: unexpected list response");
+	return result.daemons;
+}
+
+/** Read bounded logs only if the broker still owns the exact listed service for this session. */
+export async function inspectSessionServiceLogs(
+	cwd: string,
+	sessionId: string,
+	name: string,
+	expectedId: string,
+): Promise<{ text: string; truncated: boolean }> {
+	const result = await inspectExistingDaemonBroker(cwd, {
+		op: "inspect-logs",
+		ownerSessionId: sessionId,
+		name,
+		expectedId,
+	});
+	if (result.op !== "inspect-logs") throw new Error("Service inspection unavailable: unexpected logs response");
+	return { text: result.text, truncated: result.truncated };
+}
+
 export async function findService(
 	session: ToolSession,
 	name: string,
@@ -383,6 +408,8 @@ export async function startService(
 			replace: true,
 			awaitReady: readyInterrupt === undefined,
 			lease: !persist,
+			ownerSessionId: session.getSessionId?.() ?? undefined,
+			toolCallId: params.toolCallId,
 		},
 		signal,
 	).catch(async (error: unknown) => {

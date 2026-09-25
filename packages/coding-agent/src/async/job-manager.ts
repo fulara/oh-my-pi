@@ -163,6 +163,10 @@ export interface AsyncJob {
 	 * supply an id (e.g. legacy tests, SDK consumers without an agent context).
 	 */
 	ownerId?: string;
+	/** Logical session captured at registration; owner rebinding never relabels existing jobs. */
+	readonly ownerSessionId?: string;
+	/** Actual originating tool call, when this work was launched by one. */
+	readonly toolCallId?: string;
 	/**
 	 * Registry id of the subagent this job runs (task/tan/vibe jobs). Lets
 	 * job-view code link a job row to its AgentRegistry ref even when the job
@@ -288,6 +292,8 @@ interface AsyncJobDelivery {
 		| "agentId"
 		| "agentOutputPublished"
 		| "latestDetails"
+		| "ownerSessionId"
+		| "toolCallId"
 	>;
 }
 
@@ -308,6 +314,10 @@ export interface AsyncJobRegisterOptions {
 	id?: string;
 	/** Registry id of the agent that owns this job; used to scope cancelAll. */
 	ownerId?: string;
+	/** Explicit logical session overrides the owner binding; null means deliberately unproven. */
+	readonly ownerSessionId?: string | null;
+	/** Actual originating tool call; omit for autonomous or peer-triggered work. */
+	readonly toolCallId?: string;
 	/** Registry id of the subagent this job runs; see {@link AsyncJob.agentId}. */
 	agentId?: string;
 	onProgress?: (text: string, details?: AsyncJobDetails) => void | Promise<void>;
@@ -440,6 +450,8 @@ export class AsyncJobManager implements AsyncJobManagerApi {
 	}
 
 	readonly #jobs = new Map<string, AsyncJob>();
+	readonly #ownerSessions = new Map<string, { sessionId: string }>();
+	readonly #listeners = new Set<(job: AsyncJob) => void>();
 	readonly #deliveries: AsyncJobDelivery[] = [];
 	readonly #inFlightDeliveries: AsyncJobDelivery[] = [];
 	readonly #suppressedDeliveries = new Set<string>();
@@ -553,6 +565,43 @@ export class AsyncJobManager implements AsyncJobManagerApi {
 		return activeCount >= this.#maxRunningJobs;
 	}
 
+	/**
+	 * Bind future registrations to a logical session without changing delivery routing.
+	 * A stale disposer cannot clear a newer binding, even to the same session id.
+	 */
+	bindOwnerSession(ownerId: string, sessionId: string): () => void {
+		const binding = { sessionId };
+		this.#ownerSessions.set(ownerId, binding);
+		return () => {
+			if (this.#ownerSessions.get(ownerId) === binding) this.#ownerSessions.delete(ownerId);
+		};
+	}
+
+	/**
+	 * Observe live job changes without watching, consuming, or acknowledging results.
+	 * Notifications are synchronous; copy needed fields before returning. Foreground
+	 * rows are included so consumers must apply their own visibility/ownership scope.
+	 */
+	subscribe(listener: (job: AsyncJob) => void): () => void {
+		this.#listeners.add(listener);
+		return () => {
+			this.#listeners.delete(listener);
+		};
+	}
+
+	#notifyJobChanged(job: AsyncJob): void {
+		for (const listener of this.#listeners) {
+			try {
+				listener(job);
+			} catch (error) {
+				logger.warn("Async job observer failed", {
+					jobId: job.id,
+					error: error instanceof Error ? error.message : String(error),
+				});
+			}
+		}
+	}
+
 	register(type: AsyncJobType, label: string, run: AsyncJobRun, options?: AsyncJobRegisterOptions): string {
 		if (this.#disposed) {
 			throw new Error("Async job manager is disposed");
@@ -574,6 +623,7 @@ export class AsyncJobManager implements AsyncJobManagerApi {
 		if (options?.foreground) this.#suppressedDeliveries.add(id);
 		const abortController = new AbortController();
 		const startTime = Date.now();
+		const completion = Promise.withResolvers<void>();
 
 		const job: AsyncJob = {
 			id,
@@ -584,19 +634,30 @@ export class AsyncJobManager implements AsyncJobManagerApi {
 			...(options?.intent ? { intent: options.intent } : {}),
 			...(options?.request ? { request: options.request } : {}),
 			abortController,
-			promise: Promise.resolve(),
+			promise: completion.promise,
 			ownerId: options?.ownerId,
+			ownerSessionId:
+				options?.ownerSessionId === null
+					? undefined
+					: (options?.ownerSessionId ??
+						(options?.ownerId === undefined ? undefined : this.#ownerSessions.get(options.ownerId)?.sessionId)),
+			toolCallId: options?.toolCallId,
 			agentId: options?.agentId,
 			process: options?.process,
 			widgetInputs: options?.widgetInputs,
 			queued: options?.queued === true,
 			...(options?.foreground ? { foreground: true } : {}),
 		};
+		this.#jobs.set(id, job);
+		this.#evicted.delete(id);
+		this.#notifyJobChanged(job);
+		this.#notifyJobsChanged(id);
 
 		const reportProgress = async (text: string, details?: AsyncJobDetails): Promise<void> => {
 			job.progressText = text;
 			if (details) job.latestDetails = details;
 			this.#notifyJobsChanged(id);
+			this.#notifyJobChanged(job);
 			if (!options?.onProgress) return;
 			try {
 				await options.onProgress(text, details);
@@ -607,7 +668,7 @@ export class AsyncJobManager implements AsyncJobManagerApi {
 				});
 			}
 		};
-		job.promise = (async () => {
+		void (async () => {
 			try {
 				const outcome = await run({
 					jobId: id,
@@ -617,6 +678,7 @@ export class AsyncJobManager implements AsyncJobManagerApi {
 						if (!job.queued) return;
 						job.queued = false;
 						this.#notifyJobsChanged(id);
+						this.#notifyJobChanged(job);
 					},
 				});
 				job.endTime = Date.now();
@@ -628,10 +690,12 @@ export class AsyncJobManager implements AsyncJobManagerApi {
 				}
 				if (job.status === "cancelled") {
 					job.resultText = text;
+					this.#notifyJobChanged(job);
 				} else {
 					job.status = "completed";
 					job.resultText = text;
 					this.#recordAgentReply(job);
+					this.#notifyJobChanged(job);
 					this.#enqueueDelivery(id, text);
 				}
 			} catch (error) {
@@ -642,7 +706,10 @@ export class AsyncJobManager implements AsyncJobManagerApi {
 				if (job.status !== "cancelled") {
 					job.status = "failed";
 					this.#recordAgentReply(job);
+					this.#notifyJobChanged(job);
 					this.#enqueueDelivery(id, errorText);
+				} else {
+					this.#notifyJobChanged(job);
 				}
 			}
 			if (this.#releasedForegroundJobs.has(id)) this.#discardForegroundJob(id);
@@ -658,11 +725,8 @@ export class AsyncJobManager implements AsyncJobManagerApi {
 				}
 			}
 			this.#notifyJobsChanged(id);
-		})();
+		})().then(completion.resolve, completion.reject);
 
-		this.#jobs.set(id, job);
-		this.#evicted.delete(id);
-		this.#notifyJobsChanged(id);
 		return id;
 	}
 
@@ -723,6 +787,7 @@ export class AsyncJobManager implements AsyncJobManagerApi {
 		if (filter && job.ownerId !== filter.ownerId) return false;
 		if (job.status !== "running") return false;
 		job.status = "cancelled";
+		this.#notifyJobChanged(job);
 		job.abortController.abort();
 		this.#notifyJobsChanged(id);
 		return true;
@@ -761,6 +826,7 @@ export class AsyncJobManager implements AsyncJobManagerApi {
 		if (!job.foreground) return true;
 		job.foreground = undefined;
 		this.#suppressedDeliveries.delete(jobId);
+		this.#notifyJobChanged(job);
 		if (job.status === "completed" || job.status === "failed") {
 			this.#enqueueDelivery(jobId, job.status === "completed" ? (job.resultText ?? "") : (job.errorText ?? ""));
 		}
@@ -897,6 +963,7 @@ export class AsyncJobManager implements AsyncJobManagerApi {
 		for (const job of this.#filterJobs(this.#jobs.values(), filter)) {
 			if (job.status !== "running") continue;
 			job.status = "cancelled";
+			this.#notifyJobChanged(job);
 			job.abortController.abort(reason);
 			this.#notifyJobsChanged(job.id);
 		}
@@ -1098,6 +1165,8 @@ export class AsyncJobManager implements AsyncJobManagerApi {
 		this.#deliverySinks.clear();
 		this.widgets?.dispose();
 		this.widgets = undefined;
+		this.#ownerSessions.clear();
+		this.#listeners.clear();
 		return jobsSettled && drained;
 	}
 
@@ -1445,6 +1514,8 @@ export class AsyncJobManager implements AsyncJobManagerApi {
 						agentId: job.agentId,
 						agentOutputPublished: job.agentOutputPublished,
 						latestDetails: job.latestDetails,
+						ownerSessionId: job.ownerSessionId,
+						toolCallId: job.toolCallId,
 					}
 				: undefined,
 		});
@@ -1589,6 +1660,9 @@ export class AsyncJobManager implements AsyncJobManagerApi {
 			structured: snapshot.structured,
 			agentId: snapshot.agentId,
 			agentOutputPublished: snapshot.agentOutputPublished,
+			ownerId: delivery.ownerId,
+			ownerSessionId: snapshot.ownerSessionId,
+			toolCallId: snapshot.toolCallId,
 			latestDetails: snapshot.latestDetails,
 		};
 	}

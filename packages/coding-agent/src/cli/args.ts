@@ -106,6 +106,8 @@ export interface Args {
 	motion?: MotionMode;
 	/** RPC modes only: run extensions without a UI; `rpc-ui` tool UI remains enabled. */
 	noUi?: boolean;
+	/** Suppress idle recap generation for this RPC host without changing settings. */
+	noRecap?: boolean;
 	autoApprove?: boolean;
 	approvalMode?: ApprovalMode;
 	messages: string[];
@@ -407,6 +409,8 @@ export function parseArgs(inputArgs: string[], extensionFlags?: Map<string, { ty
 			result.noTitle = true;
 		} else if (arg === "--no-ui") {
 			result.noUi = true;
+		} else if (arg === "--no-recap") {
+			result.noRecap = true;
 		} else if (arg === "--auto-approve" || arg === "--yolo") {
 			result.autoApprove = true;
 		} else if (arg.startsWith("@")) {

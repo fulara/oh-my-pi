@@ -1416,7 +1416,12 @@ export class VibeSessionRegistry {
 					);
 				}
 			},
-			{ id: `${record.id}-t${turnIndex}`, agentId: record.id, ownerId: record.ownerId },
+			{
+				id: `${record.id}-t${turnIndex}`,
+				agentId: record.id,
+				ownerId: record.ownerId,
+				ownerSessionId: record.parentSessionId,
+			},
 		);
 		turn.jobId = jobId;
 		record.turn = turn;

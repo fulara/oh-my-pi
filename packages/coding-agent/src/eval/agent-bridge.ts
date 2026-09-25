@@ -175,6 +175,8 @@ async function buildEvalAgentResult(execution: StructuredSubagentResult): Promis
 
 /** Register a background subagent and return its handle immediately. */
 export async function runEvalAgent(args: unknown, options: EvalAgentBridgeOptions): Promise<EvalAgentHandleResult> {
+	const ownerSessionId =
+		options.session.sessionManager?.getSessionId?.() ?? options.session.getSessionId?.() ?? undefined;
 	const parsed = parseAgentArgs(args, options.session.settings);
 	const turnBudget = options.session.getTurnBudget?.();
 	if (turnBudget?.hard && turnBudget.total !== null && turnBudget.spent >= turnBudget.total) {
@@ -225,6 +227,7 @@ export async function runEvalAgent(args: unknown, options: EvalAgentBridgeOption
 				try {
 					const execution = await runStructuredSubagent({
 						session: options.session,
+						parentSessionId: ownerSessionId,
 						invocationKind: "eval",
 						assignment: parsed.prompt,
 						...(parsed.agent !== undefined ? { agent: parsed.agent } : {}),
@@ -253,7 +256,12 @@ export async function runEvalAgent(args: unknown, options: EvalAgentBridgeOption
 					throw error;
 				}
 			},
-			{ id, agentId: id, ownerId },
+			{
+				id,
+				agentId: id,
+				ownerId,
+				ownerSessionId,
+			},
 		);
 		return { id, agent: policy.agentName };
 	} catch (error) {
