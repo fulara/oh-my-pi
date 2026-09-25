@@ -6,7 +6,7 @@ import { describe, expect, it, spyOn } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { Process } from "@oh-my-pi/pi-natives";
-import type { DaemonSnapshot, DaemonSpec } from "@oh-my-pi/pi-tui/tools/hub";
+import type { DaemonSnapshot, DaemonSpec } from "@oh-my-pi/pi-tui/tools/daemon";
 import { readLines, TempDir } from "@oh-my-pi/pi-utils";
 import { startDaemonBrokerFromEnvironment } from "../../src/launch/broker";
 import { createDaemonBrokerClient, type DaemonBrokerClient, DaemonBrokerRejectedError } from "../../src/launch/client";
