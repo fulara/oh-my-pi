@@ -399,6 +399,8 @@ export interface ExecutorOptions {
 	index: number;
 	id: string;
 	parentToolCallId?: string;
+	/** Logical parent identity captured at invocation, before queued startup. */
+	parentSessionId?: string;
 	/**
 	 * Spawn runs as a detached background job (parent turn not blocked on it).
 	 * Rides the subagent lifecycle/progress payloads so HUD-style surfaces can
@@ -2804,6 +2806,7 @@ export interface IrcWakeTurnMonitorOptions {
 	eventBus?: EventBus;
 	subagentEventBus?: EventBus;
 	parentToolCallId?: string;
+	parentSessionId?: string;
 	/** Fallback session file when the registry ref carries none. */
 	sessionFile?: string;
 	maxRuntimeMs?: number;
@@ -3018,6 +3021,7 @@ export function attachIrcWakeTurnMonitor(session: AgentSession, options: IrcWake
 					id,
 					agentId: id,
 					ownerId,
+					ownerSessionId: options.parentSessionId ?? null,
 				});
 				wakeJob = { ownerId, outcome };
 			} catch (error) {
@@ -3057,6 +3061,8 @@ export function attachIrcWakeTurnMonitor(session: AgentSession, options: IrcWake
 			description: options.description,
 			status: "started",
 			sessionFile,
+			parentSessionId: options.parentSessionId,
+			sessionId: session.sessionManager.getSessionId(),
 			index,
 		} as const;
 		emitSubagentFrame(options.eventBus, options.subagentEventBus, TASK_SUBAGENT_LIFECYCLE_CHANNEL, startedPayload);
@@ -3434,6 +3440,7 @@ export async function runSubagentFollowUpTurn(options: FollowUpTurnOptions): Pro
 		description: options.description,
 		status: "started",
 		sessionFile,
+		sessionId: session.sessionManager.getSessionId(),
 		index,
 	} as const;
 	emitSubagentFrame(options.eventBus, options.subagentEventBus, TASK_SUBAGENT_LIFECYCLE_CHANNEL, startedPayload);
@@ -3878,6 +3885,7 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 		eventBus: options.eventBus,
 		subagentEventBus: options.subagentEventBus,
 		parentToolCallId: options.parentToolCallId,
+		parentSessionId: options.parentSessionId,
 		sessionFile: subtaskSessionFile,
 		maxRuntimeMs,
 		outputSchema,
@@ -4307,6 +4315,8 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 				description: options.description,
 				status: "started" as const,
 				sessionFile: subtaskSessionFile,
+				parentSessionId: options.parentSessionId,
+				sessionId: session.sessionManager.getSessionId(),
 				index,
 			};
 			emitSubagentFrame(options.eventBus, options.subagentEventBus, TASK_SUBAGENT_LIFECYCLE_CHANNEL, startedPayload);

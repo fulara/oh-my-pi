@@ -36,10 +36,23 @@ CREATE TABLE IF NOT EXISTS session_recaps (
 	session_id TEXT NOT NULL,
 	cwd TEXT NOT NULL,
 	recap TEXT NOT NULL,
+	source_leaf_id TEXT,
 	created_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER))
 );
 CREATE INDEX IF NOT EXISTS idx_session_recaps_session ON session_recaps(session_id, created_at);
 `;
+
+/** Persisted recap timestamps are exposed in Unix milliseconds, including legacy rows. */
+export interface PersistedSessionRecap {
+	id: number;
+	sessionId: string;
+	text: string;
+	createdAt: number;
+	sourceLeafId: string | null;
+}
+
+const RECAP_COLUMNS =
+	"id, session_id AS sessionId, recap AS text, created_at * 1000 AS createdAt, source_leaf_id AS sourceLeafId";
 
 interface SessionIndexHandle {
 	dbPath: string;
@@ -47,6 +60,7 @@ interface SessionIndexHandle {
 	upsertTitle: Statement;
 	selectTitle: Statement;
 	insertRecap: Statement;
+	selectRecap: Statement;
 }
 
 let handle: SessionIndexHandle | undefined;
@@ -59,6 +73,7 @@ function closeHandle(): void {
 		handle.upsertTitle.finalize();
 		handle.selectTitle.finalize();
 		handle.insertRecap.finalize();
+		handle.selectRecap.finalize();
 		handle.db.close();
 	} catch {}
 	handle = undefined;
@@ -69,12 +84,22 @@ function openSessionIndex(): SessionIndexHandle | undefined {
 	if (handle?.dbPath === dbPath) return handle;
 	if (failedPath === dbPath) return undefined;
 	closeHandle();
+	let db: Database | undefined;
 	try {
 		fs.mkdirSync(path.dirname(dbPath), { recursive: true });
-		const db = new Database(dbPath);
+		db = new Database(dbPath);
 		// Install the busy handler BEFORE any lock-taking statement (see #2421).
 		db.run(`PRAGMA busy_timeout = ${getDbBusyTimeoutMs()}`);
 		db.run(`PRAGMA journal_mode=WAL;\nPRAGMA synchronous=NORMAL;\n${SESSION_INDEX_DDL}`);
+		// Serialize inspection + ALTER across processes sharing history.db. Its
+		// user_version belongs to HistoryStorage and must remain untouched.
+		const connection = db;
+		db.transaction(() => {
+			const columns = connection.query("PRAGMA table_info(session_recaps)").all() as { name: string }[];
+			if (!columns.some(column => column.name === "source_leaf_id")) {
+				connection.run("ALTER TABLE session_recaps ADD COLUMN source_leaf_id TEXT");
+			}
+		}).immediate();
 		handle = {
 			dbPath,
 			db,
@@ -86,11 +111,19 @@ ON CONFLICT(session_id) DO UPDATE SET
 	updated_at = excluded.updated_at
 			`),
 			selectTitle: db.prepare("SELECT title FROM session_titles WHERE session_id = ?"),
-			insertRecap: db.prepare("INSERT INTO session_recaps (session_id, cwd, recap) VALUES (?, ?, ?)"),
+			insertRecap: db.prepare(
+				`INSERT INTO session_recaps (session_id, cwd, recap, source_leaf_id) VALUES (?, ?, ?, ?) RETURNING ${RECAP_COLUMNS}`,
+			),
+			selectRecap: db.prepare(
+				`SELECT ${RECAP_COLUMNS} FROM session_recaps WHERE session_id = ? ORDER BY created_at DESC, id DESC LIMIT 1`,
+			),
 		};
 		failedPath = undefined;
 		return handle;
 	} catch (error) {
+		try {
+			db?.close();
+		} catch {}
 		failedPath = dbPath;
 		logger.warn("Session index unavailable", { dbPath, error: String(error) });
 		return undefined;
@@ -124,17 +157,32 @@ export function lookupSessionTitle(sessionId: string): string | undefined {
 	}
 }
 
-/**
- * Append an idle recap to the session's recap journal. Best-effort: a journal
- * failure must never disturb the recap display, so errors are logged and swallowed.
- */
-export function recordSessionRecap(sessionId: string, cwd: string, recap: string): void {
+/** Append a recap; a failed write never claims a durable result. */
+export function recordSessionRecap(
+	sessionId: string,
+	cwd: string,
+	recap: string,
+	sourceLeafId: string | null,
+): PersistedSessionRecap | undefined {
 	const index = openSessionIndex();
-	if (!index) return;
+	if (!index) return undefined;
 	try {
-		index.insertRecap.run(sessionId, cwd, recap);
+		return (index.insertRecap.get(sessionId, cwd, recap, sourceLeafId) as PersistedSessionRecap | null) ?? undefined;
 	} catch (error) {
 		logger.debug("Session recap journal write failed", { sessionId, error: String(error) });
+		return undefined;
+	}
+}
+
+/** Pure persisted lookup. Absence and unavailable storage are distinct outcomes. */
+export function lookupLatestSessionRecap(sessionId: string): PersistedSessionRecap | undefined {
+	const index = openSessionIndex();
+	if (!index) throw new Error("Session recap storage unavailable");
+	try {
+		return (index.selectRecap.get(sessionId) as PersistedSessionRecap | null) ?? undefined;
+	} catch (error) {
+		logger.debug("Session recap journal read failed", { sessionId, error: String(error) });
+		throw new Error("Session recap storage unavailable");
 	}
 }
 

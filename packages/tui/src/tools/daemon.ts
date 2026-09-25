@@ -43,6 +43,10 @@ export interface DaemonSnapshot {
 	restartCount: number;
 	outputBytes: number;
 	owner?: string;
+	/** Logical session captured at registration; absent on legacy or non-session services. */
+	readonly ownerSessionId?: string;
+	/** Originating tool call, when the service was started by a tool. */
+	readonly toolCallId?: string;
 	readyMatch?: string;
 	/** Readiness conditions still unmet while `state` is `starting`; absent once ready or without a ready spec. */
 	readyPending?: ("log" | "port")[];

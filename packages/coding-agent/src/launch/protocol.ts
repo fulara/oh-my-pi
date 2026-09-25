@@ -26,10 +26,15 @@ export const DAEMON_IDLE_GRACE_ENV = "OMP_DAEMON_IDLE_GRACE_MS";
 /** Signals accepted by daemon input operations. */
 export type DaemonSignal = "SIGINT" | "SIGTERM" | "SIGHUP" | "SIGQUIT" | "SIGKILL";
 
+/** Read-only operations supported only by brokers with logical session isolation. */
+export type DaemonInspectionOperation =
+	| { op: "inspect-list"; ownerSessionId: string }
+	| { op: "inspect-logs"; ownerSessionId: string; name: string; expectedId: string };
+
 /** Typed broker operation sent over the authenticated socket. */
 export type DaemonOperation =
 	| { op: "ping" }
-	| { op: "start"; spec: DaemonSpec; owner?: string; replace?: boolean }
+	| { op: "start"; spec: DaemonSpec; owner?: string; ownerSessionId?: string; toolCallId?: string; replace?: boolean }
 	| { op: "list" }
 	| {
 			op: "logs";
@@ -49,6 +54,7 @@ export type DaemonOperation =
 	| { op: "restart"; name: string }
 	| { op: "mode"; name: string; mode: "persist" | "session" | "detached" }
 	| { op: "describe"; name: string }
+	| DaemonInspectionOperation
 	| { op: "shutdown" };
 
 /** Typed broker result decoded before it reaches tool code. */
@@ -56,6 +62,8 @@ export type DaemonRpcResult =
 	| { op: "ping"; projectDir: string }
 	| { op: "start"; daemon: DaemonSnapshot; readyTimedOut: boolean }
 	| { op: "list"; daemons: DaemonSnapshot[] }
+	| { op: "inspect-list"; daemons: DaemonSnapshot[] }
+	| { op: "inspect-logs"; text: string; truncated: boolean }
 	| {
 			op: "logs";
 			name: string;
@@ -235,6 +243,8 @@ export function parseDaemonSnapshot(value: unknown): DaemonSnapshot {
 		restartCount: numberValue(source.restartCount, "daemon.restartCount"),
 		outputBytes: numberValue(source.outputBytes, "daemon.outputBytes"),
 		owner: optionalString(source.owner, "daemon.owner"),
+		ownerSessionId: optionalString(source.ownerSessionId, "daemon.ownerSessionId"),
+		toolCallId: optionalString(source.toolCallId, "daemon.toolCallId"),
 		readyMatch: optionalRawString(source.readyMatch, "daemon.readyMatch"),
 		readyPending: source.readyPending === undefined ? undefined : readyPendingList(source.readyPending),
 		persist: booleanValue(source.persist, "daemon.persist"),
@@ -304,11 +314,22 @@ function parseDaemonOperation(value: unknown): DaemonOperation {
 		case "list":
 		case "shutdown":
 			return { op };
+		case "inspect-list":
+			return { op, ownerSessionId: stringValue(source.ownerSessionId, "operation.ownerSessionId") };
+		case "inspect-logs":
+			return {
+				op,
+				ownerSessionId: stringValue(source.ownerSessionId, "operation.ownerSessionId"),
+				name: stringValue(source.name, "operation.name"),
+				expectedId: stringValue(source.expectedId, "operation.expectedId"),
+			};
 		case "start":
 			return {
 				op,
 				spec: parseDaemonSpec(source.spec),
 				owner: optionalString(source.owner, "operation.owner"),
+				ownerSessionId: optionalString(source.ownerSessionId, "operation.ownerSessionId"),
+				toolCallId: optionalString(source.toolCallId, "operation.toolCallId"),
 				replace: source.replace === undefined ? undefined : booleanValue(source.replace, "operation.replace"),
 			};
 		case "logs":
@@ -376,10 +397,17 @@ export function parseDaemonRpcResult(operation: DaemonOperation, value: unknown)
 				daemon: parseDaemonSnapshot(source.daemon),
 				readyTimedOut: booleanValue(source.readyTimedOut, "result.readyTimedOut"),
 			};
+		case "inspect-list":
 		case "list": {
 			if (!Array.isArray(source.daemons)) throw new Error("result.daemons must be an array");
-			return { op: "list", daemons: source.daemons.map(parseDaemonSnapshot) };
+			return { op: operation.op, daemons: source.daemons.map(parseDaemonSnapshot) };
 		}
+		case "inspect-logs":
+			return {
+				op: "inspect-logs",
+				text: rawString(source.text, "result.text"),
+				truncated: booleanValue(source.truncated, "result.truncated"),
+			};
 		case "logs":
 			return {
 				op: "logs",
