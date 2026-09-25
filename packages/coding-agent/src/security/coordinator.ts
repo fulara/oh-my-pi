@@ -83,6 +83,8 @@ export interface SecurityCoordinatorHost {
 	modelRegistry: ModelRegistry;
 	activeModel?: Model;
 	sessionId?: string;
+	/** Logical conversation identity, distinct from the provider/auth session id. */
+	ownerSessionId?: string;
 	agentId?: string;
 	asyncJobManager?: AsyncJobManager;
 }
@@ -503,7 +505,7 @@ export class SecurityCoordinator {
 					await run(signal, text => reportProgress(text, { operationId, scanId, phase: record.snapshot.phase }));
 					return terminalText(record.snapshot);
 				},
-				{ id: operationId, ownerId: this.#host.agentId },
+				{ id: operationId, ownerId: this.#host.agentId, ownerSessionId: this.#host.ownerSessionId },
 			);
 			record.snapshot.jobId = jobId;
 			record.promise = manager.getJob(jobId)?.promise ?? Promise.resolve();

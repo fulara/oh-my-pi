@@ -70,6 +70,7 @@ import planModeCompactInstructionsPrompt from "../../prompts/system/plan-mode-co
 };
 import { SKILL_PROMPT_MESSAGE_TYPE, USER_INTERRUPT_LABEL } from "../../session/messages";
 import type { DetachedBranchSnapshot } from "../../session/session-manager";
+import { enableRpcSessionRecaps, readRpcSessionRecap } from "../../session/session-recap";
 import { executeAcpBuiltinSlashCommand } from "../../slash-commands/acp-builtins";
 import { buildAvailableSlashCommands } from "../../slash-commands/available-commands";
 import { listLogoutAccounts, logoutCredential } from "../../slash-commands/helpers/logout";
@@ -110,6 +111,7 @@ import { RpcSessionEventForwarder } from "./rpc-session-events";
 import { isSessionSettled } from "../../session/session-settle";
 import { RpcSessionSettleWatcher, watchedScheduledTurnProbe } from "./rpc-session-settle";
 import { RpcSubagentRegistry, readRpcSubagentTranscript, resolveOwnedLiveSubagent } from "./rpc-subagents";
+import { RpcActivity } from "./rpc-activity";
 import type {
 	RpcAbortAndRestoreQueueResult,
 	RpcCommand,
@@ -2222,6 +2224,7 @@ export interface RpcModeOptions {
 	createDictationController?: RpcDictationControllerFactory;
 	/** The session's MCP manager, so `/mcp` builtins resolve and reconnect live servers. */
 	mcpManager?: MCPManager;
+	enableRecaps?: boolean;
 }
 
 /**
@@ -2351,6 +2354,8 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 		}
 	};
 	const subagentRegistry = subagentEventBus ? new RpcSubagentRegistry(subagentEventBus, output) : undefined;
+	const activity = new RpcActivity(session, subagentRegistry);
+	const disableRecaps = options.enableRecaps ? enableRpcSessionRecaps(session) : undefined;
 	const furaRuntime = createFuraRpcRuntime(session, output, undefined, () => inputDispatcher.cancelPendingBtw());
 
 	// Shutdown request flag (wrapped in object to allow mutation with const)
@@ -2674,6 +2679,9 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 	 * rejection with no latched store failure still surfaces to the caller.
 	 */
 	const disposeAndExit = async (): Promise<never> => {
+		activity.dispose();
+		disableRecaps?.();
+		subagentRegistry?.dispose();
 		try {
 			// The process ends regardless; report an unsaved side answer instead of skipping dispose.
 			await btw.close().catch(btwError => {
@@ -3154,6 +3162,19 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 				};
 				return success(id, "get_state", state);
 			}
+
+			case "get_activity":
+				return success(id, command.type, await activity.snapshot(command.sessionId));
+
+			case "get_activity_detail":
+				return success(
+					id,
+					command.type,
+					await activity.detail(command.sessionId, command.generation, command.kind, command.activityId),
+				);
+
+			case "get_session_recap":
+				return success(id, command.type, readRpcSessionRecap(session, command.sessionId));
 
 			case "get_session_skills":
 			case "set_session_skills": {
@@ -3819,6 +3840,8 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 
 	// stdin closed — RPC client is gone. Fail pending side-channel requests
 	// first so active/queued commands can settle, then drain accepted work.
+	activity.dispose();
+	disableRecaps?.();
 	pendingExtensionRequests.rejectAll("RPC client disconnected before extension UI response completed");
 	hostToolBridge.close("RPC client disconnected before host tool execution completed");
 	hostUriBridge.clear("RPC client disconnected before host URI request completed");
