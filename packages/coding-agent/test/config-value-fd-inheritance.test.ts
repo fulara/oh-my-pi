@@ -32,7 +32,7 @@ const resolverUrl = pathToFileURL(path.join(import.meta.dir, "../src/config/reso
 
 /**
  * Budget for the descendant-escape oracles below. The command must outlive it
- * (each keeps its shell alive with `sleep 10` and its worker with `sleep 30`),
+ * (each keeps its shell alive with `sleep 10` and its worker until released),
  * so the timeout always fires with the descendant alive — but it must also
  * cover starting a `sh` and a worker script on a loaded CI runner, because
  * those oracles wait for the worker *inside* the timed command. 150 ms did not,
@@ -50,7 +50,7 @@ const DEATH_GRACE_MS = 2000;
  * the *failing* direction: signal delivery and reaping are asynchronous, so a
  * descendant that is being killed can still read `Running` for a few
  * milliseconds. Poll instead of sampling. This keeps full discriminating
- * power — the worker `sleep 30`s, far beyond this window, so a descendant the
+ * power — the worker's watchdog is far beyond this window, so a descendant the
  * product genuinely fails to kill is still `Running` when the grace expires.
  */
 async function expectDescendantDead(escaped: Process | null, pid: number, label: string): Promise<void> {
@@ -59,6 +59,25 @@ async function expectDescendantDead(escaped: Process | null, pid: number, label:
 		await Bun.sleep(25);
 	}
 	expect(escaped?.status(), `${label} descendant ${pid} survived the timeout`).not.toBe(ProcessStatus.Running);
+}
+
+/** Release-file cleanup never signals a PID rediscovered after the timeout. */
+async function writeWorker(worker: string, pidFile: string, releaseFile: string, ignoreTerm = false): Promise<void> {
+	// Real OS watchdog bounds failed tests/runner exit; fake timers cannot reach
+	// this separate shell. The release file normally ends it on the next tick.
+	await fs.promises.writeFile(
+		worker,
+		`#!/bin/sh
+${ignoreTerm ? "trap '' TERM" : ""}
+echo $$ > "${pidFile}"
+remaining=300
+while [ ! -e "${releaseFile}" ] && [ "$remaining" -gt 0 ]; do
+	sleep 0.1
+	remaining=$((remaining - 1))
+done
+`,
+		{ mode: 0o755 },
+	);
 }
 
 const roots: string[] = [];
@@ -113,8 +132,9 @@ test.skipIf(process.platform === "win32")("a timed-out !command kills the descen
 	const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), "omp-config-treekill-"));
 	roots.push(root);
 	const pidFile = path.join(root, "descendant.pid");
+	const releaseFile = path.join(root, "release");
 	const worker = path.join(root, "worker.sh");
-	await fs.promises.writeFile(worker, `#!/bin/sh\necho $$ > "${pidFile}"\nsleep 30\n`, { mode: 0o755 });
+	await writeWorker(worker, pidFile, releaseFile);
 
 	let descendant: Process | null = null;
 	try {
@@ -132,7 +152,8 @@ test.skipIf(process.platform === "win32")("a timed-out !command kills the descen
 		descendant = Process.fromPid(pid);
 		await expectDescendantDead(descendant, pid, "backgrounded");
 	} finally {
-		descendant?.killTree(9);
+		await Bun.write(releaseFile, "");
+		await descendant?.waitForExit({ timeoutMs: DEATH_GRACE_MS });
 	}
 });
 
@@ -142,8 +163,9 @@ test.skipIf(process.platform === "win32")(
 		const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), "omp-config-reparented-"));
 		roots.push(root);
 		const pidFile = path.join(root, "escaped.pid");
+		const releaseFile = path.join(root, "release");
 		const worker = path.join(root, "escaped-worker.sh");
-		await fs.promises.writeFile(worker, `#!/bin/sh\necho $$ > "${pidFile}"\nsleep 30\n`, { mode: 0o755 });
+		await writeWorker(worker, pidFile, releaseFile);
 
 		let escaped: Process | null = null;
 		try {
@@ -161,7 +183,8 @@ test.skipIf(process.platform === "win32")(
 			escaped = Process.fromPid(pid);
 			await expectDescendantDead(escaped, pid, "reparented");
 		} finally {
-			escaped?.killTree(9);
+			await Bun.write(releaseFile, "");
+			await escaped?.waitForExit({ timeoutMs: DEATH_GRACE_MS });
 		}
 	},
 );
@@ -172,8 +195,9 @@ test.skipIf(process.platform !== "linux")(
 		const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), "omp-config-session-escape-"));
 		roots.push(root);
 		const pidFile = path.join(root, "escaped.pid");
+		const releaseFile = path.join(root, "release");
 		const worker = path.join(root, "escaped-worker.sh");
-		await fs.promises.writeFile(worker, `#!/bin/sh\necho $$ > "${pidFile}"\nexec sleep 30\n`, { mode: 0o755 });
+		await writeWorker(worker, pidFile, releaseFile);
 
 		let escaped: Process | null = null;
 		try {
@@ -189,7 +213,8 @@ test.skipIf(process.platform !== "linux")(
 			escaped = Process.fromPid(pid);
 			await expectDescendantDead(escaped, pid, "session-escaping");
 		} finally {
-			escaped?.killTree(9);
+			await Bun.write(releaseFile, "");
+			await escaped?.waitForExit({ timeoutMs: DEATH_GRACE_MS });
 		}
 	},
 );
@@ -200,12 +225,10 @@ test.skipIf(process.platform === "win32")(
 		const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), "omp-config-treekill-term-"));
 		roots.push(root);
 		const pidFile = path.join(root, "descendant.pid");
+		const releaseFile = path.join(root, "release");
 		const worker = path.join(root, "term-ignoring-worker.sh");
-		// The ignored TERM disposition survives `exec`, so the recorded pid is
-		// the `sleep` that must be hard-killed; it would outlive the test.
-		await fs.promises.writeFile(worker, `#!/bin/sh\ntrap '' TERM\necho $$ > "${pidFile}"\nexec sleep 30\n`, {
-			mode: 0o755,
-		});
+		// Both the worker and its sleeps ignore TERM, so timeout must escalate.
+		await writeWorker(worker, pidFile, releaseFile, true);
 
 		let descendant: Process | null = null;
 		try {
@@ -221,7 +244,8 @@ test.skipIf(process.platform === "win32")(
 			descendant = Process.fromPid(pid);
 			await expectDescendantDead(descendant, pid, "SIGTERM-ignoring");
 		} finally {
-			descendant?.killTree(9);
+			await Bun.write(releaseFile, "");
+			await descendant?.waitForExit({ timeoutMs: DEATH_GRACE_MS });
 		}
 	},
 );

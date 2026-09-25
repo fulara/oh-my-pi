@@ -176,7 +176,7 @@ export function isTimeoutReason(reason: unknown): boolean {
 export abstract class BaseKernel<TExecuteOptions extends KernelExecuteOptions = KernelExecuteOptions> {
 	readonly id: string;
 	#proc: Subprocess | null = null;
-	#processIdentity: Process | null = null;
+	readonly #ownedProcesses = new Map<string, Process>();
 	#stdin: Bun.FileSink | null = null;
 	#alive = true;
 	#disposed = false;
@@ -195,7 +195,7 @@ export abstract class BaseKernel<TExecuteOptions extends KernelExecuteOptions = 
 	setProcess(proc: Subprocess<"pipe", "pipe", "pipe">) {
 		this.#proc = proc;
 		const candidate = Process.fromPid(proc.pid);
-		this.#processIdentity = candidate?.ppid === process.pid ? candidate : null;
+		if (candidate?.ppid === process.pid) this.#ownedProcesses.set(candidate.identity(), candidate);
 		this.#stdin = proc.stdin;
 		this.#exitedPromise = proc.exited;
 		void this.#exitedPromise.then(code => {
@@ -382,15 +382,15 @@ export abstract class BaseKernel<TExecuteOptions extends KernelExecuteOptions = 
 			return { confirmed: true };
 		}
 
-		// Capture descendants before the polite exit can orphan them. Each native
-		// handle retains its original identity; no numeric PID/PGID fallback.
-		const owned: Process[] = [];
-		if (this.#processIdentity) {
-			owned.push(this.#processIdentity);
-			for (let index = 0; index < owned.length; index++) {
-				owned.push(...owned[index].children());
+		// Capture descendants before the polite exit can orphan them. Retain
+		// unconfirmed handles across retries; never recover them from a PID.
+		for (const reference of this.#ownedProcesses.values()) {
+			for (const child of reference.children()) {
+				const identity = child.identity();
+				if (!this.#ownedProcesses.has(identity)) this.#ownedProcesses.set(identity, child);
 			}
 		}
+		const owned = [...this.#ownedProcesses.values()];
 
 		try {
 			await this.#writeLine(this.#options.exitPayload).catch(() => {});
@@ -410,6 +410,9 @@ export abstract class BaseKernel<TExecuteOptions extends KernelExecuteOptions = 
 			const results = await Promise.all(
 				owned.map(reference => reference.terminate({ group: false, gracefulMs: timeoutMs, timeoutMs })),
 			);
+			for (let index = 0; index < results.length; index++) {
+				if (results[index]) this.#ownedProcesses.delete(owned[index].identity());
+			}
 			confirmed = results.every(Boolean);
 		} else if (exited === null) {
 			// Losing ownership is not permission to signal a numeric PID.
