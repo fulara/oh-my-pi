@@ -42,7 +42,7 @@ use crate::{
 };
 
 struct ShellSessionCore {
-	shell:      BrushShell,
+	shell: BrushShell,
 	/// Session filesystem; each run installs a cancellation-scoped view of it
 	/// (or of the run's own override) and restores it afterwards.
 	filesystem: Fs,
@@ -102,73 +102,73 @@ async fn set_shell_working_dir_if_changed(shell: &mut BrushShell, cwd: &str) -> 
 
 #[derive(Clone)]
 struct ShellConfig {
-	session_env:   Option<HashMap<String, String>>,
+	session_env: Option<HashMap<String, String>>,
 	snapshot_path: Option<String>,
-	minimizer:     Option<minimizer::MinimizerConfig>,
-	filesystem:    Fs,
+	minimizer: Option<minimizer::MinimizerConfig>,
+	filesystem: Fs,
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct ShellOptions {
-	pub session_env:   Option<HashMap<String, String>>,
+	pub session_env: Option<HashMap<String, String>>,
 	pub snapshot_path: Option<String>,
-	pub minimizer:     Option<minimizer::MinimizerOptions>,
+	pub minimizer: Option<minimizer::MinimizerOptions>,
 	/// Filesystem backing every run of the session (native by default).
-	pub filesystem:    Fs,
+	pub filesystem: Fs,
 }
 
 struct ShellRunConfig {
-	command:    String,
-	cwd:        Option<String>,
-	env:        Option<HashMap<String, String>>,
-	minimizer:  Option<minimizer::MinimizerConfig>,
+	command: String,
+	cwd: Option<String>,
+	env: Option<HashMap<String, String>>,
+	minimizer: Option<minimizer::MinimizerConfig>,
 	/// Replaces the session filesystem for this run only.
 	filesystem: Option<Fs>,
 	/// Mirrors the run's pipeline pipes.
-	pipe_taps:  Option<Arc<PipeTaps>>,
+	pipe_taps: Option<Arc<PipeTaps>>,
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct ShellRunOptions {
-	pub command:    String,
-	pub cwd:        Option<String>,
-	pub env:        Option<HashMap<String, String>>,
+	pub command: String,
+	pub cwd: Option<String>,
+	pub env: Option<HashMap<String, String>>,
 	pub timeout_ms: Option<u32>,
 	/// Filesystem for this run only; the session filesystem when `None`.
 	pub filesystem: Option<Fs>,
 	/// Receives a copy of every byte crossing the run's pipeline pipes.
-	pub pipe_taps:  Option<Arc<PipeTaps>>,
+	pub pipe_taps: Option<Arc<PipeTaps>>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MinimizerResult {
-	pub filter:        String,
-	pub text:          String,
+	pub filter: String,
+	pub text: String,
 	pub original_text: String,
-	pub input_bytes:   u32,
-	pub output_bytes:  u32,
+	pub input_bytes: u32,
+	pub output_bytes: u32,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ShellRunResult {
-	pub exit_code:   Option<i32>,
-	pub cancelled:   bool,
-	pub timed_out:   bool,
-	pub minimized:   Option<MinimizerResult>,
+	pub exit_code: Option<i32>,
+	pub cancelled: bool,
+	pub timed_out: bool,
+	pub minimized: Option<MinimizerResult>,
 	pub working_dir: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct ShellExecuteOptions {
-	pub command:       String,
-	pub cwd:           Option<String>,
-	pub env:           Option<HashMap<String, String>>,
-	pub session_env:   Option<HashMap<String, String>>,
-	pub timeout_ms:    Option<u32>,
+	pub command: String,
+	pub cwd: Option<String>,
+	pub env: Option<HashMap<String, String>>,
+	pub session_env: Option<HashMap<String, String>>,
+	pub timeout_ms: Option<u32>,
 	pub snapshot_path: Option<String>,
-	pub minimizer:     Option<minimizer::MinimizerOptions>,
+	pub minimizer: Option<minimizer::MinimizerOptions>,
 	/// Filesystem backing the command (native by default).
-	pub filesystem:    Fs,
+	pub filesystem: Fs,
 }
 
 pub type ShellExecuteResult = ShellRunResult;
@@ -198,10 +198,10 @@ impl Drop for ActiveSpawnsGuard {
 }
 
 pub struct Shell {
-	session:                  Arc<TokioMutex<Option<ShellSessionCore>>>,
-	abort_state:              ShellAbortState,
-	config:                   ShellConfig,
-	active_spawns:            ActiveSpawns,
+	session: Arc<TokioMutex<Option<ShellSessionCore>>>,
+	abort_state: ShellAbortState,
+	config: ShellConfig,
+	active_spawns: ActiveSpawns,
 	background_reaper_active: Arc<AtomicBool>,
 }
 
@@ -210,10 +210,10 @@ impl Shell {
 	pub fn new(options: Option<ShellOptions>) -> Self {
 		let config = match options {
 			None => ShellConfig {
-				session_env:   None,
+				session_env: None,
 				snapshot_path: None,
-				minimizer:     None,
-				filesystem:    Fs::native(),
+				minimizer: None,
+				filesystem: Fs::native(),
 			},
 			Some(opt) => {
 				let minimizer = opt
@@ -244,12 +244,12 @@ impl Shell {
 		mut cancel_token: CancelToken,
 	) -> Result<ShellRunResult> {
 		let run_config = ShellRunConfig {
-			command:    options.command,
-			cwd:        options.cwd,
-			env:        options.env,
-			minimizer:  self.config.minimizer.clone(),
+			command: options.command,
+			cwd: options.cwd,
+			env: options.env,
+			minimizer: self.config.minimizer.clone(),
 			filesystem: options.filesystem,
-			pipe_taps:  options.pipe_taps,
+			pipe_taps: options.pipe_taps,
 		};
 		run_shell_session(
 			self.session.clone(),
@@ -317,10 +317,10 @@ pub async fn execute_shell(
 		.as_ref()
 		.map(minimizer::MinimizerConfig::from_options);
 	let config = ShellConfig {
-		session_env:   options.session_env,
+		session_env: options.session_env,
 		snapshot_path: options.snapshot_path,
-		minimizer:     minimizer.clone(),
-		filesystem:    options.filesystem,
+		minimizer: minimizer.clone(),
+		filesystem: options.filesystem,
 	};
 	let run_config = ShellRunConfig {
 		command: options.command,
@@ -356,18 +356,18 @@ pub async fn execute_shell_streams(
 	cancel_token: CancelToken,
 ) -> Result<ShellExecuteResult> {
 	let config = ShellConfig {
-		session_env:   options.session_env,
+		session_env: options.session_env,
 		snapshot_path: options.snapshot_path,
-		minimizer:     None,
-		filesystem:    options.filesystem,
+		minimizer: None,
+		filesystem: options.filesystem,
 	};
 	let run_config = ShellRunConfig {
-		command:    options.command,
-		cwd:        options.cwd,
-		env:        options.env,
-		minimizer:  None,
+		command: options.command,
+		cwd: options.cwd,
+		env: options.env,
+		minimizer: None,
 		filesystem: None,
-		pipe_taps:  None,
+		pipe_taps: None,
 	};
 	run_shell_oneshot_streams(config, run_config, streams, cancel_token).await
 }
@@ -940,7 +940,7 @@ async fn create_session_for_run(
 	// take reaches the binary unchanged.
 	if let Some(git) = git_builtin(GitLayers {
 		smart_worktree: env_flag(config, "PI_SMART_GIT"),
-		guard:          env_flag(config, "PI_GIT_GUARD"),
+		guard: env_flag(config, "PI_GIT_GUARD"),
 	}) {
 		shell.register_builtin("git", git);
 	}
@@ -1011,27 +1011,22 @@ enum CommandCaptureMode {
 }
 
 struct CommandRunOutput {
-	result:         ExecutionResult,
-	buffered:       Option<BufferedOutput>,
+	result: ExecutionResult,
+	buffered: Option<BufferedOutput>,
 	/// A command reported an error yet went on, so the exit status hides it.
 	reported_error: bool,
 }
 
 struct ChainCapture {
 	original_text: String,
-	text:          String,
-	input_bytes:   usize,
-	changed:       bool,
+	text: String,
+	input_bytes: usize,
+	changed: bool,
 }
 
 impl ChainCapture {
 	const fn new() -> Self {
-		Self {
-			original_text: String::new(),
-			text:          String::new(),
-			input_bytes:   0,
-			changed:       false,
-		}
+		Self { original_text: String::new(), text: String::new(), input_bytes: 0, changed: false }
 	}
 
 	fn push(&mut self, original: &str, original_input_bytes: usize, minimized: &str, changed: bool) {
@@ -1389,11 +1384,11 @@ async fn run_shell_command_segmented_chain(
 				capture.changed,
 			);
 			MinimizerResult {
-				filter:        minimized.filter.to_string(),
-				text:          minimized.text,
+				filter: minimized.filter.to_string(),
+				text: minimized.text,
 				original_text: minimized.original_text.unwrap_or_default(),
-				input_bytes:   u32::try_from(minimized.input_bytes).unwrap_or(u32::MAX),
-				output_bytes:  u32::try_from(minimized.output_bytes).unwrap_or(u32::MAX),
+				input_bytes: u32::try_from(minimized.input_bytes).unwrap_or(u32::MAX),
+				output_bytes: u32::try_from(minimized.output_bytes).unwrap_or(u32::MAX),
 			}
 		});
 	// A chain that overflowed the aggregate cap streamed its output raw and was
@@ -1783,11 +1778,10 @@ impl SpawnObserver for process::SpawnRegistry {
 }
 
 // Escalating TERM -> KILL waves over the processes this run spawned, scoped via
-// the per-run `SpawnRegistry`. The kill set is rebuilt each wave so a child
-// spawned in a grace window — or a grandchild whose recorded parent already
-// exited but whose process group is still live — is still reaped, and the loop
-// stops as soon as the run's whole tree is gone. Scoping to the registry (vs a
-// process-global descendant diff) is what keeps a cancel from reaping a
+// the per-run `SpawnRegistry`. Each wave includes new spawns and retains pinned
+// descendants after their root exits. A still-live but unproven PGID remains
+// unresolved; it is never enough to authorize a signal. Scoping to the registry
+// (vs a process-global descendant diff) is what keeps a cancel from reaping a
 // concurrent run's children in a shared host process.
 async fn terminate_run(registry: &process::SpawnRegistry) {
 	const WAVES: u32 = 3;
@@ -2038,9 +2032,9 @@ enum OutputRead {
 }
 
 struct BufferedOutput {
-	text:        String,
+	text: String,
 	input_bytes: usize,
-	exceeded:    bool,
+	exceeded: bool,
 }
 
 async fn read_output(
@@ -2457,10 +2451,10 @@ mod tests {
 			.map(|key| (key.to_string(), short_str.clone()))
 			.collect();
 		let config = ShellConfig {
-			session_env:   Some(env),
+			session_env: Some(env),
 			snapshot_path: None,
-			minimizer:     None,
-			filesystem:    Fs::native(),
+			minimizer: None,
+			filesystem: Fs::native(),
 		};
 		let mut session = create_session(&config).await.expect("create_session");
 
@@ -2524,10 +2518,10 @@ mod tests {
 	#[cfg(unix)]
 	async fn kill_test_context() -> (ShellSessionCore, ExecutionParameters) {
 		let config = ShellConfig {
-			session_env:   None,
+			session_env: None,
 			snapshot_path: None,
-			minimizer:     None,
-			filesystem:    Fs::native(),
+			minimizer: None,
+			filesystem: Fs::native(),
 		};
 		let session = create_session(&config).await.expect("create_session");
 		let mut params = session.shell.default_exec_params();
@@ -2586,10 +2580,10 @@ mod tests {
 		terminal_stdin: &fs::File,
 	) -> (ShellSessionCore, ExecutionParameters) {
 		let config = ShellConfig {
-			session_env:   None,
+			session_env: None,
 			snapshot_path: None,
-			minimizer:     None,
-			filesystem:    Fs::native(),
+			minimizer: None,
+			filesystem: Fs::native(),
 		};
 		let mut session = create_session(&config).await.expect("create_session");
 		session.shell.options_mut().enable_job_control = true;
@@ -2657,10 +2651,10 @@ mod tests {
 		std::fs::remove_dir(dir.path()).expect("delete process cwd");
 
 		let config = ShellConfig {
-			session_env:   None,
+			session_env: None,
 			snapshot_path: None,
-			minimizer:     None,
-			filesystem:    Fs::native(),
+			minimizer: None,
+			filesystem: Fs::native(),
 		};
 		let session = create_session(&config)
 			.await
@@ -2796,10 +2790,10 @@ mod tests {
 		env.insert("GIT_DIR".to_string(), "/primary/.git".to_string());
 		env.insert("OMP_GIT_ENV_PROBE".to_string(), "kept".to_string());
 		let config = ShellConfig {
-			session_env:   Some(env),
+			session_env: Some(env),
 			snapshot_path: None,
-			minimizer:     None,
-			filesystem:    Fs::native(),
+			minimizer: None,
+			filesystem: Fs::native(),
 		};
 		let mut session = create_session(&config).await.expect("create_session");
 
@@ -4351,10 +4345,10 @@ mod tests {
 		std::fs::write(root.join("c"), b"different").expect("write c");
 
 		let config = ShellConfig {
-			session_env:   None,
+			session_env: None,
 			snapshot_path: None,
-			minimizer:     None,
-			filesystem:    Fs::native(),
+			minimizer: None,
+			filesystem: Fs::native(),
 		};
 		let mut session = create_session(&config).await.expect("create_session");
 		session
@@ -4393,10 +4387,10 @@ mod tests {
 		let root = std::fs::canonicalize(dir.path()).expect("canonical temp dir");
 
 		let config = ShellConfig {
-			session_env:   None,
+			session_env: None,
 			snapshot_path: None,
-			minimizer:     None,
-			filesystem:    Fs::native(),
+			minimizer: None,
+			filesystem: Fs::native(),
 		};
 		let mut session = create_session(&config).await.expect("create_session");
 		session
@@ -4475,10 +4469,10 @@ mod tests {
 		std::fs::write(tmp.join("in.txt"), &input).expect("write input");
 
 		let config = ShellConfig {
-			session_env:   None,
+			session_env: None,
 			snapshot_path: None,
-			minimizer:     None,
-			filesystem:    Fs::native(),
+			minimizer: None,
+			filesystem: Fs::native(),
 		};
 		let mut session = create_session(&config).await.expect("create_session");
 		session
@@ -4544,10 +4538,10 @@ mod tests {
 		let tmp_str = tmp.to_str().expect("utf8 temp path");
 
 		let config = ShellConfig {
-			session_env:   None,
+			session_env: None,
 			snapshot_path: None,
-			minimizer:     None,
-			filesystem:    Fs::native(),
+			minimizer: None,
+			filesystem: Fs::native(),
 		};
 		let mut session = create_session(&config).await.expect("create_session");
 		session
@@ -4596,10 +4590,10 @@ mod tests {
 		let tmp_str = tmp.to_str().expect("utf8 temp path");
 
 		let config = ShellConfig {
-			session_env:   None,
+			session_env: None,
 			snapshot_path: None,
-			minimizer:     None,
-			filesystem:    Fs::native(),
+			minimizer: None,
+			filesystem: Fs::native(),
 		};
 		let mut session = create_session(&config).await.expect("create_session");
 		session
@@ -4660,10 +4654,10 @@ mod tests {
 		std::fs::create_dir_all(&tmp).expect("temp dir");
 
 		let config = ShellConfig {
-			session_env:   None,
+			session_env: None,
 			snapshot_path: None,
-			minimizer:     None,
-			filesystem:    Fs::native(),
+			minimizer: None,
+			filesystem: Fs::native(),
 		};
 		let mut session = create_session(&config).await.expect("create_session");
 		session
@@ -4814,10 +4808,10 @@ mod tests {
 		std::fs::create_dir_all(&tmp).expect("temp dir");
 
 		let config = ShellConfig {
-			session_env:   None,
+			session_env: None,
 			snapshot_path: None,
-			minimizer:     None,
-			filesystem:    Fs::native(),
+			minimizer: None,
+			filesystem: Fs::native(),
 		};
 		let mut session = create_session(&config).await.expect("create_session");
 		session
@@ -4893,10 +4887,10 @@ mod tests {
 		let mut env = HashMap::new();
 		env.insert("HOME".to_string(), home.to_string_lossy().to_string());
 		let config = ShellConfig {
-			session_env:   Some(env),
+			session_env: Some(env),
 			snapshot_path: None,
-			minimizer:     None,
-			filesystem:    Fs::native(),
+			minimizer: None,
+			filesystem: Fs::native(),
 		};
 		let mut session = create_session(&config).await.expect("create_session");
 		session
@@ -4941,10 +4935,10 @@ mod tests {
 		let tmp_str = tmp.to_str().expect("utf8 temp path");
 
 		let config = ShellConfig {
-			session_env:   None,
+			session_env: None,
 			snapshot_path: None,
-			minimizer:     None,
-			filesystem:    Fs::native(),
+			minimizer: None,
+			filesystem: Fs::native(),
 		};
 		let mut session = create_session(&config).await.expect("create_session");
 		session
@@ -4993,10 +4987,10 @@ mod tests {
 		let tmp_str = tmp.to_str().expect("utf8 temp path");
 
 		let config = ShellConfig {
-			session_env:   None,
+			session_env: None,
 			snapshot_path: None,
-			minimizer:     None,
-			filesystem:    Fs::native(),
+			minimizer: None,
+			filesystem: Fs::native(),
 		};
 		let mut session = create_session(&config).await.expect("create_session");
 		session
@@ -5053,10 +5047,10 @@ mod tests {
 		let tmp_str = tmp.to_str().expect("utf8 temp path");
 
 		let config = ShellConfig {
-			session_env:   None,
+			session_env: None,
 			snapshot_path: None,
-			minimizer:     None,
-			filesystem:    Fs::native(),
+			minimizer: None,
+			filesystem: Fs::native(),
 		};
 		let mut session = create_session(&config).await.expect("create_session");
 		session
@@ -5104,10 +5098,10 @@ mod tests {
 		let tmp_str = tmp.to_str().expect("utf8");
 
 		let config = ShellConfig {
-			session_env:   None,
+			session_env: None,
 			snapshot_path: None,
-			minimizer:     None,
-			filesystem:    Fs::native(),
+			minimizer: None,
+			filesystem: Fs::native(),
 		};
 		let mut session = create_session(&config).await.expect("create_session");
 		session.shell.set_working_dir(tmp_str).await.expect("cwd");
@@ -5210,10 +5204,10 @@ mod tests {
 		let tmp_str = tmp.to_str().expect("utf8");
 
 		let config = ShellConfig {
-			session_env:   None,
+			session_env: None,
 			snapshot_path: None,
-			minimizer:     None,
-			filesystem:    Fs::native(),
+			minimizer: None,
+			filesystem: Fs::native(),
 		};
 		let mut session = create_session(&config).await.expect("create_session");
 		session.shell.set_working_dir(tmp_str).await.expect("cwd");
@@ -5288,10 +5282,10 @@ mod tests {
 		let tmp_str = tmp.to_str().expect("utf8");
 
 		let config = ShellConfig {
-			session_env:   None,
+			session_env: None,
 			snapshot_path: None,
-			minimizer:     None,
-			filesystem:    Fs::native(),
+			minimizer: None,
+			filesystem: Fs::native(),
 		};
 		let mut session = create_session(&config).await.expect("create_session");
 		session.shell.set_working_dir(tmp_str).await.expect("cwd");
@@ -5401,10 +5395,10 @@ mod tests {
 		let tmp_str = tmp.to_str().expect("utf8");
 
 		let config = ShellConfig {
-			session_env:   None,
+			session_env: None,
 			snapshot_path: None,
-			minimizer:     None,
-			filesystem:    Fs::native(),
+			minimizer: None,
+			filesystem: Fs::native(),
 		};
 		let mut session = create_session(&config).await.expect("create_session");
 		session.shell.set_working_dir(tmp_str).await.expect("cwd");
@@ -5460,10 +5454,10 @@ mod tests {
 		let tmp_str = tmp.to_str().expect("utf8");
 
 		let config = ShellConfig {
-			session_env:   None,
+			session_env: None,
 			snapshot_path: None,
-			minimizer:     None,
-			filesystem:    Fs::native(),
+			minimizer: None,
+			filesystem: Fs::native(),
 		};
 		let mut session = create_session(&config).await.expect("create_session");
 		session.shell.set_working_dir(tmp_str).await.expect("cwd");
@@ -5524,10 +5518,10 @@ mod tests {
 		let tmp_str = tmp.to_str().expect("utf8");
 
 		let config = ShellConfig {
-			session_env:   None,
+			session_env: None,
 			snapshot_path: None,
-			minimizer:     None,
-			filesystem:    Fs::native(),
+			minimizer: None,
+			filesystem: Fs::native(),
 		};
 		let mut session = create_session(&config).await.expect("create_session");
 		session.shell.set_working_dir(tmp_str).await.expect("cwd");
@@ -5573,10 +5567,10 @@ mod tests {
 		let tmp_str = tmp.to_str().expect("utf8");
 
 		let config = ShellConfig {
-			session_env:   None,
+			session_env: None,
 			snapshot_path: None,
-			minimizer:     None,
-			filesystem:    Fs::native(),
+			minimizer: None,
+			filesystem: Fs::native(),
 		};
 		let mut session = create_session(&config).await.expect("create_session");
 		session.shell.set_working_dir(tmp_str).await.expect("cwd");
@@ -5613,10 +5607,10 @@ mod tests {
 		let tmp_str = tmp.to_str().expect("utf8");
 
 		let config = ShellConfig {
-			session_env:   None,
+			session_env: None,
 			snapshot_path: None,
-			minimizer:     None,
-			filesystem:    Fs::native(),
+			minimizer: None,
+			filesystem: Fs::native(),
 		};
 		let mut session = create_session(&config).await.expect("create_session");
 		session.shell.set_working_dir(tmp_str).await.expect("cwd");
@@ -5705,10 +5699,10 @@ mod tests {
 		let tmp_str = tmp.to_str().expect("utf8");
 
 		let config = ShellConfig {
-			session_env:   None,
+			session_env: None,
 			snapshot_path: None,
-			minimizer:     None,
-			filesystem:    Fs::native(),
+			minimizer: None,
+			filesystem: Fs::native(),
 		};
 		let mut session = create_session(&config).await.expect("create_session");
 		session.shell.set_working_dir(tmp_str).await.expect("cwd");
@@ -5814,8 +5808,7 @@ mod tests {
 			std::fs::metadata(dir.path().join(name))
 				.expect("created file")
 				.permissions()
-				.mode()
-				& 0o777
+				.mode() & 0o777
 		};
 		assert_eq!(mode("redirect"), 0o600, "redirections use the shell umask");
 		assert_eq!(mode("builtin"), 0o600, "builtins use the shell umask");
@@ -5879,10 +5872,10 @@ mod tests {
 		let tmp_str = tmp.to_str().expect("utf8");
 
 		let config = ShellConfig {
-			session_env:   None,
+			session_env: None,
 			snapshot_path: None,
-			minimizer:     None,
-			filesystem:    Fs::native(),
+			minimizer: None,
+			filesystem: Fs::native(),
 		};
 		let mut session = create_session(&config).await.expect("create_session");
 		session.shell.set_working_dir(tmp_str).await.expect("cwd");
@@ -5934,10 +5927,10 @@ mod tests {
 		let tmp_str = tmp.to_str().expect("utf8");
 
 		let config = ShellConfig {
-			session_env:   None,
+			session_env: None,
 			snapshot_path: None,
-			minimizer:     None,
-			filesystem:    Fs::native(),
+			minimizer: None,
+			filesystem: Fs::native(),
 		};
 		let mut session = create_session(&config).await.expect("create_session");
 		session.shell.set_working_dir(tmp_str).await.expect("cwd");
@@ -5981,10 +5974,10 @@ mod tests {
 	#[tokio::test(flavor = "multi_thread")]
 	async fn uutils_head_stdin_read_is_cancellable() {
 		let config = ShellConfig {
-			session_env:   None,
+			session_env: None,
 			snapshot_path: None,
-			minimizer:     None,
-			filesystem:    Fs::native(),
+			minimizer: None,
+			filesystem: Fs::native(),
 		};
 		let mut session = create_session(&config).await.expect("create_session");
 
@@ -6035,18 +6028,18 @@ mod tests {
 				.map(|(k, v)| ((*k).to_string(), (*v).to_string()))
 				.collect();
 			ShellConfig {
-				session_env:   Some(map),
+				session_env: Some(map),
 				snapshot_path: None,
-				minimizer:     None,
-				filesystem:    Fs::native(),
+				minimizer: None,
+				filesystem: Fs::native(),
 			}
 		};
 
 		let mut default = create_session(&ShellConfig {
-			session_env:   None,
+			session_env: None,
 			snapshot_path: None,
-			minimizer:     None,
-			filesystem:    Fs::native(),
+			minimizer: None,
+			filesystem: Fs::native(),
 		})
 		.await
 		.expect("create_session");
@@ -7241,10 +7234,12 @@ replace = [{ pattern = "hello", replacement = "HI" }]
 			assert!(output.contains("prefixError: \"boom\""), "{command}: {output:?}");
 			assert!(result.minimized.is_none(), "{command}: {:?}", result.minimized);
 			// Without the reported error the jq filter would shorten this capture.
-			let filtered = minimizer::apply(&failing, &output, 0, &minimizer::MinimizerConfig {
-				enabled: true,
-				..Default::default()
-			});
+			let filtered = minimizer::apply(
+				&failing,
+				&output,
+				0,
+				&minimizer::MinimizerConfig { enabled: true, ..Default::default() },
+			);
 			assert!(filtered.changed, "{command}");
 		}
 		for value in ["Error: expected user data", "jq: error is data"] {
@@ -7503,10 +7498,10 @@ replace = [{ pattern = "^.+$", replacement = "PWD" }]
 
 		// Build the same kind of session pi-natives uses in production.
 		let config = ShellConfig {
-			session_env:   None,
+			session_env: None,
 			snapshot_path: None,
-			minimizer:     None,
-			filesystem:    Fs::native(),
+			minimizer: None,
+			filesystem: Fs::native(),
 		};
 		let mut session = create_session(&config).await.expect("create_session");
 
@@ -7937,10 +7932,10 @@ replace = [{ pattern = "^.+$", replacement = "PWD" }]
 		assert!(host_sid >= 0, "getsid(0) failed: {}", std::io::Error::last_os_error());
 
 		let config = ShellConfig {
-			session_env:   None,
+			session_env: None,
 			snapshot_path: None,
-			minimizer:     None,
-			filesystem:    Fs::native(),
+			minimizer: None,
+			filesystem: Fs::native(),
 		};
 		let mut session = create_session(&config).await.expect("create_session");
 
@@ -8407,8 +8402,7 @@ replace = [{ pattern = "^.+$", replacement = "PWD" }]
 	fn run_tapped(
 		command: &str,
 		cancel: CancelToken,
-	) -> (Arc<PipeTaps>, tokio::task::JoinHandle<Result<ShellRunResult>>, flume::Receiver<String>)
-	{
+	) -> (Arc<PipeTaps>, tokio::task::JoinHandle<Result<ShellRunResult>>, flume::Receiver<String>) {
 		let taps = Arc::new(PipeTaps::new());
 		let (tx, rx) = flume::unbounded::<String>();
 		let options = ShellRunOptions {

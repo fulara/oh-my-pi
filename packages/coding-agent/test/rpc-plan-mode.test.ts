@@ -61,7 +61,7 @@ async function createSession(
 	const model = createMockModel({ responses: [{ content: ["approved execution"] }] });
 	const authStorage = await AuthStorage.create(path.join(root, "auth.db"));
 	cleanupFns.push(() => authStorage.close());
-	authStorage.setRuntimeApiKey("mock", "test-key");
+	authStorage.keys.setRuntime("mock", "test-key");
 	const modelRegistry = new ModelRegistry(authStorage);
 	const agent = new Agent({
 		getApiKey: () => "test-key",
