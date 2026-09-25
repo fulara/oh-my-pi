@@ -26,6 +26,7 @@ import { pathToFileURL } from "node:url";
 
 const resolverUrl = pathToFileURL(path.join(import.meta.dir, "../src/config/resolve-config-value.ts")).href;
 
+
 const roots: string[] = [];
 
 afterEach(async () => {
@@ -73,6 +74,7 @@ console.log(value === undefined ? "RESOLVED-UNDEFINED" : "LEAKED:" + value);
 		}
 	},
 );
+
 
 test.skipIf(process.platform === "win32")("resolves !commands when PATH omits the shell entirely", async () => {
 	// A launcher may supply a minimal tool-only PATH; the resolver must still

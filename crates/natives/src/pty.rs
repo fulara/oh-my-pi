@@ -141,6 +141,8 @@ enum ControlMessage {
 		rows: u16,
 	},
 	Kill,
+	/// Fura fork: deliver one signal to the pinned child tree without ending the run.
+	Signal(i32),
 	/// The run's cancel token fired (abort signal or timeout).
 	Cancelled {
 		timed_out: bool,
@@ -365,6 +367,14 @@ impl PtySession {
 		self.send_control(ControlMessage::Kill)
 	}
 
+	/// Send `signal` to the PTY command's tree through the identity pinned
+	/// when it was spawned or adopted, never by a PID or process-group lookup
+	/// (Fura fork). The run keeps going; its exit is reported as usual.
+	#[napi]
+	pub fn signal(&self, signal: i32) -> Result<()> {
+		self.send_control(ControlMessage::Signal(signal))
+	}
+
 	/// Stop reading output without closing the master. Resolves once every
 	/// chunk read before the pause has been delivered to `onChunk`, including
 	/// partial UTF-8 held by the decoder (flushed lossily); unread bytes stay in
@@ -484,19 +494,6 @@ impl PtyMaster {
 					libc::winsize { ws_row: rows, ws_col: cols, ws_xpixel: 0, ws_ypixel: 0 };
 				// SAFETY: TIOCSWINSZ reads one `winsize` from a valid pointer.
 				unsafe { libc::ioctl(fd.as_raw_fd(), libc::TIOCSWINSZ, &size) };
-			},
-		}
-	}
-
-	#[cfg(unix)]
-	fn process_group_leader(&self) -> Option<i32> {
-		match self {
-			Self::Portable(master) => master.process_group_leader(),
-			Self::Adopted(fd) => {
-				use std::os::fd::AsRawFd;
-				// SAFETY: tcgetpgrp on the owned master fd.
-				let pgid = unsafe { libc::tcgetpgrp(fd.as_raw_fd()) };
-				(pgid > 0).then_some(pgid)
 			},
 		}
 	}
@@ -727,12 +724,15 @@ impl Drop for GateGuard<'_> {
 
 /// Everything [`drive_pty`] needs from a spawned or adopted PTY child.
 struct PtyIo {
-	master:    PtyMaster,
-	reader:    PtyReader,
-	writer:    Box<dyn Write + Send>,
-	child_pid: Option<i32>,
+	master:       PtyMaster,
+	reader:       PtyReader,
+	writer:       Box<dyn Write + Send>,
+	child_pid:    Option<i32>,
+	/// The child's identity, pinned while it was still unreaped: the only
+	/// signal authority of the run (Fura fork).
+	pinned_child: Option<omp_shell::proctree::Process>,
 	/// Blocks until the child exits; returns its exit code.
-	wait:      Box<dyn FnOnce() -> std::io::Result<i32> + Send>,
+	wait:         Box<dyn FnOnce() -> std::io::Result<i32> + Send>,
 }
 
 /// Drive an adopted master fd and child pid until the child exits.
@@ -753,11 +753,15 @@ fn run_adopted_sync(
 	};
 	let reader = clone("reader")?;
 	let writer = clone("writer")?;
+	// The adopted child stays this process's unreaped child until `wait` below
+	// reaps it.
+	let pinned_child = omp_shell::proctree::Process::from_pid(pid);
 	let io = PtyIo {
 		master: PtyMaster::Adopted(fd),
 		reader,
 		writer: Box::new(writer),
 		child_pid: Some(pid),
+		pinned_child,
 		wait: Box::new(move || wait_pid_exit_code(pid)),
 	};
 	drive_pty(io, on_chunk, control_tx, control_rx, ct, handles)
@@ -881,6 +885,8 @@ fn run_pty_sync(
 	drop(pair.slave);
 	let child_process_id = child.process_id();
 	let child_pid = child_process_id.and_then(|value| i32::try_from(value).ok());
+	// Pin before callbacks or try_wait can observe/reap the spawned child.
+	let pinned_child = child_pid.and_then(omp_shell::proctree::Process::from_pid);
 	if let Some(callback) = on_start.as_ref() {
 		callback.call(Ok(child_process_id.unwrap_or(0)), ThreadsafeFunctionCallMode::NonBlocking);
 	}
@@ -928,6 +934,7 @@ fn run_pty_sync(
 		reader,
 		writer,
 		child_pid,
+		pinned_child,
 		wait: Box::new(move || {
 			child
 				.wait()
@@ -947,7 +954,13 @@ fn drive_pty(
 	ct: task::CancelToken,
 	handles: &Mutex<PtyHandles>,
 ) -> Result<PtyRunResult> {
-	let PtyIo { master, mut reader, mut writer, child_pid, wait } = io;
+	let PtyIo { master, mut reader, mut writer, child_pid, pinned_child, wait } = io;
+	// PTY foreground-group metadata is discovery, not signal authority: only the
+	// identity pinned at spawn (or adoption) is ever signalled.
+	let mut targets = ps::TerminationTargets::new();
+	if let Some(process) = &pinned_child {
+		targets.add_process(process.clone());
+	}
 	#[cfg(unix)]
 	let gate = Arc::new(
 		OutputGate::new()
@@ -1039,20 +1052,6 @@ fn drive_pty(
 		let _ = reader_tx.send(ReaderEvent::Done);
 	});
 
-	// Pin the kill targets before the waiter thread can reap the child: after
-	// the reap its pid may be recycled, and a pid-only signal (a lookup at
-	// cancellation time, or portable-pty's `clone_killer`) would hit whatever
-	// process took it (#4605). The child is only ever signalled through
-	// `pinned_child`.
-	let mut targets = ps::TerminationTargets::new();
-	#[cfg(unix)]
-	if let Some(pgid) = master.process_group_leader().filter(|pgid| *pgid > 0) {
-		targets.add_pgid(pgid);
-	}
-	let pinned_child = child_pid.and_then(omp_shell::proctree::Process::from_pid);
-	if let Some(process) = &pinned_child {
-		targets.add_process(process.clone());
-	}
 	// Exit, cancellation and JS failure all arrive as control messages, so the
 	// loop below parks in `recv` instead of polling `try_wait`/`heartbeat` on a
 	// timer: an idle session costs no wakeups, and exit is seen immediately.
@@ -1131,6 +1130,10 @@ fn drive_pty(
 			Ok(ControlMessage::Kill) => {
 				cancelled = true;
 				true
+			},
+			Ok(ControlMessage::Signal(signal)) => {
+				targets.signal(signal);
+				false
 			},
 			// The first termination cause decides `cancelled`/`timed_out`.
 			Ok(ControlMessage::JsGone) if give_up_at.is_none() => {
