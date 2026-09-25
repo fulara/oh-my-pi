@@ -1,10 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "bun:test";
 import type { AssistantMessage } from "@oh-my-pi/pi-ai";
 import { resetSettingsForTest, Settings, settings } from "@oh-my-pi/pi-coding-agent/config/settings";
-import type { GoalModeState } from "@oh-my-pi/pi-coding-agent/goals/state";
 import { EventController } from "@oh-my-pi/pi-coding-agent/modes/controllers/event-controller";
 import { initTheme } from "@oh-my-pi/pi-tui/theme";
-import type { InteractiveModeContext } from "@oh-my-pi/pi-coding-agent/modes/types";
 import type { AgentSession } from "@oh-my-pi/pi-coding-agent/session/agent-session";
 import { createInteractiveModeContext } from "../../helpers/interactive-mode-context";
 
@@ -16,7 +14,6 @@ async function flushMicrotasks(): Promise<void> {
 		await Promise.resolve();
 	}
 }
-
 function createAssistantMessage(): AssistantMessage {
 	return {
 		role: "assistant",
@@ -37,51 +34,16 @@ function createAssistantMessage(): AssistantMessage {
 	};
 }
 
-function createContext(
-	options: {
-		editorText?: string;
-		goalObjective?: string;
-		isCompacting?: boolean;
-		isStreaming?: boolean;
-		runIdleCompaction?: AgentSession["runIdleCompaction"];
-		runEphemeralTurn?: AgentSession["runEphemeralTurn"];
-		sessionName?: string;
-		showStatus?: InteractiveModeContext["showStatus"];
-		todoPhases?: InteractiveModeContext["todoPhases"];
-	} = {},
-) {
-	const runIdleCompaction = options.runIdleCompaction ?? (async () => {});
-	const runEphemeralTurn =
-		options.runEphemeralTurn ?? (async () => ({ replyText: "", assistantMessage: createAssistantMessage() }));
-	const goalState: GoalModeState | undefined = options.goalObjective
-		? {
-				enabled: true,
-				mode: "active",
-				goal: {
-					id: "goal-test",
-					objective: options.goalObjective,
-					status: "active",
-					tokensUsed: 0,
-					timeUsedSeconds: 0,
-					createdAt: 0,
-					updatedAt: 0,
-				},
-			}
-		: undefined;
+function createContext(options: { runIdleCompaction?: AgentSession["runIdleCompaction"] } = {}) {
 	return createInteractiveModeContext({
-		editor: { getText: () => options.editorText ?? "" },
-		sessionManager: { getSessionName: () => options.sessionName },
-		todoPhases: options.todoPhases ?? [],
-		...(options.showStatus ? { showStatus: options.showStatus } : {}),
+		editor: { getText: () => "" },
 		session: {
-			isCompacting: options.isCompacting ?? false,
-			isStreaming: options.isStreaming ?? false,
-			runIdleCompaction,
-			runEphemeralTurn,
+			isCompacting: false,
+			isStreaming: false,
+			runIdleCompaction: options.runIdleCompaction ?? (async () => {}),
 			model: { provider: "anthropic", id: "claude-sonnet-4-5" },
 			messages: [createAssistantMessage()],
 			getContextUsage: () => ({ tokens: 210, contextWindow: 1_000, percent: 21 }),
-			getGoalModeState: () => goalState,
 		},
 	});
 }

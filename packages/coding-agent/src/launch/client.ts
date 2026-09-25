@@ -12,6 +12,7 @@ import {
 	DAEMON_PROJECT_DIR_ENV,
 	DAEMON_RUNTIME_DIR_ENV,
 	type DaemonCompletionNotification,
+	type DaemonInspectionOperation,
 	type DaemonOperation,
 	type DaemonRpcResult,
 	type DaemonWireMessage,
@@ -63,6 +64,9 @@ export interface DaemonBrokerClient {
 
 /** A request reached the broker and the broker rejected the operation. */
 export class DaemonBrokerRejectedError extends Error {}
+
+/** Inspection cannot connect to an existing compatible broker or read its source. */
+export class DaemonInspectionUnavailableError extends Error {}
 
 async function readOrCreateToken(runtimeDir: string): Promise<string> {
 	await fs.mkdir(runtimeDir, { recursive: true, mode: 0o700 });
@@ -139,6 +143,7 @@ class SocketDaemonClient implements DaemonBrokerClient {
 	readonly #token: string;
 	readonly #seenCompletionIds = new Set<string>();
 	readonly #idleGraceMs: number | undefined;
+	readonly #existingOnly: boolean;
 	readonly #pending = new Map<string, PendingRequest>();
 	readonly #completionSinks = new Map<string, (notification: DaemonCompletionNotification) => Promise<void> | void>();
 	readonly #completionUnsubscribes = new Set<string>();
@@ -152,12 +157,19 @@ class SocketDaemonClient implements DaemonBrokerClient {
 	#closed = false;
 	#completionReconnectTimer: NodeJS.Timeout | undefined;
 
-	constructor(projectDir: string, runtimeDir: string, token: string, options: DaemonBrokerClientOptions) {
+	constructor(
+		projectDir: string,
+		runtimeDir: string,
+		token: string,
+		options: DaemonBrokerClientOptions,
+		existingOnly = false,
+	) {
 		this.projectDir = projectDir;
 		this.#runtimeDir = runtimeDir;
 		this.#endpoint = daemonBrokerEndpoint(projectDir, runtimeDir);
 		this.#token = token;
 		this.#idleGraceMs = options.idleGraceMs;
+		this.#existingOnly = existingOnly;
 	}
 
 	async request(operation: DaemonOperation, signal?: AbortSignal): Promise<DaemonRpcResult> {
@@ -171,13 +183,16 @@ class SocketDaemonClient implements DaemonBrokerClient {
 		const completionReplays = [...this.#completionReplays];
 		const id = crypto.randomUUID();
 		const { promise, resolve, reject } = Promise.withResolvers<DaemonRpcResult>();
-		const timer = setTimeout(() => {
-			const pending = this.#pending.get(id);
-			if (!pending) return;
-			this.#pending.delete(id);
-			pending.removeAbort?.();
-			reject(new Error(`Daemon ${operation.op} request timed out`));
-		}, requestTimeoutMs(operation));
+		const timer = setTimeout(
+			() => {
+				const pending = this.#pending.get(id);
+				if (!pending) return;
+				this.#pending.delete(id);
+				pending.removeAbort?.();
+				reject(new Error(`Daemon ${operation.op} request timed out`));
+			},
+			this.#existingOnly ? 3_000 : requestTimeoutMs(operation),
+		);
 		const pending: PendingRequest = { operation, resolve, reject, timer };
 		if (signal) {
 			const abort = (): void => {
@@ -193,12 +208,16 @@ class SocketDaemonClient implements DaemonBrokerClient {
 			`${JSON.stringify({
 				id,
 				token: this.#token,
-				owners: [...this.#completionSinks.keys()],
-				detachedOwners: [...this.#preservedCompletionOwners],
-				completionEvents: true,
-				completionUnsubscribes,
-				completionReplays,
-				completionSubscriptionId: this.#completionSubscriptionId,
+				...(this.#existingOnly
+					? {}
+					: {
+							owners: [...this.#completionSinks.keys()],
+							detachedOwners: [...this.#preservedCompletionOwners],
+							completionEvents: true,
+							completionUnsubscribes,
+							completionReplays,
+							completionSubscriptionId: this.#completionSubscriptionId,
+						}),
 				operation,
 			})}\n`,
 		);
@@ -229,6 +248,7 @@ class SocketDaemonClient implements DaemonBrokerClient {
 		owner: string,
 		sink: (notification: DaemonCompletionNotification) => Promise<void> | void,
 	): (options?: DaemonCompletionUnregisterOptions) => void {
+		if (this.#existingOnly) throw new Error("Passive daemon inspection cannot subscribe to completions");
 		this.#completionUnsubscribes.delete(owner);
 		if (this.#preservedCompletionOwners.delete(owner)) this.#completionReplays.add(owner);
 		this.#completionSinks.set(owner, sink);
@@ -286,7 +306,8 @@ class SocketDaemonClient implements DaemonBrokerClient {
 		try {
 			this.#bindSocket(await openSocket(this.#endpoint, 250));
 			return;
-		} catch {
+		} catch (error) {
+			if (this.#existingOnly) throw error;
 			// No live broker. Multiple clients may race to spawn; the broker's
 			// process-owned lease selects one winner before any candidate touches
 			// the socket.
@@ -376,7 +397,7 @@ class SocketDaemonClient implements DaemonBrokerClient {
 				continue;
 			}
 			if ("event" in message) {
-				void this.#deliverCompletion(message);
+				if (!this.#existingOnly) void this.#deliverCompletion(message);
 				continue;
 			}
 			const response = message;
@@ -478,6 +499,29 @@ export async function createDaemonBrokerClient(
 	const runtimeDir = options.runtimeDir ?? daemonRuntimeDir(canonical);
 	const token = await readOrCreateToken(runtimeDir);
 	return new SocketDaemonClient(canonical, runtimeDir, token, options);
+}
+
+/** One passive request: never initialize a runtime, start a broker, lease services, or publish completion owners. */
+export async function inspectExistingDaemonBroker(
+	projectDir: string,
+	operation: DaemonInspectionOperation,
+	options: Pick<DaemonBrokerClientOptions, "runtimeDir"> = {},
+): Promise<DaemonRpcResult> {
+	let client: SocketDaemonClient | undefined;
+	try {
+		const canonical = await canonicalProjectDir(projectDir);
+		const runtimeDir = options.runtimeDir ?? daemonRuntimeDir(canonical);
+		const token = (await Bun.file(path.join(runtimeDir, TOKEN_FILE)).text()).trim();
+		if (!token) throw new Error("Daemon broker token is empty");
+		client = new SocketDaemonClient(canonical, runtimeDir, token, {}, true);
+		return await client.request(operation);
+	} catch (error) {
+		throw new DaemonInspectionUnavailableError(
+			`Service inspection unavailable: ${error instanceof Error ? error.message : String(error)}`,
+		);
+	} finally {
+		client?.close();
+	}
 }
 
 /** Get the process-shared daemon broker client for one canonical project directory. */

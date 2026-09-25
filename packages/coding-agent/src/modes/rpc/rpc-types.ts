@@ -14,6 +14,7 @@ import type { PlanModeState } from "../../plan-mode/state";
 import type { AgentSessionEvent, SessionStats } from "../../session/agent-session";
 import type { FileEntry, SessionEntry, SessionTreeNode } from "../../session/session-entries";
 import type { SessionSkillsCatalogResult, SessionSkillsState } from "../../session/session-skills";
+import type { RpcSessionRecapSnapshot } from "../../session/session-recap";
 import type { AvailableSlashCommandSource } from "../../slash-commands/available-commands";
 import type { AgentProgress } from "@oh-my-pi/pi-tui/tools/task";
 import type { SubagentEventPayload, SubagentLifecyclePayload, SubagentProgressPayload } from "../../task";
@@ -60,6 +61,16 @@ export type RpcCommand =
 
 	// State
 	| { id?: string; type: "get_state" }
+	| { id?: string; type: "get_activity"; sessionId: string }
+	| {
+			id?: string;
+			type: "get_activity_detail";
+			sessionId: string;
+			generation: string;
+			kind: ActivityItem["kind"];
+			activityId: string;
+	  }
+	| { id?: string; type: "get_session_recap"; sessionId: string }
 	| { id?: string; type: "get_session_skills"; sessionId: string; journalSessionId: string }
 	| {
 			id?: string;
@@ -191,6 +202,55 @@ export interface RpcSessionState {
 	contextUsage?: ContextUsage;
 }
 
+export type ActivityStatus =
+	| "pending"
+	| "running"
+	| "completed"
+	| "failed"
+	| "cancelled"
+	| "starting"
+	| "ready"
+	| "restarting"
+	| "stopping"
+	| "exited"
+	| "aborted";
+
+export interface ActivityItem {
+	id: string;
+	kind: "job" | "agent" | "service";
+	label: string;
+	status: ActivityStatus;
+	startedAt: number;
+	endedAt?: number;
+	toolCallId?: string;
+	exitCode?: number;
+	queued?: boolean;
+	detailAvailable: boolean;
+}
+
+export interface ActivitySourceState {
+	available: boolean;
+	error?: string;
+}
+
+export interface SessionActivitySnapshot {
+	sessionId: string;
+	generation: string;
+	observedAt: number;
+	items: ActivityItem[];
+	sources: { jobs: ActivitySourceState; agents: ActivitySourceState; services: ActivitySourceState };
+}
+
+export interface SessionActivityDetail {
+	sessionId: string;
+	generation: string;
+	kind: ActivityItem["kind"];
+	activityId: string;
+	text: string;
+	truncated: boolean;
+	observedAt: number;
+}
+
 export interface RpcAvailableSlashCommand {
 	name: string;
 	aliases?: string[];
@@ -301,6 +361,9 @@ export interface RpcSubagentSnapshot {
 	lastUpdate: number;
 	progress?: AgentProgress;
 	parentToolCallId?: string;
+	parentSessionId?: string;
+	sessionId?: string;
+	startedAt?: number;
 }
 
 export interface RpcSubagentMessagesResult {
@@ -349,6 +412,9 @@ export type RpcResponse =
 
 	// State
 	| { id?: string; type: "response"; command: "get_state"; success: true; data: RpcSessionState }
+	| { id?: string; type: "response"; command: "get_activity"; success: true; data: SessionActivitySnapshot }
+	| { id?: string; type: "response"; command: "get_activity_detail"; success: true; data: SessionActivityDetail }
+	| { id?: string; type: "response"; command: "get_session_recap"; success: true; data: RpcSessionRecapSnapshot }
 	| { id?: string; type: "response"; command: "get_session_skills"; success: true; data: SessionSkillsCatalogResult }
 	| { id?: string; type: "response"; command: "set_session_skills"; success: true; data: SessionSkillsState }
 	| {

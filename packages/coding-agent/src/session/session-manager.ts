@@ -106,7 +106,12 @@ import {
 	normalizeSessionWorkspace,
 	normalizeWorkspaceDirectory,
 } from "./session-workspace";
-import { recordSessionRecap, recordSessionTitle } from "./session-index";
+import {
+	lookupLatestSessionRecap,
+	type PersistedSessionRecap,
+	recordSessionRecap,
+	recordSessionTitle,
+} from "./session-index";
 
 const JSONL_SUFFIX_LENGTH = ".jsonl".length;
 const DRAFT_ONLY_SESSION_MARKER = ".draft-only-session";
@@ -2743,10 +2748,19 @@ export class SessionManager {
 	 * Journal an idle recap for this session in history.db. Recaps never enter
 	 * the session file or LLM context; in-memory sessions are not journaled.
 	 */
-	recordRecap(recap: string): void {
+	recordRecap(recap: string, sourceLeafId: string | null): PersistedSessionRecap | undefined {
 		if (this.#persist && this.#storage instanceof FileSessionStorage) {
-			recordSessionRecap(this.#sessionId, this.#cwd, recap);
+			return recordSessionRecap(this.#sessionId, this.#cwd, recap, sourceLeafId);
 		}
+		return undefined;
+	}
+
+	/** Read the latest durable recap without touching conversation history. */
+	getLatestRecap(): PersistedSessionRecap | undefined {
+		if (this.#persist && this.#storage instanceof FileSessionStorage) {
+			return lookupLatestSessionRecap(this.#sessionId);
+		}
+		return undefined;
 	}
 
 	/**

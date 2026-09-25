@@ -1103,6 +1103,8 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 	}): string {
 		const { manager, toolCallId, spawnParams, agentId, progress, ircEnabled, buildDetails, onUpdate, onSettled } =
 			options;
+		const ownerSessionId =
+			this.session.sessionManager?.getSessionId?.() ?? this.session.getSessionId?.() ?? undefined;
 		const buildFollowUpHint = async (aborted: boolean): Promise<string> => {
 			// Isolated runs are parked without a reviver once the run ends
 			// (`finalizeSubagentLifecycle`), so "message it" would point the
@@ -1216,6 +1218,7 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 							if (job) job.retainedArtifactsCleanup = cleanup;
 							else void cleanup();
 						},
+						ownerSessionId,
 					);
 					const finalText = result.content.find(part => part.type === "text")?.text ?? "(no output)";
 					const singleResult = result.details?.results[0];
@@ -1287,6 +1290,8 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 				agentId,
 				queued: true,
 				ownerId: this.session.getAgentId?.() ?? undefined,
+				ownerSessionId,
+				toolCallId,
 				onProgress: text => {
 					onUpdate?.({ content: [{ type: "text", text }], details: buildDetails() });
 				},
@@ -1390,6 +1395,8 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 		onItemProgress?: (index: number, progress: AgentProgress) => void;
 	}): Promise<(AgentToolResult<TaskToolDetails> | undefined)[]> {
 		const { toolCallId, params, defaultAgent, spawns, signal, onItemProgress } = args;
+		const parentSessionId =
+			this.session.sessionManager?.getSessionId?.() ?? this.session.getSessionId?.() ?? undefined;
 		const semaphore = this.#getSpawnSemaphore();
 		const { results } = await mapWithConcurrencyLimitAllSettled(
 			spawns,
@@ -1421,6 +1428,8 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 						spawn.index,
 						false,
 						{ invokedAt, acquiredAt },
+						undefined,
+						parentSessionId,
 					);
 				} finally {
 					if (semaphoreHeld) this.#releaseSpawnSemaphore();
@@ -1461,6 +1470,7 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 		detached = false,
 		launchTiming?: { invokedAt: number; acquiredAt: number },
 		onArtifactsRetained?: (cleanup: () => Promise<void>) => void,
+		parentSessionId?: string,
 	): Promise<AgentToolResult<TaskToolDetails>> {
 		return this.#runSpawn(
 			toolCallId,
@@ -1472,6 +1482,7 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 			detached,
 			launchTiming,
 			onArtifactsRetained,
+			parentSessionId,
 		);
 	}
 
@@ -1486,6 +1497,7 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 		detached = false,
 		launchTiming?: { invokedAt: number; acquiredAt: number },
 		onArtifactsRetained?: (cleanup: () => Promise<void>) => void,
+		parentSessionId = this.session.sessionManager?.getSessionId?.() ?? this.session.getSessionId?.() ?? undefined,
 	): Promise<AgentToolResult<TaskToolDetails>> {
 		const startTime = Date.now();
 		const assignment = (params.task ?? "").trim();
@@ -1494,6 +1506,7 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 		try {
 			const execution = await runStructuredSubagent({
 				session: this.session,
+				parentSessionId,
 				invocationKind: "task",
 				assignment,
 				context,

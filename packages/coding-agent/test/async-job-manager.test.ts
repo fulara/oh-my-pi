@@ -922,6 +922,216 @@ describe("AsyncJobManager", () => {
 		expect(manager.getJob(parentJobId)?.status).toBe("cancelled");
 	});
 
+	test("passive observers see registered rows and synchronous progress without consuming delivery", async () => {
+		const finish = Promise.withResolvers<string>();
+		const deliveryReceipt = Promise.withResolvers<void>();
+		const delivered: string[] = [];
+		const manager = new AsyncJobManager({
+			onJobComplete: async (_id, text) => {
+				delivered.push(text);
+				await deliveryReceipt.promise;
+			},
+		});
+		const snapshots: Array<{ status: string; queued: boolean; output: unknown; present: boolean }> = [];
+		manager.subscribe(() => {
+			throw new Error("broken observer");
+		});
+		const unsubscribe = manager.subscribe(job => {
+			snapshots.push({
+				status: job.status,
+				queued: job.queued === true,
+				output: job.latestDetails?.output,
+				present: manager.getJob(job.id) === job,
+			});
+		});
+		try {
+			const id = manager.register(
+				"eval",
+				"queued eval",
+				async ({ markRunning, reportProgress }) => {
+					markRunning();
+					await reportProgress("first output", { output: "first output" });
+					return finish.promise;
+				},
+				{ queued: true },
+			);
+			expect(snapshots).toEqual([
+				{ status: "running", queued: true, output: undefined, present: true },
+				{ status: "running", queued: false, output: undefined, present: true },
+				{ status: "running", queued: false, output: "first output", present: true },
+			]);
+			finish.resolve("finished output");
+			await manager.getJob(id)!.promise;
+			expect(snapshots.at(-1)?.status).toBe("completed");
+			expect(delivered).toEqual(["finished output"]);
+			const pending = manager.getDeliveryState();
+			expect(pending.pendingJobIds).toEqual([id]);
+			expect(manager.isJobResultConsumed(id)).toBe(false);
+			expect(manager.getAllJobs()[0]?.resultText).toBe("finished output");
+			expect(manager.getRecentJobs()[0]?.id).toBe(id);
+			expect(manager.getDeliveryState()).toEqual(pending);
+			expect(manager.isJobResultConsumed(id)).toBe(false);
+
+			unsubscribe();
+			const snapshotCount = snapshots.length;
+			deliveryReceipt.resolve();
+			await manager.drainDeliveries({ timeoutMs: 500 });
+			expect(manager.isJobResultConsumed(id)).toBe(true);
+			expect(delivered).toEqual(["finished output"]);
+			const other = manager.register("bash", "another job", async () => "another result", { foreground: true });
+			await manager.getJob(other)!.promise;
+			expect(snapshots).toHaveLength(snapshotCount);
+		} finally {
+			finish.resolve("");
+			deliveryReceipt.resolve();
+			await manager.dispose();
+		}
+	});
+
+	test("observes synchronous failure before immediate eviction and preserves owned delivery routing", async () => {
+		const unowned: string[] = [];
+		const delivered: string[] = [];
+		const observed: Array<{ error: string | undefined; ownerSessionId: string | undefined; present: boolean }> = [];
+		const manager = new AsyncJobManager({
+			retentionMs: 0,
+			onJobComplete: id => {
+				unowned.push(id);
+			},
+		});
+		manager.bindOwnerSession("Main", "session-a");
+		manager.registerDeliverySink("Main", (_id, text) => {
+			delivered.push(text);
+		});
+		manager.subscribe(job => {
+			if (job.status === "failed") {
+				observed.push({
+					error: job.errorText,
+					ownerSessionId: job.ownerSessionId,
+					present: manager.getJob(job.id) === job,
+				});
+			}
+		});
+		try {
+			const id = manager.register(
+				"bash",
+				"sync failure",
+				() => {
+					throw new Error("failed before first await");
+				},
+				{ ownerId: "Main" },
+			);
+			await manager.drainDeliveries({ timeoutMs: 500 });
+			expect(observed).toEqual([{ error: "failed before first await", ownerSessionId: "session-a", present: true }]);
+			expect(manager.getJob(id)).toBeUndefined();
+			expect(delivered).toEqual(["failed before first await"]);
+			expect(unowned).toEqual([]);
+		} finally {
+			await manager.dispose();
+		}
+	});
+
+	test("foreground promotion and both cancellation paths remain visible without delivering results", async () => {
+		const finish = Promise.withResolvers<string>();
+		const delivered: string[] = [];
+		const manager = new AsyncJobManager({
+			onJobComplete: (_id, text) => {
+				delivered.push(text);
+			},
+		});
+		const observed: Array<{ id: string; status: string; foreground: boolean; settled: boolean; visible: boolean }> =
+			[];
+		manager.subscribe(job => {
+			observed.push({
+				id: job.id,
+				status: job.status,
+				foreground: job.foreground === true,
+				settled: job.endTime !== undefined,
+				visible: manager.getAllJobs().some(candidate => candidate.id === job.id),
+			});
+		});
+		try {
+			const first = manager.register("bash", "foreground", async () => finish.promise, { foreground: true });
+			expect(observed.at(-1)).toMatchObject({ id: first, foreground: true, visible: false });
+			manager.backgroundJob(first);
+			expect(observed.at(-1)).toMatchObject({ id: first, status: "running", foreground: false, visible: true });
+			manager.cancel(first);
+			expect(observed.at(-1)).toMatchObject({ id: first, status: "cancelled", settled: false });
+			const second = manager.register("task", "owned", async () => finish.promise, { ownerId: "Sub" });
+			manager.cancelAll({ ownerId: "Sub" });
+			expect(observed.at(-1)).toMatchObject({ id: second, status: "cancelled", settled: false });
+			finish.resolve("cancelled body result");
+			await manager.waitForAll();
+			expect(observed.filter(job => job.settled).map(job => [job.id, job.status])).toEqual([
+				[first, "cancelled"],
+				[second, "cancelled"],
+			]);
+			expect(manager.getJob(first)?.resultText).toBe("cancelled body result");
+			expect(delivered).toEqual([]);
+		} finally {
+			finish.resolve("");
+			await manager.dispose();
+		}
+	});
+
+	test("session rebindings never relabel old jobs and stale disposers cannot erase fresh ownership", async () => {
+		const finish = Promise.withResolvers<string>();
+		const manager = new AsyncJobManager({});
+		const terminalOwners: Array<[string, string | undefined]> = [];
+		manager.subscribe(job => {
+			if (job.status === "completed") terminalOwners.push([job.id, job.ownerSessionId]);
+		});
+		try {
+			const unbindA = manager.bindOwnerSession("Main", "session-a");
+			const old = manager.register("task", "old session", async () => finish.promise, {
+				ownerId: "Main",
+				foreground: true,
+				toolCallId: "call-a",
+			});
+			const staleB = manager.bindOwnerSession("Main", "session-b");
+			const unbindB = manager.bindOwnerSession("Main", "session-b");
+			unbindA();
+			staleB();
+			const current = manager.register("task", "new session", async () => "new", {
+				ownerId: "Main",
+				foreground: true,
+			});
+			const explicit = manager.register("task", "old queued launch", async () => "old", {
+				ownerId: "Main",
+				ownerSessionId: "session-a",
+				foreground: true,
+			});
+			const unproven = manager.register("task", "restored wake", async () => "unknown", {
+				ownerId: "Main",
+				ownerSessionId: null,
+				foreground: true,
+			});
+			unbindB();
+			const unbound = manager.register("task", "after unbind", async () => "unbound", {
+				ownerId: "Main",
+				foreground: true,
+			});
+			const foreign = manager.register("task", "different owner", async () => "foreign", {
+				ownerId: "Sub",
+				foreground: true,
+			});
+			finish.resolve("late old result");
+			await manager.waitForAll();
+			expect(manager.getJob(old)?.ownerSessionId).toBe("session-a");
+			expect(manager.getJob(old)?.toolCallId).toBe("call-a");
+			expect(manager.getJob(current)?.ownerSessionId).toBe("session-b");
+			expect(manager.getJob(current)?.toolCallId).toBeUndefined();
+			expect(manager.getJob(explicit)?.ownerSessionId).toBe("session-a");
+			expect(manager.getJob(unproven)?.ownerSessionId).toBeUndefined();
+			expect(manager.getJob(unbound)?.ownerSessionId).toBeUndefined();
+			expect(manager.getJob(foreign)?.ownerSessionId).toBeUndefined();
+			expect(terminalOwners).toContainEqual([old, "session-a"]);
+			expect(terminalOwners).toContainEqual([current, "session-b"]);
+		} finally {
+			finish.resolve("");
+			await manager.dispose();
+		}
+	});
+
 	test("routes owned deliveries to the owner's registered sink only", async () => {
 		const mainDeliveries: string[] = [];
 		const defaultDeliveries: string[] = [];

@@ -1,5 +1,5 @@
 import * as fs from "node:fs/promises";
-import { isEnoent } from "@oh-my-pi/pi-utils";
+import { isEnoent, logger } from "@oh-my-pi/pi-utils";
 import type { FileEntry, SessionMessageEntry } from "../../session/session-entries";
 import { parseSessionEntries } from "../../session/session-loader";
 import { type AgentProgress } from "@oh-my-pi/pi-tui/tools/task";
@@ -111,6 +111,7 @@ export class RpcSubagentRegistry {
 	#unsubscribers: Array<() => void> = [];
 	#output: RpcSubagentOutput;
 	#subscriptionLevel: RpcSubagentSubscriptionLevel = "off";
+	#snapshotListeners = new Set<(snapshot: RpcSubagentSnapshot) => void>();
 
 	constructor(observabilityBus: EventBus, output: RpcSubagentOutput) {
 		this.#output = output;
@@ -133,6 +134,7 @@ export class RpcSubagentRegistry {
 		this.#subagents.clear();
 		this.#transcriptSessionFilesBySubagentId.clear();
 		this.#staleSubagentIds.clear();
+		this.#snapshotListeners.clear();
 	}
 
 	clear(): void {
@@ -156,6 +158,22 @@ export class RpcSubagentRegistry {
 
 	getSubagents(): RpcSubagentSnapshot[] {
 		return [...this.#subagents.values()].sort((a, b) => a.index - b.index || a.id.localeCompare(b.id));
+	}
+
+	/** Passive observer, including terminal rows before the live roster prunes them. */
+	subscribe(listener: (snapshot: RpcSubagentSnapshot) => void): () => void {
+		this.#snapshotListeners.add(listener);
+		return () => this.#snapshotListeners.delete(listener);
+	}
+
+	#notify(snapshot: RpcSubagentSnapshot): void {
+		for (const listener of this.#snapshotListeners) {
+			try {
+				listener(snapshot);
+			} catch (error) {
+				logger.warn("Subagent snapshot observer failed", { error: String(error) });
+			}
+		}
 	}
 
 	#rememberTranscriptSession(subagentId: string, sessionFile: string | undefined): void {
@@ -198,6 +216,9 @@ export class RpcSubagentRegistry {
 			assignment: existing?.assignment,
 			sessionFile,
 			parentToolCallId: payload.parentToolCallId ?? existing?.parentToolCallId,
+			parentSessionId: payload.parentSessionId ?? existing?.parentSessionId,
+			sessionId: payload.sessionId ?? existing?.sessionId,
+			startedAt: payload.status === "started" ? Date.now() : existing?.startedAt,
 			lastUpdate: Date.now(),
 			progress: existing?.progress,
 		};
@@ -207,6 +228,7 @@ export class RpcSubagentRegistry {
 		} else {
 			this.#subagents.set(payload.id, snapshot);
 		}
+		this.#notify(snapshot);
 		if (this.#subscriptionLevel !== "off") {
 			this.#output({ type: "subagent_lifecycle", payload });
 		}
@@ -220,7 +242,7 @@ export class RpcSubagentRegistry {
 		if (!hasSameOwner(payload, existing)) return;
 		const sessionFile = payload.sessionFile ?? existing?.sessionFile;
 		this.#rememberTranscriptSession(progress.id, sessionFile);
-		this.#subagents.set(progress.id, {
+		const snapshot: RpcSubagentSnapshot = {
 			id: progress.id,
 			index: payload.index,
 			agent: payload.agent,
@@ -232,8 +254,13 @@ export class RpcSubagentRegistry {
 			sessionFile,
 			lastUpdate: Date.now(),
 			parentToolCallId: payload.parentToolCallId ?? existing?.parentToolCallId,
+			parentSessionId: existing.parentSessionId,
+			sessionId: existing.sessionId,
+			startedAt: existing.startedAt,
 			progress,
-		});
+		};
+		this.#subagents.set(progress.id, snapshot);
+		this.#notify(snapshot);
 		if (this.#subscriptionLevel !== "off") {
 			this.#output({ type: "subagent_progress", payload });
 		}

@@ -48,6 +48,10 @@ const RESTART_BACKOFF_BASE_MS = 1_000;
  * bounded over a long-lived project (issue #6517).
  */
 const MAX_TERMINAL_DAEMONS_LISTED = 10;
+const MAX_INSPECTION_TERMINAL_DAEMONS = 20;
+const INSPECTION_TERMINAL_MAX_AGE_MS = 5 * 60_000;
+const INSPECTION_LOG_MAX_BYTES = 64 * 1024;
+const INSPECTION_LOG_MAX_LINES = 200;
 const TOKEN_FILE = "broker.token";
 const PID_FILE = "broker.pid";
 /**
@@ -116,6 +120,7 @@ interface DaemonLogRead {
 	text: string;
 	terminalOutput: string;
 	cursor: number;
+	sourceTruncated: boolean;
 }
 
 function quoteShellArg(value: string): string {
@@ -142,15 +147,27 @@ function publishesCompletionOwners(request: DaemonWireRequest): boolean {
  * growing without bound. Truncated terminal records stay addressable by name
  * via `describe`/`logs`/`restart`.
  */
-function orderDaemonsForListing(snapshots: DaemonSnapshot[]): DaemonSnapshot[] {
+function orderDaemonsForListing(
+	snapshots: DaemonSnapshot[],
+	terminalLimit = MAX_TERMINAL_DAEMONS_LISTED,
+	terminalMaxAgeMs?: number,
+): DaemonSnapshot[] {
 	const active: DaemonSnapshot[] = [];
 	const terminal: DaemonSnapshot[] = [];
 	for (const snapshot of snapshots) {
-		(terminalState(snapshot.state) && snapshot.pid === undefined ? terminal : active).push(snapshot);
+		if (terminalState(snapshot.state) && (terminalMaxAgeMs !== undefined || snapshot.pid === undefined)) {
+			if (
+				terminalMaxAgeMs === undefined ||
+				Date.now() - (snapshot.exitedAt ?? snapshot.createdAt) <= terminalMaxAgeMs
+			)
+				terminal.push(snapshot);
+		} else {
+			active.push(snapshot);
+		}
 	}
 	active.sort((left, right) => left.createdAt - right.createdAt);
 	terminal.sort((left, right) => (right.exitedAt ?? right.createdAt) - (left.exitedAt ?? left.createdAt));
-	return [...active, ...terminal.slice(0, MAX_TERMINAL_DAEMONS_LISTED)];
+	return [...active, ...terminal.slice(0, terminalLimit)];
 }
 
 /**
@@ -179,16 +196,23 @@ function syncReadyPending(record: ManagedDaemon): void {
 	record.snapshot.readyPending = pending.length > 0 ? pending : undefined;
 }
 
-async function fileTextSlice(filePath: string, head: boolean): Promise<string> {
+async function fileTextSlice(
+	filePath: string,
+	head: boolean,
+	required = false,
+): Promise<{ text: string; sourceBytes: number }> {
 	try {
 		const stat = await fs.stat(filePath);
 		const file = Bun.file(filePath);
-		if (stat.size <= LOG_READ_BYTES) return await file.text();
-		return head
-			? await file.slice(0, LOG_READ_BYTES).text()
-			: await file.slice(Math.max(0, stat.size - LOG_READ_BYTES)).text();
+		const text =
+			stat.size <= LOG_READ_BYTES
+				? await file.text()
+				: head
+					? await file.slice(0, LOG_READ_BYTES).text()
+					: await file.slice(Math.max(0, stat.size - LOG_READ_BYTES)).text();
+		return { text, sourceBytes: stat.size };
 	} catch (error) {
-		if (isEnoent(error)) return "";
+		if (!required && isEnoent(error)) return { text: "", sourceBytes: 0 };
 		throw error;
 	}
 }
@@ -247,10 +271,10 @@ class DaemonLog {
 		return text;
 	}
 
-	read(head: boolean, lines: number, cursor: number, grep?: string): Promise<DaemonLogRead> {
+	read(head: boolean, lines: number, cursor: number, grep?: string, requireCurrent = false): Promise<DaemonLogRead> {
 		const snapshot = this.#queue.then(async () => {
 			await this.#writer.flush();
-			return DaemonLog.readFiles(this.#path, this.#previousPath, head, lines, cursor, grep);
+			return DaemonLog.readFiles(this.#path, this.#previousPath, head, lines, cursor, grep, requireCurrent);
 		});
 		// Appends that arrive after this call queue behind the file snapshot, so its
 		// cursor can never include bytes that its terminal replay did not read. A read
@@ -277,9 +301,14 @@ class DaemonLog {
 		lines: number,
 		cursor: number,
 		grep?: string,
+		requireCurrent = false,
 	): Promise<DaemonLogRead> {
-		const [previous, current] = await Promise.all([fileTextSlice(previousPath, head), fileTextSlice(logPath, head)]);
-		const combined = `${previous}${previous && current && !previous.endsWith("\n") ? "\n" : ""}${current}`;
+		const [previous, current] = await Promise.all([
+			fileTextSlice(previousPath, head),
+			fileTextSlice(logPath, head, requireCurrent),
+		]);
+		const separator = previous.text && current.text && !previous.text.endsWith("\n") ? "\n" : "";
+		const combined = `${previous.text}${separator}${current.text}`;
 		const terminalOutput = head
 			? truncateHeadBytes(combined, LOG_READ_BYTES).text
 			: truncateTailBytes(combined, LOG_READ_BYTES).text;
@@ -301,6 +330,11 @@ class DaemonLog {
 			text: head ? truncateHead(text, options).content : truncateTail(text, options).content,
 			terminalOutput,
 			cursor,
+			sourceTruncated:
+				previous.sourceBytes > LOG_READ_BYTES ||
+				current.sourceBytes > LOG_READ_BYTES ||
+				previous.sourceBytes + current.sourceBytes + separator.length > LOG_READ_BYTES ||
+				cursor > previous.sourceBytes + current.sourceBytes,
 		};
 	}
 
@@ -427,6 +461,8 @@ class DaemonBroker {
 	 * profile lock) or keeps running untracked.
 	 */
 	readonly #startingNames = new Set<string>();
+	/** Replacement waits for authorized reads before reusing a name's log files. */
+	readonly #inspectionReads = new Map<string, Promise<void>>();
 	readonly #clients = new Set<net.Socket>();
 	readonly #ownerSockets = new Map<string, { socket: net.Socket; subscriptionId: string | undefined }>();
 	readonly #completionSubscriptions = new Map<string, string | undefined>();
@@ -544,6 +580,13 @@ class DaemonBroker {
 			const request = parseDaemonWireRequest(decoded);
 			id = request.id;
 			if (request.token !== this.#token) throw new Error("Daemon broker authentication failed");
+			// Observers never acquire a lifetime lease or alter completion routing,
+			// even if a regular client accidentally attaches delivery metadata.
+			if (request.operation.op === "inspect-list" || request.operation.op === "inspect-logs") {
+				const result = await this.#dispatch(request.operation);
+				socket.write(`${JSON.stringify({ id, ok: true, result })}\n`);
+				return;
+			}
 			onAuthenticated();
 			for (const owner of request.completionUnsubscribes ?? []) {
 				const subscriptionId = this.#completionSubscriptions.get(owner);
@@ -631,7 +674,7 @@ class DaemonBroker {
 			case "ping":
 				return { op: "ping", projectDir: this.#projectDir };
 			case "start":
-				return this.#start(operation.spec, operation.owner, operation.replace);
+				return this.#start(operation);
 			case "list": {
 				await Promise.all([...this.#records.values()].map(record => this.#refreshDetached(record)));
 				return {
@@ -639,6 +682,19 @@ class DaemonBroker {
 					daemons: orderDaemonsForListing([...this.#records.values()].map(record => record.snapshot)),
 				};
 			}
+			case "inspect-list":
+				return {
+					op: "inspect-list",
+					daemons: orderDaemonsForListing(
+						[...this.#records.values()]
+							.filter(record => record.snapshot.ownerSessionId === operation.ownerSessionId)
+							.map(record => record.snapshot),
+						MAX_INSPECTION_TERMINAL_DAEMONS,
+						INSPECTION_TERMINAL_MAX_AGE_MS,
+					),
+				};
+			case "inspect-logs":
+				return await this.#inspectLogs(operation);
 			case "logs":
 				return this.#logs(operation);
 			case "wait":
@@ -664,7 +720,8 @@ class DaemonBroker {
 		}
 	}
 
-	async #start(spec: DaemonSpec, owner?: string, replace = false): Promise<DaemonRpcResult> {
+	async #start(operation: Extract<DaemonOperation, { op: "start" }>): Promise<DaemonRpcResult> {
+		const { spec, owner, ownerSessionId, toolCallId, replace = false } = operation;
 		if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,47}$/.test(spec.name)) {
 			throw new Error("Daemon name must be 1-48 letters, numbers, dots, underscores, or hyphens");
 		}
@@ -695,6 +752,7 @@ class DaemonBroker {
 			if (existing && existing.pendingCompletions.length > 0 && !replace) {
 				throw new Error(`Daemon ${spec.name} has unacknowledged completion notifications`);
 			}
+			await this.#inspectionReads.get(spec.name);
 			// The replaced generation's log writer must finish before its files are discarded.
 			await existing?.log?.close();
 			if (spec.ready?.log) {
@@ -719,6 +777,8 @@ class DaemonBroker {
 					restartCount: 0,
 					outputBytes: 0,
 					owner,
+					ownerSessionId,
+					toolCallId,
 					persist: spec.persist,
 					detached: spec.detached,
 				},
@@ -1113,6 +1173,53 @@ class DaemonBroker {
 		// timer re-checks clients, remaining live persistent records, and detached
 		// project presence before it shuts anything down.
 		this.#scheduleIdleShutdown();
+	}
+
+	async #inspectLogs(operation: Extract<DaemonOperation, { op: "inspect-logs" }>): Promise<DaemonRpcResult> {
+		const record = this.#records.get(operation.name);
+		if (
+			!record ||
+			this.#startingNames.has(operation.name) ||
+			record.snapshot.id !== operation.expectedId ||
+			record.snapshot.ownerSessionId !== operation.ownerSessionId
+		) {
+			throw new Error("Service logs unavailable for this session and service identity");
+		}
+		// Reserve the name before any await. A replacement must not recycle these
+		// paths between authorization and opening either current or rotated output.
+		const read = (this.#inspectionReads.get(operation.name) ?? Promise.resolve()).then(async () => {
+			const logPath = path.join(record.dir, LOG_FILE);
+			const output = record.log
+				? await record.log.read(false, INSPECTION_LOG_MAX_LINES, record.snapshot.outputBytes, undefined, true)
+				: await DaemonLog.readFiles(
+						logPath,
+						path.join(record.dir, PREVIOUS_LOG_FILE),
+						false,
+						INSPECTION_LOG_MAX_LINES,
+						record.snapshot.outputBytes,
+						undefined,
+						true,
+					);
+			const bounded = truncateTail(sanitizeText(output.terminalOutput), {
+				maxBytes: INSPECTION_LOG_MAX_BYTES,
+				maxLines: INSPECTION_LOG_MAX_LINES,
+			});
+			return {
+				op: "inspect-logs" as const,
+				text: bounded.content,
+				truncated: bounded.truncated === true || output.sourceTruncated,
+			};
+		});
+		const finished = read.then(
+			() => undefined,
+			() => undefined,
+		);
+		this.#inspectionReads.set(operation.name, finished);
+		try {
+			return await read;
+		} finally {
+			if (this.#inspectionReads.get(operation.name) === finished) this.#inspectionReads.delete(operation.name);
+		}
 	}
 
 	async #logs(operation: Extract<DaemonOperation, { op: "logs" }>): Promise<DaemonRpcResult> {

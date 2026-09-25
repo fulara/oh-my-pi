@@ -5,7 +5,7 @@ import type { DaemonSnapshot, DaemonSpec } from "@oh-my-pi/pi-tui/tools/daemon";
 import { formatDuration, replaceTabs } from "@oh-my-pi/pi-tui/render/render-utils";
 import { ToolError } from "@oh-my-pi/pi-tui/tools/tool-errors";
 import { getDaemonRuntimeDir, sanitizeText } from "@oh-my-pi/pi-utils";
-import { type DaemonBrokerClient, daemonClientForProject } from "./client";
+import { type DaemonBrokerClient, daemonClientForProject, inspectExistingDaemonBroker } from "./client";
 import { canonicalProjectDir } from "./paths";
 import type { DaemonOperation, DaemonRpcResult } from "./protocol";
 import { renderTerminalOutputIsolated } from "./terminal-output-worker-client";
@@ -27,6 +27,7 @@ export interface ServiceStart {
 	pty?: boolean;
 	env?: Record<string, string>;
 	ready?: ServiceReady;
+	toolCallId?: string;
 }
 
 const serviceStateKey = Symbol("ownedServices");
@@ -127,6 +128,30 @@ export async function listServices(session: ToolSession, signal?: AbortSignal): 
 	return result.daemons;
 }
 
+/** Inspect only this logical session without launching a broker or subscribing to delivery. */
+export async function inspectSessionServices(cwd: string, sessionId: string): Promise<DaemonSnapshot[]> {
+	const result = await inspectExistingDaemonBroker(cwd, { op: "inspect-list", ownerSessionId: sessionId });
+	if (result.op !== "inspect-list") throw new Error("Service inspection unavailable: unexpected list response");
+	return result.daemons;
+}
+
+/** Read bounded logs only if the broker still owns the exact listed service for this session. */
+export async function inspectSessionServiceLogs(
+	cwd: string,
+	sessionId: string,
+	name: string,
+	expectedId: string,
+): Promise<{ text: string; truncated: boolean }> {
+	const result = await inspectExistingDaemonBroker(cwd, {
+		op: "inspect-logs",
+		ownerSessionId: sessionId,
+		name,
+		expectedId,
+	});
+	if (result.op !== "inspect-logs") throw new Error("Service inspection unavailable: unexpected logs response");
+	return { text: result.text, truncated: result.truncated };
+}
+
 export async function findService(
 	session: ToolSession,
 	name: string,
@@ -225,7 +250,14 @@ export async function startService(
 	};
 	const result = await request(
 		session,
-		{ op: "start", spec, owner: serviceOwner(session) ?? undefined, replace: true },
+		{
+			op: "start",
+			spec,
+			owner: serviceOwner(session) ?? undefined,
+			ownerSessionId: session.getSessionId?.() ?? undefined,
+			toolCallId: params.toolCallId,
+			replace: true,
+		},
 		signal,
 	);
 	if (result.op !== "start") throw new Error("Unexpected daemon start response");

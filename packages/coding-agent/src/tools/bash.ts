@@ -787,6 +787,7 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 	}
 
 	#startManagedBashJob(options: {
+		toolCallId: string;
 		command: string;
 		commandCwd: string;
 		timeoutMs: number | undefined;
@@ -879,6 +880,8 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 			},
 			{
 				ownerId: this.session.getAgentId?.() ?? undefined,
+				ownerSessionId: this.session.sessionManager?.getSessionId?.() ?? this.session.getSessionId?.() ?? undefined,
+				toolCallId: options.toolCallId,
 				foreground: options.foreground,
 				onProgress: async text => {
 					latestText = text;
@@ -902,7 +905,7 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 	}
 
 	async execute(
-		_toolCallId: string,
+		toolCallId: string,
 		{ command: rawCommand, timeout: rawTimeout, cwd, name, ready, env, async: asyncRequested, pty }: BashToolInput,
 		signal?: AbortSignal,
 		onUpdate?: AgentToolUpdateCallback<BashToolDetails>,
@@ -1007,6 +1010,7 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 				this.session,
 				{
 					name,
+					toolCallId,
 					command,
 					cwd: commandCwd,
 					pty: pty ?? true,
@@ -1057,6 +1061,7 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 				throw new ToolError("Async job manager unavailable for this session.");
 			}
 			const job = this.#startManagedBashJob({
+				toolCallId,
 				command,
 				commandCwd,
 				timeoutMs,
@@ -1097,6 +1102,7 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 			);
 			const startBackgrounded = autoBackgroundWaitMs === 0;
 			const job = this.#startManagedBashJob({
+				toolCallId,
 				command,
 				commandCwd,
 				timeoutMs,

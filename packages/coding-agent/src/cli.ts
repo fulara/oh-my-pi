@@ -84,6 +84,7 @@ const PREPAINT_SAFE_FLAGS: Record<string, true> = {
 	"--no-tools": true,
 	"--no-lsp": true,
 	"--no-title": true,
+	"--no-recap": true,
 	"--no-prewalk": true,
 	"--no-pty": true,
 };

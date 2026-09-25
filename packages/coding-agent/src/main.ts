@@ -2376,6 +2376,7 @@ export async function runRootCommand(
 					headless: parsedArgs.noUi === true,
 					subagentEventBus,
 					input: rpcInput,
+					enableRecaps: mode === "rpc-ui" && !parsedArgs.noRecap,
 				});
 			} else if (isInteractive) {
 				const versionCheckPromise = checkForNewVersion(VERSION).catch(() => undefined);
