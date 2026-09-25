@@ -5,7 +5,7 @@ import type { DaemonSnapshot, DaemonSpec } from "@oh-my-pi/pi-tui/tools/daemon";
 import { formatDuration, replaceTabs } from "@oh-my-pi/pi-tui/render/render-utils";
 import { ToolError } from "@oh-my-pi/pi-tui/tools/tool-errors";
 import { getDaemonRuntimeDir, logger, sanitizeText } from "@oh-my-pi/pi-utils";
-import { type DaemonBrokerClient, daemonClientForProject } from "./client";
+import { type DaemonBrokerClient, daemonClientForProject, inspectExistingDaemonBroker } from "./client";
 import { canonicalProjectDir } from "./paths";
 import type { DaemonOperation, DaemonRpcResult } from "./protocol";
 import { renderTerminalOutputIsolated } from "./terminal-output-worker-client";
@@ -27,6 +27,7 @@ export interface ServiceStart {
 	cwd?: string;
 	pty?: boolean;
 	ready?: ServiceReady;
+	toolCallId?: string;
 }
 
 const serviceStateKey = Symbol("ownedServices");
@@ -147,6 +148,30 @@ export async function listServicesTolerant(
 	}
 }
 
+/** Inspect only this logical session without launching a broker or subscribing to delivery. */
+export async function inspectSessionServices(cwd: string, sessionId: string): Promise<DaemonSnapshot[]> {
+	const result = await inspectExistingDaemonBroker(cwd, { op: "inspect-list", ownerSessionId: sessionId });
+	if (result.op !== "inspect-list") throw new Error("Service inspection unavailable: unexpected list response");
+	return result.daemons;
+}
+
+/** Read bounded logs only if the broker still owns the exact listed service for this session. */
+export async function inspectSessionServiceLogs(
+	cwd: string,
+	sessionId: string,
+	name: string,
+	expectedId: string,
+): Promise<{ text: string; truncated: boolean }> {
+	const result = await inspectExistingDaemonBroker(cwd, {
+		op: "inspect-logs",
+		ownerSessionId: sessionId,
+		name,
+		expectedId,
+	});
+	if (result.op !== "inspect-logs") throw new Error("Service inspection unavailable: unexpected logs response");
+	return { text: result.text, truncated: result.truncated };
+}
+
 export async function findService(
 	session: ToolSession,
 	name: string,
@@ -259,6 +284,8 @@ export async function startService(
 			owner: serviceOwner(session) ?? undefined,
 			replace: true,
 			awaitReady: readyInterrupt === undefined,
+			ownerSessionId: session.getSessionId?.() ?? undefined,
+			toolCallId: params.toolCallId,
 		},
 		signal,
 	);

@@ -311,6 +311,7 @@ import {
 	buildAsyncResultBatchMessage,
 } from "./async-job-delivery";
 import { BashRunner, type BashRunnerHost } from "./bash-runner";
+import { type IdleRecapHost, type RpcSessionRecapSnapshot, SessionRecapController } from "./session-recap";
 import {
 	checkpointStartedAtFromEntry,
 	completedRewindFromEntry,
@@ -904,6 +905,8 @@ export class AgentSession implements SettingsScope {
 	#settledAgentEnd: AgentEndEvent | undefined;
 	#commandMetadataChangedListeners: CommandMetadataChangedListener[] = [];
 	#sessionChangeCallbacks = new Set<() => void>();
+	#sessionTransitionListeners = new Set<(phase: "begin" | "end") => void>();
+	#idleRecaps?: SessionRecapController;
 	#observedSessionId: string | undefined;
 	readonly #sessionSkills: SessionSkills;
 	#unsubscribeSessionSkills?: () => void;
@@ -1157,6 +1160,7 @@ export class AgentSession implements SettingsScope {
 			this.#sessionTransitionSettled = undefined;
 			this.#resolveSessionTransition = undefined;
 			resolve?.();
+			this.#notifySessionTransition("end");
 			this.#emit({ type: "session_skills_updated", sessionSkills: this.getSessionSkillsState() });
 		},
 	};
@@ -3100,6 +3104,9 @@ export class AgentSession implements SettingsScope {
 
 	async #admitSubmission<T>(work: () => Promise<T>): Promise<T> {
 		this.#admittedSubmissionCount++;
+		// Admission precedes image/vision and command preprocessing, where the
+		// journal and isStreaming can still describe the previous idle turn.
+		this.#idleRecaps?.invalidate();
 		try {
 			return await work();
 		} finally {
@@ -3250,6 +3257,7 @@ export class AgentSession implements SettingsScope {
 
 	/** Emit an event to all listeners */
 	#emit(event: AgentSessionEvent): void {
+		this.#idleRecaps?.handleEvent(event);
 		if (event.type === "agent_end") {
 			this.#emit({ type: "session_skills_updated", sessionSkills: this.getSessionSkillsState() });
 		}
@@ -3278,6 +3286,7 @@ export class AgentSession implements SettingsScope {
 	#emitRunState(state: "running" | "idle"): void {
 		if (state === "idle") this.#runStartedAt = undefined;
 		else this.#runStartedAt ??= Date.now();
+		if (state === "running") this.#idleRecaps?.invalidate();
 		for (const listener of this.#runStateListeners) {
 			try {
 				listener(state);
@@ -5393,6 +5402,34 @@ export class AgentSession implements SettingsScope {
 		}
 	}
 
+	/** Explicit host activation; SDK and nested AgentSessions never enable this implicitly. */
+	enableIdleRecaps(host: IdleRecapHost = {}): () => void {
+		this.#idleRecaps ??= new SessionRecapController(this);
+		return this.#idleRecaps.enable(host);
+	}
+
+	/** Persisted read only: constructing the passive owner does not arm a timer. */
+	getSessionRecap(): RpcSessionRecapSnapshot {
+		this.#idleRecaps ??= new SessionRecapController(this);
+		return this.#idleRecaps.read();
+	}
+
+	/** Outermost transition barriers, including same-ID changes and failed/cancelled adoption. */
+	subscribeSessionTransition(listener: (phase: "begin" | "end") => void): () => void {
+		this.#sessionTransitionListeners.add(listener);
+		return () => this.#sessionTransitionListeners.delete(listener);
+	}
+
+	#notifySessionTransition(phase: "begin" | "end"): void {
+		for (const listener of this.#sessionTransitionListeners) {
+			try {
+				listener(phase);
+			} catch (error) {
+				logger.warn("AgentSession transition listener threw", { error: String(error) });
+			}
+		}
+	}
+
 	/** True while a session identity or transcript transition is still applying or rolling back. */
 	get isSessionTransitioning(): boolean {
 		return this.#sessionTransitionDepth > 0;
@@ -5410,6 +5447,8 @@ export class AgentSession implements SettingsScope {
 			const settled = Promise.withResolvers<void>();
 			this.#sessionTransitionSettled = settled.promise;
 			this.#resolveSessionTransition = settled.resolve;
+			this.#idleRecaps?.invalidate();
+			this.#notifySessionTransition("begin");
 		}
 		return this.#sessionTransitionScope;
 	}
@@ -5603,6 +5642,7 @@ export class AgentSession implements SettingsScope {
 	beginDispose(): void {
 		this.#isDisposed = true;
 		for (const dispose of this.#disposers.splice(0)) dispose();
+		this.#idleRecaps?.dispose();
 		this.#modelDiscoveryAbortController.abort();
 		this.#queuedMessageDrainBlocked = false;
 		this.#usagePreflightReadyForNextModelCall = false;
@@ -5854,6 +5894,7 @@ export class AgentSession implements SettingsScope {
 		this.#eventListeners = [];
 		this.#runStateListeners.clear();
 		this.#sessionChangeCallbacks.clear();
+		this.#sessionTransitionListeners.clear();
 
 		// A dispose triggered mid-turn (Ctrl-C / timeout / hard-killed subagent)
 		// only *signals* the agent loop via the earlier abort(); the loop and the
@@ -6613,16 +6654,19 @@ export class AgentSession implements SettingsScope {
 	}
 	/** Strip image content from the current branch and persist the rewrite. */
 	dropImages(): Promise<{ removed: number; tokensFreed: number }> {
+		this.#idleRecaps?.invalidate();
 		return this.#maintenance.dropImages();
 	}
 
 	/** Reduce stored context with the selected shake strategy. */
 	shake(mode: ShakeMode, opts: { config?: ShakeConfig; signal?: AbortSignal } = {}): Promise<ShakeResult> {
+		this.#idleRecaps?.invalidate();
 		return this.#maintenance.shake(mode, opts);
 	}
 
 	/** Compact the active session history. */
 	compact(customInstructions?: string, options?: CompactOptions): Promise<CompactionResult> {
+		this.#idleRecaps?.invalidate();
 		return this.#maintenance.compact(customInstructions, options);
 	}
 
@@ -6641,6 +6685,7 @@ export class AgentSession implements SettingsScope {
 		// keeps its context (the async settle, or the threshold path, compacts if
 		// still needed).
 		if (this.#hasPendingAsyncWake()) return;
+		this.#idleRecaps?.invalidate();
 		await this.#maintenance.runIdleCompaction();
 	}
 
@@ -10643,6 +10688,7 @@ export class AgentSession implements SettingsScope {
 	 * @returns The handoff document text, or undefined if cancelled/failed
 	 */
 	handoff(customInstructions?: string, options?: SessionHandoffOptions): Promise<HandoffResult | undefined> {
+		this.#idleRecaps?.invalidate();
 		return this.#maintenance.handoff(customInstructions, options);
 	}
 
@@ -10909,6 +10955,7 @@ export class AgentSession implements SettingsScope {
 	}
 
 	async #setModelWithProviderSessionReset(model: Model): Promise<void> {
+		this.#idleRecaps?.invalidate();
 		const currentModel = this.model;
 		const isChanging = !currentModel || !modelsAreEqual(currentModel, model);
 		if (currentModel) {
@@ -11158,6 +11205,7 @@ export class AgentSession implements SettingsScope {
 		onChunk?: (chunk: string) => void,
 		options?: { excludeFromContext?: boolean; useUserShell?: boolean; pty?: BashPtyOptions },
 	): Promise<BashResult> {
+		this.#idleRecaps?.invalidate();
 		return this.#bash.executeBash(command, onChunk, options);
 	}
 
@@ -11197,6 +11245,7 @@ export class AgentSession implements SettingsScope {
 		onChunk?: (chunk: string) => void,
 		options?: { excludeFromContext?: boolean },
 	): Promise<PythonResult> {
+		this.#idleRecaps?.invalidate();
 		return this.#eval.executePython(code, onChunk, options);
 	}
 
@@ -11208,6 +11257,7 @@ export class AgentSession implements SettingsScope {
 	 * Track Python work started outside AgentSession.executePython so dispose can await and abort it too.
 	 */
 	trackEvalExecution<T>(execution: Promise<T>, abortController: AbortController): Promise<T> {
+		this.#idleRecaps?.invalidate();
 		return this.#eval.trackExecution(execution, abortController);
 	}
 
