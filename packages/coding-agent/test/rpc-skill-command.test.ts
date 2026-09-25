@@ -360,7 +360,7 @@ describe("dispatchRpcSkillPrompt", () => {
 			source: "project",
 		};
 		const authStorage = await AuthStorage.create(":memory:");
-		authStorage.setRuntimeApiKey("anthropic", "test-key");
+		authStorage.keys.setRuntime("anthropic", "test-key");
 		const model = getBundledModel("anthropic", "claude-sonnet-4-5")!;
 		const mock = createMockModel({
 			responses: [{ content: ["Initial answer"] }, { content: ["Queued work consumed"] }],
@@ -515,7 +515,7 @@ describe("RPC skill attachment reads after idle", () => {
 		);
 		[red, blue] = await Promise.all([attachmentImage(RED_PNG_BASE64), attachmentImage(BLUE_PNG_BASE64)]);
 		authStorage = await AuthStorage.create(":memory:");
-		authStorage.setRuntimeApiKey("anthropic", "test-key");
+		authStorage.keys.setRuntime("anthropic", "test-key");
 		const model = getBundledModel("anthropic", "claude-sonnet-4-5")!;
 		mock = createMockModel({ handler: { content: ["Done"] } });
 		errors = [];

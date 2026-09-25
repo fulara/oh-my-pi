@@ -1323,7 +1323,7 @@ async fn run_shell_command_once(
 	drop(diagnostics);
 
 	if cancel_token.is_cancelled() {
-		terminate_background_jobs(&mut session.shell);
+		terminate_background_jobs(&mut session.shell, &spawn_registry);
 	}
 
 	drop(params);
@@ -1471,7 +1471,7 @@ async fn run_shell_command_streams_in_filesystem(
 	drop(diagnostics);
 
 	if cancel_token.is_cancelled() {
-		terminate_background_jobs(&mut session.shell);
+		terminate_background_jobs(&mut session.shell, &spawn_registry);
 	}
 
 	if env_scope_pushed {
@@ -1616,11 +1616,10 @@ impl SpawnObserver for process::SpawnRegistry {
 }
 
 // Escalating TERM -> KILL waves over the processes this run spawned, scoped via
-// the per-run `SpawnRegistry`. The kill set is rebuilt each wave so a child
-// spawned in a grace window — or a grandchild whose recorded parent already
-// exited but whose process group is still live — is still reaped, and the loop
-// stops as soon as the run's whole tree is gone. Scoping to the registry (vs a
-// process-global descendant diff) is what keeps a cancel from reaping a
+// the per-run `SpawnRegistry`. Each wave includes new spawns and retains pinned
+// descendants after their root exits. A still-live but unproven PGID remains
+// unresolved; it is never enough to authorize a signal. Scoping to the registry
+// (vs a process-global descendant diff) is what keeps a cancel from reaping a
 // concurrent run's children in a shared host process.
 async fn terminate_run(registry: &process::SpawnRegistry) {
 	const WAVES: u32 = 3;
@@ -1656,21 +1655,12 @@ fn terminate_internal_background_jobs(shell: &mut BrushShell) {
 	}
 }
 
-fn terminate_background_jobs(shell: &mut BrushShell) {
-	let mut targets = process::TerminationTargets::new();
+fn terminate_background_jobs(shell: &mut BrushShell, registry: &process::SpawnRegistry) {
 	terminate_internal_background_jobs(shell);
-	for job in &shell.jobs().jobs {
-		if let Some(pgid) = job.process_group_id() {
-			targets.add_pgid(pgid);
-		}
-		if let Some(pid) = job.representative_pid() {
-			targets.add_pid(pid);
-		}
-	}
+	// Job metadata is not kill authority: only the spawn registry owns handles
+	// captured before a completed job's PID or PGID could be recycled.
+	let targets = registry.build_targets();
 	if targets.is_empty() {
-		// Shell-internal jobs were aborted above. Pure descendant cleanup is
-		// handled by `process_cancel_bridge` while the cancel was in flight;
-		// without job-tracked pgids or pids there is nothing else to signal here.
 		return;
 	}
 

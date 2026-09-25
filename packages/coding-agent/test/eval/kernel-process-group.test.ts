@@ -59,6 +59,56 @@ describe.skipIf(process.platform === "win32")("BaseKernel owned shutdown", () =>
 		}
 	});
 
+	test("retains an unconfirmed worker across retries after its kernel exits", async () => {
+		const proc = Bun.spawn(
+			[
+				process.execPath,
+				"-e",
+				`
+			Bun.spawn([process.execPath, "-e", ${JSON.stringify(fixture)}], {
+				stdin: "pipe", stdout: "inherit", stderr: "inherit"
+			});
+			process.stdin.resume();
+			process.stdin.on("end", () => process.exit(0));
+			setTimeout(() => process.exit(124), 10000);
+		`,
+			],
+			{ detached: true, stdin: "pipe", stdout: "pipe", stderr: "pipe" },
+		);
+		const owner = Process.fromPid(proc.pid);
+		if (!owner) throw new Error("Cannot pin disposable kernel");
+		let worker: Process | undefined;
+		try {
+			await ready(proc.stdout);
+			worker = owner.children()[0];
+			if (!worker) throw new Error("Worker missing after readiness handshake");
+			const workerIdentity = worker.identity();
+			const terminate = Process.prototype.terminate;
+			let refuseWorker = true;
+			vi.spyOn(Process.prototype, "terminate").mockImplementation(function (this: Process, options) {
+				if (refuseWorker && this.identity() === workerIdentity) return Promise.resolve(false);
+				return terminate.call(this, options);
+			});
+			const kernel = new TestKernel();
+			kernel.setProcess(proc);
+			expect(await kernel.shutdown()).toEqual({ confirmed: false });
+			expect(await proc.exited).toBe(0);
+			expect(owner.status()).toBe(ProcessStatus.Exited);
+			expect(worker.status()).toBe(ProcessStatus.Running);
+
+			expect(await kernel.shutdown()).toEqual({ confirmed: false });
+			expect(worker.status()).toBe(ProcessStatus.Running);
+			refuseWorker = false;
+			expect(await kernel.shutdown()).toEqual({ confirmed: true });
+			expect(worker.status()).toBe(ProcessStatus.Exited);
+		} finally {
+			vi.restoreAllMocks();
+			await owner.terminate({ group: false, gracefulMs: -1 });
+			await worker?.terminate({ group: false, gracefulMs: -1 });
+			await proc.exited;
+		}
+	});
+
 	test.each(["graceful", "timeout"] as const)(
 		"reaps a TERM-resistant worker after %s exit without harming a protected sentinel",
 		async exitMode => {

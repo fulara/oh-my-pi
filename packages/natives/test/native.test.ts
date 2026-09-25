@@ -26,6 +26,8 @@ import {
 	macOSSpellCheckerAvailable,
 	matchesKey,
 	PowerAssertion,
+	Process,
+	ProcessStatus,
 	PtySession,
 	parseKey,
 	pdfToMarkdown,
@@ -781,6 +783,60 @@ describe("pi-natives", () => {
 			expect(alive).toBeTrue();
 			session.kill();
 			expect((await run).cancelled).toBeTrue();
+		});
+
+		it.skipIf(process.platform === "win32")("kills a pinned PTY child that ignores TERM and HUP", async () => {
+			const release = path.join(testDir, "pty-resistant-release");
+			const scriptPath = path.join(testDir, "pty-resistant.ts");
+			// OS-child watchdog and release polling must use real time, not the runner's fake clock.
+			await Bun.write(
+				scriptPath,
+				[
+					'process.on("SIGTERM", () => {});',
+					'process.on("SIGHUP", () => {});',
+					"setTimeout(() => process.exit(124), 5000);",
+					"setInterval(async () => { if (await Bun.file(process.argv[2]).exists()) process.exit(0); }, 20);",
+					'process.stdout.write("READY\\n");',
+				].join("\n"),
+			);
+			const session = new PtySession();
+			const ready = Promise.withResolvers<void>();
+			let pinned: Process | null = null;
+			let output = "";
+			const run = session.startArgv(
+				{ application: process.execPath, args: [scriptPath, release], cwd: testDir, timeoutMs: 4000 },
+				(error, chunk) => {
+					if (error) ready.reject(error);
+					output += chunk;
+					if (output.includes("READY")) ready.resolve();
+				},
+				(error, pid) => {
+					if (error) ready.reject(error);
+					else pinned = Process.fromPid(pid);
+				},
+			);
+			try {
+				await Promise.race([
+					ready.promise,
+					run.then(() => {
+						throw new Error("PTY exited before READY");
+					}),
+				]);
+				const child = pinned as Process | null;
+				if (!child) throw new Error("Could not pin PTY fixture");
+				session.kill();
+				expect((await run).cancelled).toBeTrue();
+				expect(child.status()).toBe(ProcessStatus.Exited);
+			} finally {
+				// Release-file cleanup also works after the PTY master closes; no PID-only signal.
+				await Bun.write(release, "release");
+				await run;
+				// Await actual OS exit; fake timers cannot advance a separate process.
+				const deadline = Date.now() + 6000;
+				while (pinned && (pinned as Process).status() !== ProcessStatus.Exited && Date.now() < deadline) {
+					await Bun.sleep(20);
+				}
+			}
 		});
 
 		// Needs this PR's rust; PR CI loads the published natives leaf.

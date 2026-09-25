@@ -2,6 +2,7 @@
 
 use std::{
 	collections::{HashMap, HashSet},
+	sync::Arc,
 	time::Duration,
 };
 
@@ -1765,18 +1766,13 @@ pub const TERM_SIGNAL: i32 = 15;
 /// POSIX `SIGKILL` / Windows hard-termination sentinel.
 pub const KILL_SIGNAL: i32 = 9;
 
-/// A collection of process groups and process trees scheduled for
-/// termination together.
+/// Spawn-pinned process trees scheduled for termination together.
 ///
-/// Built incrementally from job records or PTY metadata, then signalled
-/// in escalating waves (typically `TERM_SIGNAL` followed by
-/// `KILL_SIGNAL` after a grace period). Process-group calls are no-ops
-/// on platforms that do not expose process groups.
+/// Wave snapshots share their pinned descendants with the spawn registry, so
+/// reparenting after TERM cannot erase the ownership needed for KILL.
 #[derive(Default)]
 pub struct TerminationTargets {
-	pgids:     Vec<i32>,
-	processes: Vec<Process>,
-	seen_pids: HashSet<i32>,
+	spawned: Vec<Arc<Mutex<SpawnedProcess>>>,
 }
 
 impl TerminationTargets {
@@ -1786,55 +1782,53 @@ impl TerminationTargets {
 		Self::default()
 	}
 
-	/// Record a process group id. Duplicates are ignored.
-	pub fn add_pgid(&mut self, pgid: i32) {
-		if pgid > 0 && !self.pgids.contains(&pgid) {
-			self.pgids.push(pgid);
-		}
-	}
-
-	/// Record a pid. Duplicates are ignored. If the pid is alive, opens
-	/// a stable [`Process`] reference so the descendant tree can be
-	/// killed even if the original pid is reused later.
-	///
-	/// Prefer [`add_process`](Self::add_process) when the caller already holds a
-	/// [`Process`] captured at spawn time: opening by pid here loses the
-	/// original identity if the pid was recycled between the child exiting
-	/// and this call.
-	pub fn add_pid(&mut self, pid: i32) {
-		if self.seen_pids.insert(pid)
-			&& let Some(process) = Process::from_pid(pid)
-		{
-			self.processes.push(process);
-		}
-	}
-
-	/// Record a pre-pinned [`Process`] handle. Duplicates (by pid) are ignored.
-	///
-	/// This is the correct entry point when the caller captured the handle at
-	/// spawn time — the handle already pins OS-level identity, so no `from_pid`
-	/// re-open (and its PID-reuse race) is needed at cancellation time.
+	/// Record a process handle captured at spawn, never a rediscovered PID.
+	/// Only a pinned group leader can authorize group-wide signals.
 	pub fn add_process(&mut self, process: Process) {
-		if self.seen_pids.insert(process.pid()) {
-			self.processes.push(process);
+		if self.spawned.iter().any(|entry| {
+			entry.lock().process.as_ref().is_some_and(|pinned| {
+				pinned.pid() == process.pid() && pinned.status() == ProcessStatus::Running
+			})
+		}) {
+			return;
 		}
+		let pgid = process.group_id().filter(|pgid| *pgid == process.pid());
+		self
+			.spawned
+			.push(Arc::new(Mutex::new(SpawnedProcess::new(pgid, Some(process)))));
 	}
 
 	/// True when no targets have been recorded.
 	#[must_use]
 	pub const fn is_empty(&self) -> bool {
-		self.pgids.is_empty() && self.processes.is_empty()
+		self.spawned.is_empty()
 	}
 
-	/// Send `signal` to every recorded target. Failures are swallowed:
-	/// targets routinely exit between collection and signalling, and
-	/// the caller's policy is "best effort".
+	/// Send a best-effort signal wave, retaining every pinned survivor.
+	/// Unproven group metadata stays unresolved, but never grants authority.
 	pub fn signal(&self, signal: i32) {
-		for &pgid in &self.pgids {
-			let _ = kill_process_group(pgid, signal);
+		let Some(protection) = host_protection() else {
+			return;
+		};
+		// Pin all known trees before any group signal can kill their roots.
+		for entry in &self.spawned {
+			entry.lock().capture_descendants(&protection.pids);
 		}
-		for process in &self.processes {
-			let _ = process.signal_tree(signal);
+		for entry in &self.spawned {
+			let entry = entry.lock();
+			if entry.group_owned
+				&& let Some(pgid) = entry.pgid
+				&& entry
+					.pinned()
+					.any(|process| process.group_id() == Some(pgid))
+			{
+				let _ = kill_process_group(pgid, signal);
+			}
+			for process in entry.descendants.iter().chain(entry.process.iter()) {
+				if !protection.pids.contains(&process.pid()) {
+					let _ = process.inner.kill(signal);
+				}
+			}
 		}
 	}
 }
@@ -1849,10 +1843,53 @@ impl TerminationTargets {
 /// time — as previous versions did — leaked kills onto unrelated processes
 /// that happened to acquire the recycled pid between the child exiting and
 /// the run being cancelled (issue #4605).
-#[derive(Clone)]
 struct SpawnedProcess {
-	process: Option<Process>,
-	pgid:    Option<i32>,
+	process:     Option<Process>,
+	pgid:        Option<i32>,
+	group_owned: bool,
+	descendants: Vec<Process>,
+}
+
+impl SpawnedProcess {
+	fn new(pgid: Option<i32>, process: Option<Process>) -> Self {
+		let pgid = pgid.filter(|pgid| *pgid > 0);
+		let group_owned = process
+			.as_ref()
+			.is_some_and(|process| pgid == Some(process.pid()) && process.group_id() == pgid);
+		Self { process, pgid, group_owned, descendants: Vec::new() }
+	}
+
+	fn pinned(&self) -> impl Iterator<Item = &Process> {
+		self.process.iter().chain(&self.descendants)
+	}
+
+	fn capture_descendants(&mut self, protected: &HashSet<i32>) {
+		self
+			.descendants
+			.retain(|process| process.status() == ProcessStatus::Running);
+		let mut seen: HashSet<i32> = self.pinned().map(Process::pid).collect();
+		let mut discovered = Vec::new();
+		let mut scanned = HashSet::new();
+		for process in self.pinned() {
+			if !protected.contains(&process.pid()) && scanned.insert(process.pid()) {
+				for child in process.signalable_descendants(protected) {
+					scanned.insert(child.pid());
+					if seen.insert(child.pid()) {
+						discovered.push(child);
+					}
+				}
+			}
+		}
+		self.descendants.extend(discovered);
+		// Once every pinned anchor is gone, a reused PGID cannot restore
+		// ownership. Keep the metadata only for unresolved-resource tracking.
+		self.group_owned = self.group_owned
+			&& self.pgid.is_some_and(|pgid| {
+				self
+					.pinned()
+					.any(|process| process.group_id() == Some(pgid))
+			});
+	}
 }
 
 /// Per-run record of the OS processes a single shell command launched,
@@ -1865,7 +1902,7 @@ struct SpawnedProcess {
 /// explicit — only processes this run actually spawned are ever signalled.
 #[derive(Default)]
 struct RegistryState {
-	spawned:       Vec<SpawnedProcess>,
+	spawned:       Vec<Arc<Mutex<SpawnedProcess>>>,
 	/// The next `spawned.len()` at which `record` runs a sweep. Bounds sweep
 	/// frequency when the live set stabilizes above the initial threshold:
 	/// without this watermark, every subsequent `record` would find
@@ -1910,9 +1947,8 @@ impl SpawnRegistry {
 	///
 	/// The `Process` handle MUST be opened by the caller *immediately* after
 	/// the child's pid becomes visible, so identity is pinned before any race
-	/// with pid recycling can start. When the pin fails (child already exited
-	/// before we could `Process::from_pid`) the entry becomes a no-op at
-	/// termination time — there is nothing left to signal.
+	/// with pid recycling can start. A failed pin never authorizes a signal;
+	/// any still-live observed group remains tracked as unresolved instead.
 	///
 	/// Exited entries are swept opportunistically once the recorded vec
 	/// crosses the next-sweep watermark, so long-running loops of short
@@ -1920,7 +1956,9 @@ impl SpawnRegistry {
 	/// retaining one owned handle per historical spawn.
 	pub fn record(&self, pgid: Option<i32>, process: Option<Process>) {
 		let mut state = self.state.lock();
-		state.spawned.push(SpawnedProcess { process, pgid });
+		state
+			.spawned
+			.push(Arc::new(Mutex::new(SpawnedProcess::new(pgid, process))));
 		if state.spawned.len() >= state.next_sweep_at.max(Self::PRUNE_THRESHOLD) {
 			prune_exited(&mut state.spawned);
 			// Schedule the next sweep `PRUNE_THRESHOLD` further records away.
@@ -1937,76 +1975,41 @@ impl SpawnRegistry {
 	/// signal wave so a child spawned during a grace window — between the
 	/// cancel firing and the next wave — is still reaped.
 	///
-	/// A recorded process contributes only while alive; a recorded pgid
-	/// contributes only while the group still has members, so once the run's
-	/// whole tree exits the targets are empty and the wave loop can stop early.
+	/// Pinned descendants are shared between snapshots and retained across
+	/// waves. A bare live PGID keeps an entry unresolved, never signalable.
 	///
 	/// Pruning also runs here so a cancellation cycle sees a compact target
 	/// set even when the record-time threshold hasn't fired yet.
 	#[must_use]
 	pub fn build_targets(&self) -> TerminationTargets {
-		let mut targets = TerminationTargets::new();
-		let spawned = {
-			let mut state = self.state.lock();
-			prune_exited(&mut state.spawned);
-			// Reset the watermark to the current live-set size + threshold;
-			// leaving a stale pre-sweep value would misgate the next
-			// record-time sweep.
-			state.next_sweep_at = state.spawned.len() + Self::PRUNE_THRESHOLD;
-			state.spawned.clone()
-		};
-		for entry in spawned {
-			if let Some(process) = entry.process {
-				targets.add_process(process);
-			}
-			// If the observer failed to pin a handle at spawn time (the child
-			// exited before `Process::from_pid` could open it), the child is
-			// already gone — signalling anything for that pid would either
-			// no-op or, worse, race a recycled pid onto an unrelated process.
-			// Drop the entry entirely rather than reintroduce the pid-reuse
-			// window this whole change exists to close (#4605).
-			if let Some(pgid) = entry.pgid
-				&& pgid > 0
-				&& process_group_alive(pgid)
-			{
-				targets.add_pgid(pgid);
-			}
-		}
-		targets
+		let mut state = self.state.lock();
+		prune_exited(&mut state.spawned);
+		state.next_sweep_at = state.spawned.len() + Self::PRUNE_THRESHOLD;
+		TerminationTargets { spawned: state.spawned.clone() }
 	}
 }
 
-/// Drop registry entries whose pinned process, process group, and — on
-/// Windows — descendant tree are all gone. With nothing still-live the entry
-/// contributes nothing to the next termination wave and only pins an owned OS
-/// handle for no reason.
-///
-/// The platform split matters because Windows has no process groups. On Unix
-/// a child reparented onto init keeps its pgid, so a live pgid still catches
-/// grandchildren whose immediate parent exited. On Windows there is no
-/// reparenting and no pgid, so we probe the descendant tree directly through
-/// the still-open pinned handle — dropping that handle would release the pid
-/// slot, letting a recycled pid make future Toolhelp walks unsafe (issue
-/// #4605) and orphaning any leftover child from the next cancellation wave.
-fn prune_exited(spawned: &mut Vec<SpawnedProcess>) {
+/// Drop only resolved entries. A live numeric group is evidence of an
+/// unresolved resource, not evidence of ownership. Retained descendant handles
+/// survive root exit and can still authorize their own individual signals.
+fn prune_exited(spawned: &mut Vec<Arc<Mutex<SpawnedProcess>>>) {
 	spawned.retain(|entry| {
-		if let Some(process) = &entry.process {
-			if process.status() == ProcessStatus::Running {
-				return true;
-			}
-			// Windows-only: root exited but the pinned handle still keeps its
-			// pid reserved, so `live_descendants` walks the *original* subtree
-			// via Toolhelp. If any child is still running we must keep the
-			// entry — closing the handle would both release the pid (racing
-			// pid reuse) and strand the surviving child.
-			#[cfg(target_os = "windows")]
-			if !process.live_descendants().is_empty() {
-				return true;
-			}
+		let entry = entry.lock();
+		if entry
+			.pinned()
+			.any(|process| process.status() == ProcessStatus::Running)
+		{
+			return true;
 		}
-		entry
-			.pgid
-			.is_some_and(|pgid| pgid > 0 && process_group_alive(pgid))
+		// Windows keeps the exited root's PID reserved through its handle.
+		#[cfg(target_os = "windows")]
+		if entry
+			.pinned()
+			.any(|process| !process.live_descendants().is_empty())
+		{
+			return true;
+		}
+		entry.pgid.is_some_and(process_group_alive)
 	});
 }
 
@@ -2118,6 +2121,12 @@ mod tests {
 			"owned-child",
 			"nonleader-group",
 			"reparented-child",
+			"registry-unpinned-group",
+			"registry-stale-group",
+			"registry-nonleader-group",
+			"registry-unanchored-escalation",
+			"registry-reparented-child",
+			"targets-reparented-child",
 		] {
 			run_safety_probe(mode, None);
 		}
@@ -2221,6 +2230,21 @@ mod tests {
 	}
 
 	#[cfg(unix)]
+	fn assert_sentinel_responds(child: &mut DisposableChild, output: &mut impl std::io::BufRead) {
+		use std::io::Write;
+		child
+			.0
+			.stdin
+			.as_mut()
+			.expect("sentinel stdin")
+			.write_all(b"probe\n")
+			.expect("probe sentinel");
+		let mut reply = String::new();
+		output.read_line(&mut reply).expect("sentinel response");
+		assert_eq!(reply.trim(), "ALIVE", "unowned sentinel must still respond after signaling");
+	}
+
+	#[cfg(unix)]
 	fn terminate_probe(process: &Process, group: bool) -> bool {
 		tokio::runtime::Builder::new_current_thread()
 			.enable_time()
@@ -2251,6 +2275,26 @@ mod tests {
 		std::io::stdin().read_line(&mut go).expect("read GO");
 		assert_eq!(go, "GO\n", "no signals before controller confirms isolation");
 		assert_eq!(pid, pgid);
+
+		if mode == "detached-tree-root" {
+			use std::{os::unix::process::CommandExt, process::Command};
+			// SAFETY: scalar, read-only query; only our disposable controller may launch
+			// this.
+			assert_eq!(unsafe { libc::getppid() }, sid);
+			assert_ne!(pid, sid, "tree fixture must stay inside the disposable session");
+			let _worker = DisposableChild(
+				Command::new("sh")
+					.args(["-c", "trap '' TERM; echo $$; exec sleep 30"])
+					.process_group(0)
+					.spawn()
+					.expect("spawn detached TERM-resistant worker"),
+			);
+			let mut hold = String::new();
+			std::io::stdin()
+				.read_line(&mut hold)
+				.expect("hold tree root");
+			return;
+		}
 
 		if let Some(operation) = mode.strip_prefix("worker-") {
 			let target: i32 = std::env::var("OMP_PROCESS_SAFETY_TARGET")
@@ -2318,7 +2362,7 @@ mod tests {
 				assert_eq!(pinned.status(), ProcessStatus::Exited);
 				assert_eq!(pinned.identity(), identity, "identity survives process exit");
 			},
-			"nonleader-group" => {
+			"nonleader-group" | "registry-nonleader-group" => {
 				use std::{os::unix::process::CommandExt, process::Command};
 				let leader = DisposableChild(
 					Command::new("sleep")
@@ -2350,7 +2394,13 @@ mod tests {
 				assert_eq!(pinned.group_id(), Some(group));
 				assert_eq!(peer_ref.group_id(), Some(group));
 				let reaper = std::thread::spawn(move || target.0.wait().expect("reap target"));
-				assert!(terminate_probe(&pinned, true));
+				if mode == "registry-nonleader-group" {
+					let registry = SpawnRegistry::new();
+					registry.record(Some(group), Some(pinned));
+					registry.build_targets().signal(KILL_SIGNAL);
+				} else {
+					assert!(terminate_probe(&pinned, true));
+				}
 				let _ = reaper.join().expect("target reaper");
 				assert_eq!(
 					leader_ref.status(),
@@ -2362,6 +2412,167 @@ mod tests {
 					ProcessStatus::Running,
 					"unrelated group member must survive"
 				);
+			},
+			"registry-unpinned-group" | "registry-stale-group" => {
+				use std::{
+					io::{BufRead, BufReader},
+					os::unix::process::CommandExt,
+					process::{Command, Stdio},
+				};
+				let mut foreign = DisposableChild(
+					Command::new("sh")
+						.args(["-c", "echo READY; while read ignored; do echo ALIVE; done"])
+						.process_group(0)
+						.stdin(Stdio::piped())
+						.stdout(Stdio::piped())
+						.spawn()
+						.expect("foreign group"),
+				);
+				let mut output = BufReader::new(foreign.0.stdout.take().expect("sentinel stdout"));
+				let mut ready = String::new();
+				output.read_line(&mut ready).expect("sentinel ready");
+				assert_eq!(ready.trim(), "READY");
+				let foreign_ref = Process::from_pid(foreign.0.id() as i32).expect("pin sentinel");
+				let group = foreign_ref.group_id().expect("sentinel group");
+				assert_eq!(group, foreign_ref.pid());
+				assert_ne!(group, pgid);
+				let stale = if mode == "registry-stale-group" {
+					let mut original = disposable_sleep();
+					let pinned = Process::from_pid(original.0.id() as i32).expect("pin original");
+					original.0.kill().expect("end original owned child");
+					original.0.wait().expect("reap original");
+					assert_eq!(pinned.status(), ProcessStatus::Exited);
+					Some(pinned)
+				} else {
+					None
+				};
+				let registry = SpawnRegistry::new();
+				registry.record(Some(group), stale);
+				for signal in [TERM_SIGNAL, KILL_SIGNAL] {
+					let targets = registry.build_targets();
+					assert!(!targets.is_empty(), "unproven live group must stay unresolved");
+					targets.signal(signal);
+					assert_sentinel_responds(&mut foreign, &mut output);
+				}
+			},
+			"registry-unanchored-escalation" => {
+				use std::{
+					io::{BufRead, BufReader},
+					os::unix::process::CommandExt,
+					process::{Command, Stdio},
+				};
+				let mut leader = DisposableChild(
+					Command::new("sleep")
+						.arg("30")
+						.process_group(0)
+						.spawn()
+						.expect("owned leader"),
+				);
+				let pinned = Process::from_pid(leader.0.id() as i32).expect("pin leader");
+				let group = pinned.group_id().expect("owned group");
+				assert_eq!(group, pinned.pid());
+				assert_ne!(group, pgid);
+				// This member is not a descendant and is never pinned in the registry.
+				let mut peer = DisposableChild(
+					Command::new("sh")
+						.args(["-c", "trap '' TERM; echo READY; while read ignored; do echo ALIVE; done"])
+						.process_group(group)
+						.stdin(Stdio::piped())
+						.stdout(Stdio::piped())
+						.spawn()
+						.expect("unowned group peer"),
+				);
+				let mut ready = String::new();
+				let mut output = BufReader::new(peer.0.stdout.take().expect("peer stdout"));
+				output.read_line(&mut ready).expect("peer ready");
+				assert_eq!(ready.trim(), "READY");
+				let registry = SpawnRegistry::new();
+				registry.record(Some(group), Some(pinned));
+				let targets = registry.build_targets();
+				targets.signal(TERM_SIGNAL);
+				leader.0.wait().expect("reap leader after TERM");
+				targets.signal(KILL_SIGNAL);
+				let retry = registry.build_targets();
+				assert!(!retry.is_empty(), "unanchored group must remain unresolved");
+				retry.signal(KILL_SIGNAL);
+				assert_sentinel_responds(&mut peer, &mut output);
+			},
+			"registry-reparented-child" | "targets-reparented-child" => {
+				use std::{
+					io::{BufRead, BufReader},
+					os::unix::process::CommandExt,
+					process::{Command, Stdio},
+				};
+				let mut root = DisposableChild(
+					Command::new(std::env::current_exe().expect("test executable"))
+						.args([
+							"--exact",
+							"process::tests::process_safety_probe",
+							"--ignored",
+							"--nocapture",
+						])
+						.env("OMP_PROCESS_SAFETY_MODE", "detached-tree-root")
+						.process_group(0)
+						.stdin(Stdio::piped())
+						.stdout(Stdio::piped())
+						.spawn()
+						.expect("spawn owned tree fixture"),
+				);
+				let pinned = Process::from_pid(root.0.id() as i32).expect("pin tree root");
+				let mut output = BufReader::new(root.0.stdout.take().expect("fixture stdout"));
+				let mut line = String::new();
+				loop {
+					line.clear();
+					assert!(output.read_line(&mut line).expect("fixture handshake") > 0);
+					if line.starts_with("OMP_PROCESS_READY ") {
+						break;
+					}
+				}
+				// Confirm nested isolation before allowing the worker to spawn.
+				let reported: Vec<i32> = line
+					.split_whitespace()
+					.skip(1)
+					.map(|part| part.parse().expect("numeric handshake"))
+					.collect();
+				// SAFETY: scalar, read-only session query.
+				assert_eq!(unsafe { libc::getsid(pinned.pid()) }, sid);
+				assert_eq!(pinned.group_id(), Some(pinned.pid()));
+				assert_eq!(reported, vec![pinned.pid(), pinned.pid(), sid]);
+				let mut input = root.0.stdin.take().expect("fixture stdin");
+				input.write_all(b"GO\n").expect("release fixture");
+				line.clear();
+				output.read_line(&mut line).expect("worker READY");
+				let child = Process::from_pid(line.trim().parse().expect("worker pid"))
+					.expect("pin worker before root exit");
+				assert_eq!(child.ppid(), Some(pinned.pid()));
+				assert_eq!(child.group_id(), Some(child.pid()), "worker escaped root group");
+				let registry = SpawnRegistry::new();
+				let targets = if mode == "registry-reparented-child" {
+					registry.record(pinned.group_id(), Some(pinned));
+					registry.build_targets()
+				} else {
+					let mut targets = TerminationTargets::new();
+					targets.add_process(pinned);
+					targets
+				};
+				targets.signal(TERM_SIGNAL);
+				root.0.wait().expect("reap fixture root after TERM");
+				assert_eq!(child.status(), ProcessStatus::Running, "worker must resist TERM");
+				if mode == "registry-reparented-child" {
+					drop(targets);
+					let retry = registry.build_targets();
+					assert!(!retry.is_empty(), "registry must retain escaped pinned worker");
+					retry.signal(KILL_SIGNAL);
+				} else {
+					targets.signal(KILL_SIGNAL);
+				}
+				let exited = tokio::runtime::Builder::new_current_thread()
+					.enable_time()
+					.build()
+					.expect("runtime")
+					.block_on(child.wait_for_exit(Some(Duration::from_secs(1)), CancelToken::default()))
+					.expect("wait for worker");
+				assert!(exited, "reparented worker must receive the retained KILL wave");
 			},
 			"reparented-child" => {
 				use std::{
@@ -2465,98 +2676,6 @@ mod tests {
 		);
 	}
 
-	/// Regression test for issue #4605: `SpawnRegistry` MUST pin a stable
-	/// [`Process`] reference at spawn time rather than defer re-opening the
-	/// pid until termination.
-	///
-	/// Before the fix, `SpawnRegistry` stored only the raw pid; `build_targets`
-	/// called `Process::from_pid` at cancellation time. On Windows pids recycle
-	/// aggressively, so a bash-spawned `pwsh.exe` that had already exited could
-	/// see its pid reassigned to an unrelated PowerShell session (e.g. the
-	/// user's other Cursor terminal). `Process::from_pid` at cancel time would
-	/// happily open that unrelated process, and `signal_tree` would then
-	/// enumerate — and `TerminateProcess` — the entire foreign subtree.
-	///
-	/// This test cannot literally trigger Windows pid recycling from a
-	/// cross-platform Rust test, but it can prove the observable defense: a
-	/// recorded process reference survives the original pid's death (so no
-	/// "look it up again" step exists to be raced), and the registry never
-	/// consults `Process::from_pid` when a handle was pinned at record time.
-	#[cfg(unix)]
-	#[test]
-	fn spawn_registry_pins_identity_at_record_time() {
-		use std::{process::Command, thread, time::Duration};
-
-		// Phase 1: while the child is alive, the pinned handle carries identity
-		// forward into `build_targets` without any `Process::from_pid` re-open
-		// step existing to be raced against pid reuse.
-		let mut long = Command::new("sleep")
-			.arg("30")
-			.spawn()
-			.expect("spawn sleep");
-		let long_pid = i32::try_from(long.id()).expect("child pid fits in i32");
-
-		let registry = SpawnRegistry::new();
-		let pinned = Process::from_pid(long_pid).expect("pin child at record time");
-		registry.record(None, Some(pinned));
-
-		let live_targets = registry.build_targets();
-		assert!(
-			!live_targets.is_empty(),
-			"a still-live pinned child must appear in the target set — otherwise the cancellation \
-			 cleanup would silently miss it"
-		);
-		let live_pids: Vec<i32> = live_targets.processes.iter().map(Process::pid).collect();
-		assert_eq!(
-			live_pids,
-			vec![long_pid],
-			"target set must come from the pinned handle recorded at spawn time, not a re-lookup by \
-			 pid (which would race pid reuse — issue #4605)"
-		);
-
-		let _ = long.kill();
-		let _ = long.wait();
-
-		// Phase 2: once the child exits, the registry MUST drop the entry
-		// rather than reintroduce a `Process::from_pid` re-open at kill time.
-		// Poll until pruning sees the pidfd as Exited (kernel-visible within
-		// milliseconds in practice).
-		let mut empty_after_exit = false;
-		for _ in 0..40 {
-			if registry.build_targets().is_empty() {
-				empty_after_exit = true;
-				break;
-			}
-			thread::sleep(Duration::from_millis(25));
-		}
-		assert!(
-			empty_after_exit,
-			"once the pinned child exits the registry must drop it — re-opening by pid at \
-			 termination time is exactly the pid-reuse race #4605 closes"
-		);
-	}
-
-	/// `TerminationTargets::add_process` must accept a pre-pinned handle
-	/// without going through `Process::from_pid`. This is the API contract
-	/// `SpawnRegistry` relies on to avoid the PID-reuse race.
-	#[cfg(unix)]
-	#[test]
-	fn add_process_bypasses_from_pid_lookup() {
-		let self_pid = i32::try_from(std::process::id()).expect("self pid fits in i32");
-		let pinned = Process::from_pid(self_pid).expect("pin self");
-
-		let mut targets = TerminationTargets::new();
-		targets.add_process(pinned.clone());
-		assert!(!targets.is_empty(), "add_process must record the pinned handle");
-
-		// Adding the same pid again through either entry point must dedupe:
-		// otherwise every wave in `terminate_run` would re-signal the same
-		// tree N times.
-		targets.add_process(pinned);
-		targets.add_pid(self_pid);
-		assert_eq!(targets.processes.len(), 1, "duplicate pids must be deduped");
-	}
-
 	/// Regression test for the review on PR #4606: a long-running shell
 	/// command that spawns many short-lived external processes must not
 	/// retain one owned handle per historical spawn — that would exhaust
@@ -2610,54 +2729,5 @@ mod tests {
 		// contract that fully-exited registries stop the wave loop early.
 		let targets = registry.build_targets();
 		assert!(targets.is_empty(), "registry of only-dead entries must produce an empty target set");
-	}
-
-	/// Regression test for the third review on PR #4606: once the recorded
-	/// vec crosses `PRUNE_THRESHOLD`, subsequent `record` calls must NOT
-	/// sweep on every spawn. Without the `next_sweep_at` watermark, a large
-	/// fan-out run whose live children exceed the threshold turned every
-	/// spawn into an O(N) status probe of the whole retained set.
-	///
-	/// The check reasons about the observable side effect: after N records
-	/// past threshold with entries that CANNOT be pruned (all still live),
-	/// the retained size grows monotonically by exactly N — no sweep runs
-	/// have modified the vec in between. The direct signal of "did a sweep
-	/// happen" is a stable pinned handle count across records.
-	#[cfg(unix)]
-	#[test]
-	fn spawn_registry_watermark_bounds_sweep_frequency() {
-		let self_pid = i32::try_from(std::process::id()).expect("self pid fits in i32");
-		let registry = SpawnRegistry::new();
-
-		// Fill past threshold with entries that are permanently alive
-		// (pinning ourselves) so the pruner has nothing to remove.
-		let fill = SpawnRegistry::PRUNE_THRESHOLD + 10;
-		for _ in 0..fill {
-			registry.record(None, Process::from_pid(self_pid));
-		}
-		let after_fill = registry.state.lock().spawned.len();
-		assert_eq!(after_fill, fill, "live-only entries must not be pruned during warm-up");
-		let watermark_after_fill = registry.state.lock().next_sweep_at;
-
-		// Every additional record with a live entry must land in the vec
-		// verbatim and — critically — NOT re-enter `prune_exited` until the
-		// vec crosses the freshly scheduled watermark. If the guard were
-		// still `len >= PRUNE_THRESHOLD` (pre-fix), a sweep would fire on
-		// every one of these records.
-		let extra = 20;
-		for _ in 0..extra {
-			registry.record(None, Process::from_pid(self_pid));
-		}
-		let after_extra = registry.state.lock().spawned.len();
-		assert_eq!(
-			after_extra,
-			after_fill + extra,
-			"records with live entries must accumulate without triggering per-spawn sweeps"
-		);
-		assert_eq!(
-			registry.state.lock().next_sweep_at,
-			watermark_after_fill,
-			"watermark must not advance while the vec stays below it — otherwise a sweep ran"
-		);
 	}
 }
