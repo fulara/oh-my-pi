@@ -29,6 +29,9 @@ export interface SubagentLifecyclePayload {
 	status: "started" | "completed" | "failed" | "aborted";
 	sessionFile?: string;
 	parentToolCallId?: string;
+	/** Logical identities captured at launch, independent of registry display names. */
+	parentSessionId?: string;
+	sessionId?: string;
 	index: number;
 	/**
 	 * Spawn runs as a detached background job: the parent turn keeps working
