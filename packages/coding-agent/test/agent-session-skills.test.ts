@@ -56,7 +56,7 @@ async function harness(
 ) {
 	const dir = TempDir.createSync("@pi-session-skills-");
 	const auth = await AuthStorage.create(":memory:");
-	auth.setRuntimeApiKey("mock", "test-key");
+	auth.keys.setRuntime("mock", "test-key");
 	const mock = createMockModel(
 		options.responses ? { responses: options.responses } : { handler: () => ({ content: ["acknowledged"] }) },
 	);

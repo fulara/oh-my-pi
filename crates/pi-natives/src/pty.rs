@@ -391,6 +391,13 @@ fn run_pty_sync(
 	drop(pair.slave);
 	let child_process_id = child.process_id();
 	let child_pid = child_process_id.and_then(|value| i32::try_from(value).ok());
+	// Pin before callbacks or try_wait can observe/reap the spawned child.
+	// PTY foreground-group metadata is discovery, not signal authority.
+	let mut targets = ps::TerminationTargets::new();
+	let pinned_child = child_pid.and_then(pi_shell::process::Process::from_pid);
+	if let Some(process) = &pinned_child {
+		targets.add_process(process.clone());
+	}
 	if let Some(callback) = on_start.as_ref() {
 		callback.call(Ok(child_process_id.unwrap_or(0)), ThreadsafeFunctionCallMode::NonBlocking);
 	}
@@ -454,20 +461,6 @@ fn run_pty_sync(
 		let _ = reader_tx.send(ReaderEvent::Done);
 	});
 
-	// Pin the kill targets before the waiter thread can reap the child: after
-	// the reap its pid may be recycled, and a pid-only signal (a lookup at
-	// cancellation time, or portable-pty's `clone_killer`) would hit whatever
-	// process took it (#4605). The child is only ever signalled through
-	// `pinned_child`.
-	let mut targets = ps::TerminationTargets::new();
-	#[cfg(unix)]
-	if let Some(pgid) = master.process_group_leader().filter(|pgid| *pgid > 0) {
-		targets.add_pgid(pgid);
-	}
-	let pinned_child = child_pid.and_then(pi_shell::process::Process::from_pid);
-	if let Some(process) = &pinned_child {
-		targets.add_process(process.clone());
-	}
 	// Exit, cancellation and JS failure all arrive as control messages, so the
 	// loop below parks in `recv` instead of polling `try_wait`/`heartbeat` on a
 	// timer: an idle session costs no wakeups, and exit is seen immediately.
