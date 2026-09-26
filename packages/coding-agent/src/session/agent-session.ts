@@ -739,6 +739,7 @@ export class AgentSession implements SettingsScope {
 	#idleRecaps?: SessionRecapController;
 	#observedSessionId: string | undefined;
 	readonly #sessionSkills: SessionSkills;
+	/** Kept until the agent is drained: beginDispose's registry runs before deferred shutdown hooks settle. */
 	#unsubscribeSessionSkills?: () => void;
 	#lastSessionSkillsContextRevision: string | undefined;
 
@@ -8856,7 +8857,7 @@ export class AgentSession implements SettingsScope {
 					}
 					await this.sessionManager.newSession({
 						...options,
-						additionalDirectories: this.settings.get("workspace.additionalDirectories"),
+						additionalDirectories: cfgWorkspaceAdditionalDirectories.get(this.settings),
 					});
 					this.#bash.markSessionTransition(bashTransition);
 					// The new session owns the transcript from here, so the previous
@@ -10401,11 +10402,11 @@ export class AgentSession implements SettingsScope {
 				const hasServiceTierEntry = this.sessionManager
 					.getBranch()
 					.some(entry => entry.type === "service_tier_change");
-				const defaultThinkingLevel = parseConfiguredThinkingLevel(this.settings.get("defaultThinkingLevel"));
+				const defaultThinkingLevel = parseConfiguredThinkingLevel(cfgDefaultThinkingLevel.get(this.settings));
 				const configuredServiceTierByFamily = buildServiceTierByFamily(
-					this.settings.get("tier.openai"),
-					this.settings.get("tier.anthropic"),
-					this.settings.get("tier.google"),
+					cfgTierOpenai.get(this.settings),
+					cfgTierAnthropic.get(this.settings),
+					cfgTierGoogle.get(this.settings),
 				);
 				// Restore the thinking selector. Each change persists the configured
 				// selector (`auto` or a concrete level), so prefer it: an `auto` session
