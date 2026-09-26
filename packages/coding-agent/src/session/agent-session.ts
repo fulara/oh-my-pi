@@ -909,6 +909,7 @@ export class AgentSession implements SettingsScope {
 	#idleRecaps?: SessionRecapController;
 	#observedSessionId: string | undefined;
 	readonly #sessionSkills: SessionSkills;
+	/** Kept until the agent is drained: beginDispose's registry runs before deferred shutdown hooks settle. */
 	#unsubscribeSessionSkills?: () => void;
 	#lastSessionSkillsContextRevision: string | undefined;
 
@@ -10044,7 +10045,7 @@ export class AgentSession implements SettingsScope {
 					}
 					await this.sessionManager.newSession({
 						...options,
-						additionalDirectories: this.settings.get("workspace.additionalDirectories"),
+						additionalDirectories: cfgWorkspaceAdditionalDirectories.get(this.settings),
 					});
 					this.#bash.markSessionTransition(bashTransition);
 					// The new session owns the transcript from here, so the previous
