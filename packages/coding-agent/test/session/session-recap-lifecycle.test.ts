@@ -7,6 +7,7 @@ import { AssistantMessageEventStream } from "@oh-my-pi/pi-ai/utils/event-stream"
 import { getBundledModel } from "@oh-my-pi/pi-catalog/models";
 import { ModelRegistry } from "@oh-my-pi/pi-coding-agent/config/model-registry";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
+import { cfgRecapEnabled, cfgRecapIdleSeconds } from "@oh-my-pi/pi-coding-agent/modes/settings";
 import { AgentSession } from "@oh-my-pi/pi-coding-agent/session/agent-session";
 import type { AuthStorage } from "@oh-my-pi/pi-coding-agent/session/auth-storage";
 import { convertToLlm } from "@oh-my-pi/pi-coding-agent/session/messages";
@@ -163,7 +164,7 @@ describe("shared idle recap lifecycle", () => {
 		expect(await Bun.file(file).text()).toBe(historyBefore);
 		expect(session.isStreaming).toBe(false);
 
-		session.settings.set("recap.enabled", false);
+		cfgRecapEnabled.set(session.settings, false);
 		expect(readRpcSessionRecap(session, id).recap?.id).toBe(state.recap?.id);
 		await session.prompt("New history");
 		vi.advanceTimersByTime(1_000);
@@ -196,6 +197,158 @@ describe("shared idle recap lifecycle", () => {
 			disable();
 		}
 	});
+
+	it("arms when enabled mid-idle without redelivering a persisted recap", async () => {
+		cfgRecapEnabled.override(session.settings, false);
+		const displayed: string[] = [];
+		session.enableIdleRecaps({ onRecap: text => displayed.push(text) });
+		await session.prompt("Complete work while recaps are disabled");
+		vi.advanceTimersByTime(1_000);
+		await flushMicrotasks();
+		expect(requests).toHaveLength(0);
+
+		cfgRecapEnabled.override(session.settings, true);
+		await flushMicrotasks();
+		vi.advanceTimersByTime(1_000);
+		await flushMicrotasks();
+		expect(requests).toHaveLength(1);
+		await finishRecap(0, "Recap body.");
+		const saved = session.getSessionRecap().recap;
+		expect(saved?.text).toBe("Recap body.");
+
+		cfgRecapIdleSeconds.override(session.settings, 2);
+		await flushMicrotasks();
+		cfgRecapEnabled.override(session.settings, false);
+		await flushMicrotasks();
+		cfgRecapEnabled.override(session.settings, true);
+		await flushMicrotasks();
+		vi.advanceTimersByTime(2_000);
+		await flushMicrotasks();
+		expect(requests).toHaveLength(1);
+		expect(displayed).toEqual(["Recap body."]);
+		expect(session.getSessionRecap().recap?.id).toBe(saved?.id);
+	});
+
+	it("restarts the pending delay when idleSeconds changes", async () => {
+		enableRpcSessionRecaps(session);
+		await session.prompt("Complete work");
+		vi.advanceTimersByTime(500);
+		cfgRecapIdleSeconds.override(session.settings, 2);
+		await flushMicrotasks();
+		vi.advanceTimersByTime(1_999);
+		await flushMicrotasks();
+		expect(requests).toHaveLength(0);
+		vi.advanceTimersByTime(1);
+		await flushMicrotasks();
+		expect(requests).toHaveLength(1);
+		await finishRecap();
+		expect(session.getSessionRecap().recap?.stale).toBe(false);
+	});
+
+	it("cancels the pending delay when disabled and can rearm the same idle turn", async () => {
+		enableRpcSessionRecaps(session);
+		await session.prompt("Complete work");
+		cfgRecapEnabled.override(session.settings, false);
+		await flushMicrotasks();
+		vi.advanceTimersByTime(1_000);
+		await flushMicrotasks();
+		expect(requests).toHaveLength(0);
+		cfgRecapEnabled.override(session.settings, true);
+		await flushMicrotasks();
+		vi.advanceTimersByTime(1_000);
+		await flushMicrotasks();
+		await finishRecap();
+		expect(session.getSessionRecap().recap?.stale).toBe(false);
+	});
+
+	it("aborts inference on settings changes and drains ignored cancellation before rearming", async () => {
+		await beginRecap();
+		cfgRecapEnabled.override(session.settings, false);
+		await flushMicrotasks();
+		expect(requests[0].signal?.aborted).toBe(true);
+		expect(session.getSessionRecap().generating).toBe(false);
+		cfgRecapEnabled.override(session.settings, true);
+		await flushMicrotasks();
+		vi.advanceTimersByTime(1_000);
+		await flushMicrotasks();
+		expect(requests).toHaveLength(1);
+		await finishRecap(0, "Cancelled reply");
+		expect(session.getSessionRecap().recap).toBeNull();
+		expect(requests).toHaveLength(2);
+		await finishRecap(1, "Current reply");
+		expect(session.getSessionRecap().recap?.text).toBe("Current reply");
+	});
+
+	it("does not arm from settings changes before an enabled host observes a terminal settle", async () => {
+		await session.prompt("Complete before activation");
+		enableRpcSessionRecaps(session);
+		cfgRecapIdleSeconds.override(session.settings, 2);
+		await flushMicrotasks();
+		vi.advanceTimersByTime(2_000);
+		await flushMicrotasks();
+		expect(requests).toHaveLength(0);
+		expect(session.getSessionRecap().recap).toBeNull();
+	});
+
+	it.each(["queuedMessageCount", "isCompacting"] as const)(
+		"guards settings-triggered inference and late replies while %s is active",
+		async guard => {
+			const displayed: string[] = [];
+			session.enableIdleRecaps({ onRecap: text => displayed.push(text) });
+			await session.prompt("Complete work");
+			let blocked = true;
+			Object.defineProperty(session, guard, {
+				configurable: true,
+				get: () => (guard === "queuedMessageCount" ? Number(blocked) : blocked),
+			});
+			try {
+				cfgRecapIdleSeconds.override(session.settings, 2);
+				await flushMicrotasks();
+				vi.advanceTimersByTime(2_000);
+				await flushMicrotasks();
+				expect(requests).toHaveLength(0);
+				blocked = false;
+				cfgRecapIdleSeconds.override(session.settings, 1);
+				await flushMicrotasks();
+				vi.advanceTimersByTime(1_000);
+				await flushMicrotasks();
+				expect(requests).toHaveLength(1);
+				blocked = true;
+				await finishRecap(0, "No longer idle");
+				expect(displayed).toEqual([]);
+				expect(session.getSessionRecap().recap).toBeNull();
+			} finally {
+				Reflect.deleteProperty(session, guard);
+			}
+		},
+	);
+
+	it.each(["pending-timer", "in-flight-reply"] as const)(
+		"detaches the host and settings listener during %s",
+		async phase => {
+			const displayed: string[] = [];
+			const disable = session.enableIdleRecaps({ onRecap: text => displayed.push(text) });
+			await session.prompt("Complete work");
+			if (phase === "in-flight-reply") {
+				vi.advanceTimersByTime(1_000);
+				await flushMicrotasks();
+				expect(requests[0].signal?.aborted).toBe(false);
+			}
+			disable();
+			cfgRecapIdleSeconds.override(session.settings, 2);
+			await flushMicrotasks();
+			vi.advanceTimersByTime(2_000);
+			await flushMicrotasks();
+			if (phase === "in-flight-reply") {
+				expect(requests[0].signal?.aborted).toBe(true);
+				await finishRecap(0, "Detached reply");
+			} else {
+				expect(requests).toHaveLength(0);
+			}
+			expect(displayed).toEqual([]);
+			expect(session.getSessionRecap()).toMatchObject({ enabled: false, recap: null });
+		},
+	);
 
 	it.each(["new", "fork", "same-id-switch", "failed-switch", "dispose"] as const)(
 		"rejects provider output arriving after %s even when abort is ignored",

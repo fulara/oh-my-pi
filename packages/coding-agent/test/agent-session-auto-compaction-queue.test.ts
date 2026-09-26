@@ -565,8 +565,8 @@ describe("AgentSession auto-compaction queue resume", () => {
 	});
 
 	it("RPC compact approval dispatches only the approved execution, not the interrupted turn", async () => {
-		session.settings.set("compaction.keepRecentTokens", 1);
-		session.settings.override("compaction.autoContinue", true);
+		cfgCompactionKeepRecentTokens.set(session.settings, 1);
+		cfgCompactionAutoContinue.override(session.settings, true);
 		sessionManager.appendMessage({
 			role: "assistant",
 			content: [{ type: "text", text: "previous answer" }],

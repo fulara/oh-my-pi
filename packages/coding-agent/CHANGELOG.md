@@ -962,6 +962,11 @@
 - Preserved MCP `structuredContent` in live tool-result details so evaluation callers can consume server data without reparsing model-facing JSON; spilled results continue to retain an artifact reference without duplicating the payload in session history.
 - Fixed Collab hosts becoming unable to reclaim a room after a brief network interruption; hosts now retry room recovery without losing guests or queued updates.
 - Fixed one-shot commands that stopped before completing, such as `omp config set` on a fresh Windows profile, incorrectly exiting successfully without output; they now report failure with diagnostic guidance.
+### Fixed
+
+- Fura fork: rebased RPC handlers onto 18.3.2's typed settings registry, canonical URL normalization and ticket-based prompt results while retaining durable client prompt identity, skill attachments, BTW transition ownership and session activity/recaps.
+- Fura fork: shared TUI/RPC idle recaps react to settings changes after a terminal settle without duplicating a delivered recap; pending/in-flight work remains guarded against queues, compaction, drafts and stale session provenance.
+- Removed the obsolete edit regression row that rejected an unmarked `generated.ts` by basename alone; generated-header and invalid-UTF-8 protection remain covered, consistent with #13139.
 
 ## [18.3.2] - 2026-09-25
 

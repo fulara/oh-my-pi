@@ -46,7 +46,8 @@ import {
 } from "../../extensibility/skills";
 import { loadSlashCommands } from "../../extensibility/slash-commands";
 import type { Goal } from "@oh-my-pi/pi-tui/tools/goal";
-import { resolveLocalUrlToPath } from "../../internal-urls";
+import { cfgGoalEnabled } from "../../goals/settings";
+import { InternalUrlRouter, resolveLocalUrlToPath } from "../../internal-urls";
 import { type Theme, theme } from "@oh-my-pi/pi-tui/theme";
 import { AgentLifecycleManager } from "../../registry/agent-lifecycle";
 import {
@@ -60,6 +61,7 @@ import { SessionBusyError } from "../../session/agent-session";
 import type { RestoredQueuedMessage } from "../../session/agent-session-types";
 import { CACHE_WARMING_MODES } from "../../session/cache-warmer";
 import { type PlanApprovalDetails, resolvePlanTitle } from "../../plan-mode/approved-plan";
+import { cfgPlanEnabled } from "../../plan-mode/settings";
 import planModeApprovedPrompt from "../../prompts/system/plan-mode-approved.md" with { type: "text" };
 import planModeCompactInstructionsPrompt from "../../prompts/system/plan-mode-compact-instructions.md" with { type: "text" };
 import type { AgentSession, AgentSessionEvent } from "../../session/agent-session";
@@ -71,7 +73,7 @@ import { executeAcpBuiltinSlashCommand } from "../../slash-commands/acp-builtins
 import { buildAvailableSlashCommands } from "../../slash-commands/available-commands";
 import { listLogoutAccounts, logoutCredential } from "../../slash-commands/helpers/logout";
 import { defaultLoadModeForToolName } from "../../tools/essential-tools";
-import { normalizeLocalScheme, resolveToCwd } from "../../tools/path-utils";
+import { resolveToCwd } from "../../tools/path-utils";
 import { PROPOSE_DEVICE_NAME } from "@oh-my-pi/pi-tui/tools/resolve";
 import { ToolError } from "@oh-my-pi/pi-tui/tools/tool-errors";
 import { writeDeviceDispatch } from "../../tools/resolve";
@@ -1180,7 +1182,7 @@ function getRpcLocalOptions(session: AgentSession) {
 }
 
 export function resolveRpcPlanPath(session: AgentSession, planFilePath: string): string {
-	const normalized = normalizeLocalScheme(planFilePath);
+	const normalized = InternalUrlRouter.instance().normalize(planFilePath);
 	if (normalized.startsWith("local:")) {
 		return resolveLocalUrlToPath(normalized, getRpcLocalOptions(session));
 	}
@@ -1225,7 +1227,7 @@ export async function buildRpcPlanApprovalDetails(
 }
 
 function isLocalPlanPath(planFilePath: string): boolean {
-	return normalizeLocalScheme(planFilePath).startsWith("local:");
+	return InternalUrlRouter.instance().normalize(planFilePath).startsWith("local:");
 }
 
 function isBlockingGoalModeState(session: AgentSession): boolean {
@@ -1348,7 +1350,7 @@ export function createFuraRpcRuntime(
 	};
 
 	const handleGoalMode = async (command: Extract<RpcCommand, { type: "goal_mode" }>): Promise<RpcResponse> => {
-		if (!session.settings.get("goal.enabled")) {
+		if (!cfgGoalEnabled.get(session.settings)) {
 			return errorResponse(command.id, "goal_mode", "Goal mode is disabled. Enable it in settings (goal.enabled).");
 		}
 		if (session.getPlanModeState()?.enabled) {
@@ -1478,8 +1480,9 @@ export function createFuraRpcRuntime(
 		if (planFilePath === finalPlanFilePath) return undefined;
 		if (!isLocalPlanPath(planFilePath) || !isLocalPlanPath(finalPlanFilePath)) return undefined;
 		const localOptions = getRpcLocalOptions(session);
-		const source = resolveLocalUrlToPath(normalizeLocalScheme(planFilePath), localOptions);
-		const destination = resolveLocalUrlToPath(normalizeLocalScheme(finalPlanFilePath), localOptions);
+		const router = InternalUrlRouter.instance();
+		const source = resolveLocalUrlToPath(router.normalize(planFilePath), localOptions);
+		const destination = resolveLocalUrlToPath(router.normalize(finalPlanFilePath), localOptions);
 		if (source === destination) return undefined;
 		try {
 			const destinationStat = await fs.stat(destination);
@@ -1768,7 +1771,7 @@ export function createFuraRpcRuntime(
 
 		const sessionContext = session.sessionManager.buildSessionContext();
 		if (sessionContext.mode === "goal" || sessionContext.mode === "goal_paused") {
-			if (!session.settings.get("goal.enabled")) {
+			if (!cfgGoalEnabled.get(session.settings)) {
 				session.sessionManager.appendModeChange("none");
 				return;
 			}
@@ -1788,7 +1791,7 @@ export function createFuraRpcRuntime(
 		}
 
 		if (sessionContext.mode === "plan" || sessionContext.mode === "plan_paused") {
-			if (!session.settings.get("plan.enabled")) {
+			if (!cfgPlanEnabled.get(session.settings)) {
 				session.sessionManager.appendModeChange("none");
 				return;
 			}
