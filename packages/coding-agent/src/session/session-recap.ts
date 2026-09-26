@@ -1,6 +1,7 @@
 import type { Model } from "@oh-my-pi/pi-ai";
 import { logger, prompt } from "@oh-my-pi/pi-utils";
 import { getHistoryDbPath } from "@oh-my-pi/pi-utils/dirs";
+import { cfgRecap } from "../modes/settings";
 import idleRecapPrompt from "../prompts/system/recap-user.md" with { type: "text" };
 import { nextActionableTask } from "../tools/todo";
 import type { AgentSession, AgentSessionEvent } from "./agent-session";
@@ -42,6 +43,9 @@ interface RecapSource {
 /** One lifecycle owner per AgentSession, shared by the TUI and rpc-ui. */
 export class SessionRecapController {
 	#host: IdleRecapHost | undefined;
+	#unsubscribeSettings: (() => void) | undefined;
+	/** A terminal settle, not activation or read traffic, makes live rearming eligible. */
+	#settled = false;
 	#epoch = 0;
 	#timer: NodeJS.Timeout | undefined;
 	#pending: RecapSource | undefined;
@@ -55,15 +59,27 @@ export class SessionRecapController {
 		if (this.session.isDisposed) throw new Error("Cannot enable recaps on a disposed session");
 		if (this.#host) throw new Error("Idle recaps already have a host");
 		this.#host = host;
+		this.#unsubscribeSettings = cfgRecap.listen(this.session.settings, () => {
+			if (!this.#settled) return;
+			// A settings change supersedes unfinished inference, not a delivered recap.
+			// Preserve the request latch until even an abort-ignoring provider settles.
+			if (this.#attempted === this.#request?.source) this.#attempted = undefined;
+			this.invalidate();
+			this.#settled = true;
+			this.#schedule();
+		});
 		return () => {
 			if (this.#host !== host) return;
 			this.#host = undefined;
+			this.#unsubscribeSettings?.();
+			this.#unsubscribeSettings = undefined;
 			this.invalidate();
 		};
 	}
 
 	/** Keep the request latch until it settles, even if the provider ignores abort. */
 	invalidate(): void {
+		this.#settled = false;
 		this.#epoch++;
 		clearTimeout(this.#timer);
 		this.#timer = undefined;
@@ -74,6 +90,8 @@ export class SessionRecapController {
 
 	dispose(): void {
 		this.#host = undefined;
+		this.#unsubscribeSettings?.();
+		this.#unsubscribeSettings = undefined;
 		this.invalidate();
 	}
 
@@ -88,7 +106,9 @@ export class SessionRecapController {
 				break;
 			case "agent_end": {
 				if (event.isTerminal === false) break;
+				if (!this.#host) break;
 				if (!this.session.hasAdmittedSubmission) {
+					this.#settled = true;
 					this.#schedule();
 					break;
 				}
@@ -97,7 +117,9 @@ export class SessionRecapController {
 				// a newer submission/transition invalidates this epoch meanwhile.
 				const epoch = this.#epoch;
 				void this.session.waitForAdmittedSubmissions().then(() => {
-					if (epoch === this.#epoch) this.#schedule();
+					if (epoch !== this.#epoch) return;
+					this.#settled = true;
+					this.#schedule();
 				});
 				break;
 			}
@@ -106,7 +128,7 @@ export class SessionRecapController {
 
 	read(): RpcSessionRecapSnapshot {
 		const session = this.session;
-		const settings = session.settings.getGroup("recap");
+		const settings = cfgRecap.get(session.settings);
 		const snapshot: RpcSessionRecapSnapshot = {
 			sessionId: session.sessionId,
 			enabled: Boolean(this.#host) && settings.enabled,
@@ -136,11 +158,12 @@ export class SessionRecapController {
 		const session = this.session;
 		return Boolean(
 			this.#host &&
-			session.settings.getGroup("recap").enabled &&
+			cfgRecap.get(session.settings).enabled &&
 			!session.isDisposed &&
 			!session.isSessionTransitioning &&
 			!session.isStreaming &&
 			!session.hasAdmittedSubmission &&
+			session.queuedMessageCount === 0 &&
 			!session.isBashRunning &&
 			!session.isEvalRunning &&
 			!session.isCompacting &&
@@ -198,7 +221,7 @@ export class SessionRecapController {
 		}
 		clearTimeout(this.#timer);
 		this.#pending = source;
-		const delay = Math.max(1, Math.min(3600, session.settings.getGroup("recap").idleSeconds)) * 1000;
+		const delay = Math.max(1, Math.min(3600, cfgRecap.get(session.settings).idleSeconds)) * 1000;
 		this.#timer = setTimeout(() => {
 			this.#timer = undefined;
 			void this.#startPending();
