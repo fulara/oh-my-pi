@@ -4146,6 +4146,7 @@ export class InteractiveMode implements InteractiveModeContext {
 			this.#renderSubagentList();
 			this.ui.requestRender();
 		}
+
 		if (any("composer.predictions") && !next["composer.predictions"]) {
 			this.#eventController.composerPrediction.cancel();
 		}
