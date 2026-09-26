@@ -9,7 +9,11 @@ import { getBundledModel } from "@oh-my-pi/pi-catalog/models";
 import { ModelRegistry } from "@oh-my-pi/pi-coding-agent/config/model-registry";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import { buildSkillPromptMessage } from "@oh-my-pi/pi-coding-agent/extensibility/skills";
-import { dispatchRpcSkillPrompt, runRpcSkillCommand, tryRunRpcSkillCommand } from "@oh-my-pi/pi-coding-agent/modes/rpc/rpc-mode";
+import {
+	dispatchRpcSkillPrompt,
+	runRpcSkillCommand,
+	tryRunRpcSkillCommand,
+} from "@oh-my-pi/pi-coding-agent/modes/rpc/rpc-mode";
 import {
 	RpcExtensionUserMessageTracker,
 	RpcPromptResults,
@@ -527,14 +531,17 @@ describe("dispatchRpcSkillPrompt", () => {
 				consumed.push(structuredClone(event.message) as CustomMessage<SkillPromptDetails>);
 			}
 		});
+		const results = new RpcPromptResults(session, () => {});
+		session.subscribe(event => results.observe(event));
 		const dispatch = (clientMessageId: string, streamingBehavior: "steer" | "followUp") =>
 			dispatchRpcSkillPrompt({
-				...promptResultsFor(`rpc-${clientMessageId}`),
+				ticket: results.begin(`rpc-${clientMessageId}`),
 				clientMessageId,
 				session,
 				message: "fix this /skill:reviewer",
 				images,
 				streamingBehavior,
+				results,
 				onError: error => errors.push(error),
 				extensionUserMessageTracker: new RpcExtensionUserMessageTracker(),
 			});
@@ -639,6 +646,7 @@ describe("RPC skill attachment reads after idle", () => {
 	let red: ImageContent;
 	let blue: ImageContent;
 	let errors: Error[];
+	let results: RpcPromptResults;
 
 	beforeEach(async () => {
 		dir = await fs.mkdtemp(path.join(os.tmpdir(), `omp-rpc-skill-attachments-${Snowflake.next()}-`));
@@ -674,6 +682,8 @@ describe("RPC skill attachment reads after idle", () => {
 			],
 			skillsSettings: { enableSkillCommands: true },
 		});
+		results = new RpcPromptResults(session, () => {});
+		session.subscribe(event => results.observe(event));
 		readTool = new ReadTool({
 			cwd: dir,
 			hasUI: false,
@@ -696,12 +706,12 @@ describe("RPC skill attachment reads after idle", () => {
 		const previousCalls = mock.calls.length;
 		expect(
 			await dispatchRpcSkillPrompt({
-				id: `attachment-${previousCalls}`,
+				ticket: results.begin(`attachment-${previousCalls}`),
 				session,
 				message: "/skill:reviewer inspect",
 				images,
 				streamingBehavior: undefined,
-				output: () => {},
+				results,
 				onError: error => errors.push(error),
 				extensionUserMessageTracker: new RpcExtensionUserMessageTracker(),
 			}),
