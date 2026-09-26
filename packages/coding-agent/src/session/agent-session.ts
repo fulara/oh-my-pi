@@ -1190,6 +1190,7 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 	#idleRecaps?: SessionRecapController;
 	#observedSessionId: string | undefined;
 	readonly #sessionSkills: SessionSkills;
+	/** Kept until the agent is drained: beginDispose's registry runs before deferred shutdown hooks settle. */
 	#unsubscribeSessionSkills?: () => void;
 	#lastSessionSkillsContextRevision: string | undefined;
 

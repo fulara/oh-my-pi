@@ -196,6 +196,8 @@ describe("RPC contract fixtures", () => {
 			type: "prompt_result",
 			id: "cmd-tools-1",
 			agentInvoked: false,
+			status: "completed",
+			sessionSettled: true,
 		});
 		expect(frameFor("command-output")).toEqual({
 			type: "command_output",

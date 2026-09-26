@@ -721,6 +721,8 @@ export const rpcContractFixtures = [
 			type: "prompt_result",
 			id: "cmd-tools-1",
 			agentInvoked: false,
+			status: "completed",
+			sessionSettled: true,
 		} satisfies RpcPromptResultFrame,
 	},
 	{
@@ -802,6 +804,8 @@ export const rpcContractFixtures = [
 				autoCompactionEnabled: true,
 				messageCount: 4,
 				queuedMessageCount: 0,
+				hasPendingAsyncWork: false,
+				isSettled: true,
 				fastModeEnabled: false,
 				fastModeActive: false,
 				tokensPerSecond: null,
