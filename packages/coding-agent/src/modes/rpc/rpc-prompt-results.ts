@@ -13,6 +13,7 @@ import type { AssistantMessage } from "@oh-my-pi/pi-ai";
 import * as AIError from "@oh-my-pi/pi-ai/error";
 import { stripRawHttpRequestDiagnostics } from "@oh-my-pi/pi-ai/utils/http-inspector";
 import type { AgentSessionEvent } from "../../session/agent-session";
+import type { PendingMessageRemovalReceipt } from "../../session/queued-messages";
 import { isRpcSessionSettled, type RpcScheduledTurnProbe, type RpcSettleSession } from "./rpc-session-settle";
 import type { RpcPromptError, RpcPromptResultFrame, RpcPromptStatus } from "./rpc-types";
 
@@ -24,6 +25,7 @@ export interface RpcPromptTicket {
 interface RunOutcome {
 	status: RpcPromptStatus;
 	error?: RpcPromptError;
+	removed?: PendingMessageRemovalReceipt;
 }
 
 interface OpenPrompt {
@@ -110,6 +112,11 @@ export class RpcPromptResults {
 		this.#report(ticket, false, { status: "error", error: { message, retryable: false } });
 	}
 
+	/** This specific queued input was removed before delivery. Other prompts/runs remain live. */
+	remove(ticket: RpcPromptTicket, receipt: PendingMessageRemovalReceipt): void {
+		this.#report(ticket, false, { status: "aborted", removed: receipt });
+	}
+
 	/**
 	 * Mark every open prompt aborted after a session transition (host command or
 	 * extension). Transitions detach the agent before aborting it, so the
@@ -161,6 +168,7 @@ export class RpcPromptResults {
 				sessionSettled: isRpcSessionSettled(this.#session, this.#scheduledTurn),
 			};
 			if (outcome.error) frame.error = outcome.error;
+			if (outcome.removed) Object.assign(frame, outcome.removed, { removed: true });
 			this.#output(frame);
 		});
 	}
