@@ -18,6 +18,7 @@ let tempHome: string;
 let originalAgentDir: string;
 
 beforeEach(async () => {
+	resetSettingsForTest();
 	originalAgentDir = getAgentDir();
 	tempHome = await fs.mkdtemp(path.join(os.tmpdir(), "omp-skill-list-home-"));
 	spyOn(os, "homedir").mockReturnValue(tempHome);

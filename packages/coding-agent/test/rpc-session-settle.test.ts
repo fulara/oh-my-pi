@@ -34,6 +34,41 @@ async function settleLoop(): Promise<void> {
 }
 
 describe("RpcSessionSettleWatcher", () => {
+	test("async-wait settles when its background delivery disappears without another run", async () => {
+		const { session, finishBackgroundWork } = createSession();
+		const frames: object[] = [];
+		const watcher = new RpcSessionSettleWatcher(session, frame => frames.push(frame));
+		session.pendingAsyncWork = true;
+		watcher.observe(agentStart);
+		watcher.observe({ type: "agent_end", messages: [], isTerminal: false, awaitingAsyncWork: true });
+		await settleLoop();
+		expect(frames).toEqual([]);
+		session.pendingAsyncWork = false;
+		finishBackgroundWork();
+		await settleLoop();
+		expect(frames).toEqual([{ type: "session_settled" }]);
+	});
+
+	test("an old async drain cannot settle a newer reminder continuation", async () => {
+		const { session, finishBackgroundWork } = createSession();
+		const frames: object[] = [];
+		const watcher = new RpcSessionSettleWatcher(session, frame => frames.push(frame));
+		session.pendingAsyncWork = true;
+		watcher.observe(agentStart);
+		watcher.observe({ type: "agent_end", messages: [], isTerminal: false, awaitingAsyncWork: true });
+		await settleLoop();
+		watcher.observe(agentStart);
+		session.pendingAsyncWork = false;
+		watcher.observe({ type: "agent_end", messages: [], isTerminal: false });
+		finishBackgroundWork();
+		await settleLoop();
+		expect(frames).toEqual([]);
+		watcher.observe(agentStart);
+		watcher.observe(terminalEnd);
+		await settleLoop();
+		expect(frames).toEqual([{ type: "session_settled" }]);
+	});
+
 	test("a yield with background work pending settles only after that work wakes and ends the session", async () => {
 		const { session, finishBackgroundWork } = createSession();
 		const frames: object[] = [];

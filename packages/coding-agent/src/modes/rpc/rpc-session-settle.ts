@@ -59,13 +59,14 @@ async function nextMacrotask(): Promise<void> {
 /**
  * Emits `session_settled` once per stretch of agent activity, after the final
  * run yields and background work that could wake the session has drained.
- * Re-checks on every terminal `agent_end` and after session transitions.
+ * Re-checks on terminal/async-wait `agent_end` and after session transitions.
  */
 export class RpcSessionSettleWatcher {
 	/** Agent activity since the last `session_settled`. */
 	#active = false;
 	#checking = false;
 	#recheck = false;
+	#runEpoch = 0;
 	readonly #session: RpcSettleSession & Pick<AgentSession, "settleAsyncWork">;
 	readonly #output: (frame: RpcSessionSettledFrame) => void;
 	readonly #scheduledTurn: RpcScheduledTurnProbe | undefined;
@@ -81,8 +82,12 @@ export class RpcSessionSettleWatcher {
 	}
 
 	observe(event: AgentSessionEvent): void {
-		if (event.type === "agent_start") this.#active = true;
-		else if (event.type === "agent_end" && event.isTerminal !== false) void this.check();
+		if (event.type === "agent_start") {
+			this.#active = true;
+			this.#runEpoch++;
+		} else if (event.type === "agent_end" && (event.isTerminal !== false || event.awaitingAsyncWork === true)) {
+			void this.check();
+		}
 	}
 
 	/**
@@ -105,17 +110,19 @@ export class RpcSessionSettleWatcher {
 		}
 		this.#checking = true;
 		try {
+			let epoch: number;
 			do {
 				this.#recheck = false;
+				epoch = this.#runEpoch;
 				// Two hops: prompt_result frames for this yield are written one macrotask
 				// after it, and session_settled must follow them.
 				await nextMacrotask();
 				await nextMacrotask();
-				while (this.#active && this.#canWaitOutBackgroundWork()) {
+				while (this.#active && epoch === this.#runEpoch && this.#canWaitOutBackgroundWork()) {
 					await this.#session.settleAsyncWork();
 				}
 			} while (this.#recheck);
-			if (!this.#active || !isRpcSessionSettled(this.#session, this.#scheduledTurn)) return;
+			if (epoch !== this.#runEpoch || !this.#active || !isRpcSessionSettled(this.#session, this.#scheduledTurn)) return;
 			this.#active = false;
 			this.#output({ type: "session_settled" });
 		} catch (error) {
