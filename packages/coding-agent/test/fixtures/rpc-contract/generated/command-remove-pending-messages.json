@@ -1,0 +1,11 @@
+{
+  "id": "cmd-remove-pending-1",
+  "type": "remove_pending_messages",
+  "sessionId": "session-1",
+  "generation": "runtime-1:0:session-1",
+  "ids": [
+    "pending-1",
+    "pending-2",
+    "unknown"
+  ]
+}

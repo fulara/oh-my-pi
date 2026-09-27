@@ -1,0 +1,7 @@
+{
+  "id": "cmd-remove-stale",
+  "type": "response",
+  "command": "remove_pending_messages",
+  "success": false,
+  "error": "Pending-message generation mismatch"
+}

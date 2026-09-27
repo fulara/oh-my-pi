@@ -1,0 +1,36 @@
+{
+  "id": "cmd-remove-pending-1",
+  "type": "response",
+  "command": "remove_pending_messages",
+  "success": true,
+  "data": {
+    "snapshot": {
+      "sessionId": "session-1",
+      "generation": "runtime-1:0:session-1",
+      "items": [
+        {
+          "id": "pending-2",
+          "queue": "followUp",
+          "state": "claimed",
+          "removable": false,
+          "text": "Already claimed"
+        }
+      ]
+    },
+    "results": [
+      {
+        "id": "pending-1",
+        "outcome": "removed",
+        "clientMessageId": "client-1"
+      },
+      {
+        "id": "pending-2",
+        "outcome": "tooLate"
+      },
+      {
+        "id": "unknown",
+        "outcome": "notFound"
+      }
+    ]
+  }
+}
