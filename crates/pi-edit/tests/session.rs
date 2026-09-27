@@ -415,20 +415,20 @@ async fn hashline_rem_streaming_preview_does_not_error_on_invalid_utf8() {
 	let cwd = dir.path().canonicalize().expect("canonical tempdir");
 	std::fs::write(cwd.join("legacy.txt"), b"name=caf\xe9\n").unwrap();
 	let config = SessionConfig {
-		mode: EditMode::Hashline,
-		policy: PathPolicy {
-			cwd: cwd.clone(),
-			home_dir: cwd,
-			url_schemes: Vec::new(),
-			url_alias_schemes: Vec::new(),
-			plan_writable_roots: Vec::new(),
-			plan_active: false,
+		mode:               EditMode::Hashline,
+		policy:             PathPolicy {
+			cwd:                  cwd.clone(),
+			home_dir:             cwd,
+			url_schemes:          Vec::new(),
+			url_alias_schemes:    Vec::new(),
+			plan_writable_roots:  Vec::new(),
+			plan_active:          false,
 			block_auto_generated: true,
 		},
-		allow_fuzzy: true,
-		fuzzy_threshold: 0.95,
+		allow_fuzzy:        true,
+		fuzzy_threshold:    0.95,
 		enforce_seen_lines: false,
-		raw_input: false,
+		raw_input:          false,
 	};
 	let mut session = Session::new(config, EditStore::new());
 	// Completed REM section followed by an incomplete trailing section.
@@ -557,10 +557,11 @@ async fn internal_url_targets_wait_for_host_answers() {
 	assert_eq!(session.take_unresolved(), ["local://plan.md"]);
 	assert!(!session.preview_pending());
 
-	session.provide(
-		"local://plan.md".into(),
-		UrlResolution { absolute: Some(backing.clone()), error: None, plan_writable: true },
-	);
+	session.provide("local://plan.md".into(), UrlResolution {
+		absolute:      Some(backing.clone()),
+		error:         None,
+		plan_writable: true,
+	});
 	assert!(session.preview_pending());
 	let batch = session.preview();
 	assert_eq!(batch.files[0].display, "local://plan.md");
@@ -574,10 +575,11 @@ async fn internal_url_targets_wait_for_host_answers() {
 
 	session.finish();
 	assert_eq!(session.begin_apply_url_targets(), ["local://plan.md"]);
-	session.provide(
-		"local://plan.md".into(),
-		UrlResolution { absolute: Some(backing.clone()), error: None, plan_writable: true },
-	);
+	session.provide("local://plan.md".into(), UrlResolution {
+		absolute:      Some(backing.clone()),
+		error:         None,
+		plan_writable: true,
+	});
 	session
 		.apply(ApplyRequest::default(), &writer)
 		.await
@@ -597,8 +599,8 @@ async fn apply_never_reuses_url_answers_given_to_previews() {
 	std::fs::write(&stale, "one\n").unwrap();
 	std::fs::write(&fresh, "one\n").unwrap();
 	let answer = |absolute: &std::path::Path| UrlResolution {
-		absolute: Some(absolute.to_owned()),
-		error: None,
+		absolute:      Some(absolute.to_owned()),
+		error:         None,
 		plan_writable: false,
 	};
 	let writer = DiskWriter::default();
@@ -684,14 +686,11 @@ async fn begin_apply_url_targets_cover_every_url_before_the_first_stage() {
 		assert_eq!(targets, expected, "{mode:?}");
 		for url in targets {
 			let name = url.trim_start_matches("local://");
-			session.provide(
-				url.clone(),
-				UrlResolution {
-					absolute: Some(sandbox.path().join(name)),
-					error: None,
-					plan_writable: false,
-				},
-			);
+			session.provide(url.clone(), UrlResolution {
+				absolute:      Some(sandbox.path().join(name)),
+				error:         None,
+				plan_writable: false,
+			});
 		}
 		let writer = DiskWriter::default();
 		session
