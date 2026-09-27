@@ -1,8 +1,74 @@
-import type { AgentMessage } from "@oh-my-pi/pi-agent-core";
+import type { AgentMessage, QueuedMessagePreview, QueuedMessageQueue } from "@oh-my-pi/pi-agent-core";
 import type { AssistantMessage, ImageContent } from "@oh-my-pi/pi-ai";
 import { MAGIC_KEYWORDS } from "../modes/magic-keywords";
 import type { RestoredQueuedMessage } from "./agent-session-types";
-import { type CustomMessage, readQueueChipText } from "./messages";
+import { type CustomMessage, readQueueChipText, SKILL_PROMPT_MESSAGE_TYPE } from "./messages";
+
+export interface PendingMessage extends QueuedMessagePreview {
+	id: string;
+	queue: QueuedMessageQueue;
+	state: "queued" | "claimed";
+	removable: boolean;
+}
+
+export interface PendingMessagesSnapshot {
+	sessionId: string;
+	generation: string;
+	items: PendingMessage[];
+}
+
+export interface PendingMessageRemovalResult {
+	id: string;
+	outcome: "removed" | "tooLate" | "notFound";
+	clientMessageId?: string;
+}
+
+/** Durable receipt for a removed RPC prompt, even if its mutation response is lost. */
+export interface PendingMessageRemovalReceipt {
+	sessionId: string;
+	generation: string;
+	pendingMessageId: string;
+	clientMessageId?: string;
+}
+
+export interface PendingMessagesRemoval {
+	snapshot: PendingMessagesSnapshot;
+	results: PendingMessageRemovalResult[];
+}
+
+export function isPendingUserMessage(message: AgentMessage): boolean {
+	return isUserQueuedMessage(message) && !("attribution" in message && message.attribution === "agent");
+}
+
+/** Full operator input, never the model-facing expansion of a skill. */
+export function pendingMessagePreview(message: AgentMessage): QueuedMessagePreview {
+	let text = "";
+	let clientMessageId: string | undefined;
+	if ("content" in message) {
+		text =
+			typeof message.content === "string"
+				? message.content
+				: message.content.map(part => (part.type === "text" ? part.text : "")).join("");
+	}
+	if ("clientMessageId" in message && typeof message.clientMessageId === "string") {
+		clientMessageId = message.clientMessageId;
+	}
+	if (message.role === "custom" && message.customType === SKILL_PROMPT_MESSAGE_TYPE) text = "/skill";
+	if (message.role === "custom" && message.details && typeof message.details === "object") {
+		const details = message.details;
+		if ("clientMessageId" in details && typeof details.clientMessageId === "string") {
+			clientMessageId = details.clientMessageId;
+		}
+		if (message.customType === SKILL_PROMPT_MESSAGE_TYPE) {
+			if ("prompt" in details && typeof details.prompt === "string") text = details.prompt;
+			else if ("name" in details && typeof details.name === "string") {
+				const args = "args" in details && typeof details.args === "string" ? details.args : "";
+				text = `/skill:${details.name}${args ? ` ${args}` : ""}`;
+			} else text = readQueueChipText(details) ?? "/skill";
+		}
+	}
+	return { text, images: queuedImageContent(message), clientMessageId };
+}
 
 function queuedTextContent(message: AgentMessage): string | undefined {
 	if (!("content" in message)) return undefined;

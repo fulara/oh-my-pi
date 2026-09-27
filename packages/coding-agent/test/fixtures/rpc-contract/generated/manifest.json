@@ -55,6 +55,11 @@
     "file": "command-get-messages-page.json"
   },
   {
+    "name": "command-get-pending-messages",
+    "category": "command",
+    "file": "command-get-pending-messages.json"
+  },
+  {
     "name": "command-get-session-skills",
     "category": "command",
     "file": "command-get-session-skills.json"
@@ -83,6 +88,11 @@
     "name": "command-output",
     "category": "event",
     "file": "command-output.json"
+  },
+  {
+    "name": "command-remove-pending-messages",
+    "category": "command",
+    "file": "command-remove-pending-messages.json"
   },
   {
     "name": "command-set-active-tools",
@@ -260,6 +270,11 @@
     "file": "prompt-result.json"
   },
   {
+    "name": "prompt-result-removed",
+    "category": "event",
+    "file": "prompt-result-removed.json"
+  },
+  {
     "name": "ready",
     "category": "lifecycle",
     "file": "ready.json"
@@ -340,6 +355,11 @@
     "file": "response-get-messages-page-stale-cursor.json"
   },
   {
+    "name": "response-get-pending-messages",
+    "category": "response",
+    "file": "response-get-pending-messages.json"
+  },
+  {
     "name": "response-get-session-skills",
     "category": "response",
     "file": "response-get-session-skills.json"
@@ -363,6 +383,16 @@
     "name": "response-negotiate-protocol",
     "category": "response",
     "file": "response-negotiate-protocol.json"
+  },
+  {
+    "name": "response-pending-generation-error",
+    "category": "response",
+    "file": "response-pending-generation-error.json"
+  },
+  {
+    "name": "response-remove-pending-messages",
+    "category": "response",
+    "file": "response-remove-pending-messages.json"
   },
   {
     "name": "response-session-skills-error",

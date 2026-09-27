@@ -26,7 +26,8 @@ import type { Dialect } from "@oh-my-pi/pi-ai/dialect";
 import { openAIResponsesReplaysNativeHistory } from "@oh-my-pi/pi-ai/providers/openai-responses-state";
 import type { HarmonyAuditEvent } from "@oh-my-pi/pi-ai/utils/harmony-leak";
 import { getBundledModel } from "@oh-my-pi/pi-catalog/models";
-import { logger } from "@oh-my-pi/pi-utils";
+import { logger, untilAborted } from "@oh-my-pi/pi-utils";
+import * as snapcompact from "@oh-my-pi/snapcompact";
 import {
 	abortReasonText,
 	agentLoop,
@@ -387,6 +388,49 @@ interface CursorToolResultEntry {
 	additionalContext?: string;
 }
 
+export type QueuedMessageQueue = "steering" | "followUp";
+
+export interface QueuedMessagePreview {
+	text: string;
+	images?: ImageContent[];
+	clientMessageId?: string;
+}
+
+export interface PendingQueuedMessage {
+	id: string;
+	queue: QueuedMessageQueue;
+	state: "queued" | "claimed";
+	removable: boolean;
+	message: AgentMessage;
+	preview?: QueuedMessagePreview;
+}
+
+export interface PreparedQueuedMessage {
+	message: AgentMessage;
+	companions?: AgentMessage[];
+}
+
+export interface QueuedMessageOptions {
+	preview?: QueuedMessagePreview;
+	companions?: AgentMessage[];
+	/** Called only for authoritative pre-delivery removal, never for Abort or TUI restoration. */
+	onRemoved?: (id: string) => void;
+	/** Cancellable preprocessing, before the irreversible delivery boundary. */
+	prepare?: (signal: AbortSignal) => Promise<PreparedQueuedMessage>;
+}
+
+interface QueuedMessageIdentity extends QueuedMessageOptions {
+	id: string;
+	claimed: boolean;
+	preparation?: { controller: AbortController; promise: Promise<PreparedQueuedMessage> };
+}
+
+export interface PendingQueueRemoval {
+	id: string;
+	outcome: "removed" | "tooLate" | "notFound";
+	preview?: QueuedMessagePreview;
+	message?: AgentMessage;
+}
 interface LiveSteeredEntry {
 	message: AgentMessage;
 	controller: AbortController | undefined;
@@ -397,6 +441,7 @@ interface LiveSteeredEntry {
 interface QueuedMessageClaim {
 	messages: AgentMessage[];
 	controller: AbortController;
+	removed?: boolean;
 }
 
 export class Agent {
@@ -424,6 +469,12 @@ export class Agent {
 	#steeringQueue: AgentMessage[] = [];
 	#followUpQueue: AgentMessage[] = [];
 	#queuedMessageClaims: Partial<Record<QueuedMessageQueue, QueuedMessageClaim>> = {};
+	#queuedMessageIdentities = new WeakMap<AgentMessage, QueuedMessageIdentity>();
+	#queuedCompanionOwners = new WeakMap<AgentMessage, string>();
+	#claimedQueuedMessageIds = new Set<string>();
+	/** Recent delivery receipts only; pending/requeued safety lives in the weak identity's sticky flag. */
+	static readonly #claimedQueueHistoryLimit = 4096;
+	#pendingQueueRemovalRevision = 0;
 	/**
 	 * Steering live steering took for the in-flight response (`onLiveSteeringTaken`) that the
 	 * transcript has not recorded yet, whether or not the provider accepted it. Kept apart from
@@ -1030,12 +1081,13 @@ export class Agent {
 	}
 
 	async #prepareQueuedMessageBatch(queue: QueuedMessageQueue, signal: AbortSignal): Promise<AgentMessage[]> {
-		if (this.#queuedMessageClaims[queue]) return [];
+		if (signal.aborted || this.#queuedMessageClaims[queue]) return [];
 		const messages = queue === "steering" ? this.#dequeueSteeringMessages() : this.#dequeueFollowUpMessages();
 		const prepare = this.prepareQueuedMessages;
 		if (messages.length === 0) return messages;
 		const runController = this.#abortController;
-		if (!prepare) {
+		if (!prepare && !messages.some(message => this.#queuedMessageIdentities.get(message)?.prepare)) {
+			this.#markQueuedMessagesClaimed(messages);
 			this.#queuedMessageDeliveries.add({ queue, controller: runController, messages, next: 0, additional: [] });
 			return messages;
 		}
@@ -1044,17 +1096,56 @@ export class Agent {
 		this.#queuedMessageClaims[queue] = claim;
 		const preparationSignal = AbortSignal.any([signal, claim.controller.signal]);
 		try {
-			const preparation = await prepare(messages, preparationSignal, queue);
+			for (let index = 0; index < messages.length; index++) {
+				const original = messages[index];
+				const identity = this.#queuedMessageIdentities.get(original);
+				if (!identity?.prepare) continue;
+				if (!identity.preparation) {
+					const controller = new AbortController();
+					const itemSignal = AbortSignal.any([signal, controller.signal]);
+					const preparation = {
+						controller,
+						promise: untilAborted(itemSignal, () => identity.prepare!(itemSignal)),
+					};
+					identity.preparation = preparation;
+					void preparation.promise.catch(() => {
+						if (identity.preparation === preparation) identity.preparation = undefined;
+					});
+				}
+				// Removing a peer cancels the shared policy batch, not this input's preprocessing.
+				const prepared = await untilAborted(claim.controller.signal, identity.preparation.promise);
+				if (preparationSignal.aborted || this.#queuedMessageClaims[queue] !== claim) {
+					return claim.removed ? this.#prepareQueuedMessageBatch(queue, signal) : [];
+				}
+				const existingIdentity = this.#queuedMessageIdentities.get(prepared.message);
+				const preparedMessage =
+					existingIdentity && existingIdentity !== identity ? { ...prepared.message } : prepared.message;
+				this.#queuedMessageIdentities.set(preparedMessage, identity);
+				identity.prepare = undefined;
+				identity.preparation = undefined;
+				const companions = prepared.companions ?? [];
+				for (const companion of companions) this.#queuedCompanionOwners.set(companion, identity.id);
+				messages.splice(index, 1, ...companions, preparedMessage);
+				index += companions.length;
+			}
+			const preparation = prepare
+				? await untilAborted(claim.controller.signal, async () => prepare(messages, preparationSignal, queue))
+				: undefined;
 			signal.throwIfAborted();
-			if (preparationSignal.aborted || this.#queuedMessageClaims[queue] !== claim) return [];
+			if (preparationSignal.aborted || this.#queuedMessageClaims[queue] !== claim) {
+				return claim.removed ? this.#prepareQueuedMessageBatch(queue, signal) : [];
+			}
 			const additional = preparation?.commit();
-			if (preparationSignal.aborted || this.#queuedMessageClaims[queue] !== claim) return [];
+			if (preparationSignal.aborted || this.#queuedMessageClaims[queue] !== claim) {
+				return claim.removed ? this.#prepareQueuedMessageBatch(queue, signal) : [];
+			}
 			if (preparation && additional === undefined) {
 				// Stop this attempt before the loop can immediately reclaim the restored batch.
 				runController?.abort();
 				throw new DOMException("Queued message preparation cancelled", "AbortError");
 			}
 			delete this.#queuedMessageClaims[queue];
+			this.#markQueuedMessagesClaimed(messages);
 			this.#queuedMessageDeliveries.add({
 				queue,
 				controller: runController,
@@ -1065,7 +1156,9 @@ export class Agent {
 			return additional?.length ? [...messages, ...additional] : messages;
 		} catch (error) {
 			if (signal.aborted) throw error;
-			if (preparationSignal.aborted || this.#queuedMessageClaims[queue] !== claim) return [];
+			if (preparationSignal.aborted || this.#queuedMessageClaims[queue] !== claim) {
+				return claim.removed ? this.#prepareQueuedMessageBatch(queue, signal) : [];
+			}
 			throw error;
 		} finally {
 			if (this.#queuedMessageClaims[queue] === claim) this.#cancelQueuedMessagePreparation(queue, true);
@@ -1081,6 +1174,10 @@ export class Agent {
 		const claim = this.#queuedMessageClaims[queue];
 		if (!claim) return;
 		delete this.#queuedMessageClaims[queue];
+		if (!restore) {
+			for (const message of claim.messages)
+				this.#queuedMessageIdentities.get(message)?.preparation?.controller.abort();
+		}
 		if (restore) {
 			if (queue === "steering") {
 				this.#steeringQueue = [...claim.messages, ...this.#steeringQueue];
@@ -1394,6 +1491,9 @@ export class Agent {
 
 	appendMessage(m: AgentMessage) {
 		this.#state.messages.push(m);
+		// Transcript ownership ends pending-input ownership; keep only the bounded receipt ID.
+		this.#queuedMessageIdentities.delete(m);
+		this.#queuedCompanionOwners.delete(m);
 		const live = this.#liveSteered.findIndex(entry => entry.message === m);
 		if (live >= 0) {
 			this.#liveSteered.splice(live, 1);
@@ -1421,8 +1521,8 @@ export class Agent {
 	 * Queue a steering message to interrupt the agent mid-run.
 	 * Delivered after current tool execution, skips remaining tools.
 	 */
-	steer(m: AgentMessage) {
-		this.#steeringQueue.push(m);
+	steer(m: AgentMessage, options?: QueuedMessageOptions) {
+		this.#enqueueMessage(m, "steering", options);
 		this.#notifySteeringWaiters();
 		this.#emitQueueChanged();
 	}
@@ -1445,9 +1545,138 @@ export class Agent {
 	 * Queue a follow-up message to be processed after the agent finishes.
 	 * Delivered only when agent has no more tool calls or steering messages.
 	 */
-	followUp(m: AgentMessage) {
-		this.#followUpQueue.push(m);
+	followUp(m: AgentMessage, options?: QueuedMessageOptions) {
+		this.#enqueueMessage(m, "followUp", options);
 		this.#emitQueueChanged();
+	}
+
+	#enqueueMessage(message: AgentMessage, queue: QueuedMessageQueue, options?: QueuedMessageOptions): void {
+		// A second enqueue of the same object is a distinct input, not a second handle to the first.
+		if (this.#queuedMessageIdentities.has(message)) message = { ...message };
+		const identity: QueuedMessageIdentity = { ...options, id: crypto.randomUUID(), claimed: false };
+		this.#queuedMessageIdentities.set(message, identity);
+		const target = queue === "steering" ? this.#steeringQueue : this.#followUpQueue;
+		for (let companion of options?.companions ?? []) {
+			if (this.#queuedCompanionOwners.has(companion)) companion = { ...companion };
+			this.#queuedCompanionOwners.set(companion, identity.id);
+			target.push(companion);
+		}
+		target.push(message);
+	}
+
+	#queuedIdentity(message: AgentMessage): QueuedMessageIdentity {
+		let identity = this.#queuedMessageIdentities.get(message);
+		if (!identity) {
+			identity = { id: crypto.randomUUID(), claimed: false };
+			this.#queuedMessageIdentities.set(message, identity);
+		}
+		return identity;
+	}
+
+	#markQueuedMessagesClaimed(messages: readonly AgentMessage[]): void {
+		for (const message of messages) {
+			const identity = this.#queuedIdentity(message);
+			identity.claimed = true;
+			this.#claimedQueuedMessageIds.add(identity.id);
+		}
+		while (this.#claimedQueuedMessageIds.size > Agent.#claimedQueueHistoryLimit) {
+			this.#claimedQueuedMessageIds.delete(this.#claimedQueuedMessageIds.values().next().value!);
+		}
+	}
+
+	/** Authoritative queue, preparation, delivery and live-provider ownership, without consuming any work. */
+	getPendingMessages(): PendingQueuedMessage[] {
+		const items: PendingQueuedMessage[] = [];
+		const seen = new Set<string>();
+		const add = (message: AgentMessage, queue: QueuedMessageQueue) => {
+			const identity = this.#queuedIdentity(message);
+			if (seen.has(identity.id)) return;
+			seen.add(identity.id);
+			items.push({
+				id: identity.id,
+				queue,
+				state: identity.claimed ? "claimed" : "queued",
+				removable: !identity.claimed,
+				message,
+				preview: identity.preview,
+			});
+		};
+		for (const entry of this.#liveSteered) add(entry.message, "steering");
+		for (const delivery of this.#queuedMessageDeliveries) {
+			for (let index = delivery.next; index < delivery.messages.length; index++) {
+				add(delivery.messages[index], delivery.queue);
+			}
+		}
+		for (const message of this.peekSteeringQueue()) add(message, "steering");
+		for (const message of this.peekFollowUpQueue()) add(message, "followUp");
+		return items;
+	}
+
+	/** Atomic identity-set removal. Never rewrites deliveries or recalls provider-owned input. */
+	removePendingMessages(
+		ids: readonly string[],
+		isUserMessage: (message: AgentMessage) => boolean = () => true,
+		isAdjacentCompanion: (message: AgentMessage) => boolean = () => false,
+	): PendingQueueRemoval[] {
+		const pending = new Map(this.getPendingMessages().map(item => [item.id, item]));
+		const removed = new Set<string>();
+		const cancelledPreparations = new Set<AbortController>();
+		const results = ids.map((id): PendingQueueRemoval => {
+			const item = pending.get(id);
+			if (!item) return { id, outcome: this.#claimedQueuedMessageIds.has(id) ? "tooLate" : "notFound" };
+			if (!isUserMessage(item.message)) return { id, outcome: "notFound" };
+			if (!item.removable) return { id, outcome: "tooLate" };
+			removed.add(id);
+			const preprocessing = this.#queuedMessageIdentities.get(item.message)?.preparation;
+			if (preprocessing) cancelledPreparations.add(preprocessing.controller);
+			return { id, outcome: "removed", preview: item.preview, message: item.message };
+		});
+		if (removed.size === 0) return results;
+		this.#pendingQueueRemovalRevision++;
+		for (const queue of ["steering", "followUp"] as const) {
+			const messages = queue === "steering" ? this.peekSteeringQueue() : this.peekFollowUpQueue();
+			const discarded = new Set<AgentMessage>();
+			for (let index = 0; index < messages.length; index++) {
+				const message = messages[index];
+				if (removed.has(this.#queuedIdentity(message).id)) {
+					discarded.add(message);
+					// Separately enqueued hidden notices belong to the adjacent input unless explicitly owned.
+					for (let prior = index - 1; prior >= 0 && isAdjacentCompanion(messages[prior]); prior--) {
+						const companion = messages[prior];
+						const owner = this.#queuedCompanionOwners.get(companion);
+						if (!owner || removed.has(owner)) discarded.add(companion);
+					}
+				}
+				const owner = this.#queuedCompanionOwners.get(message);
+				if (owner && removed.has(owner)) discarded.add(message);
+			}
+			if (discarded.size === 0) continue;
+			const claim = this.#queuedMessageClaims[queue];
+			if (claim?.messages.some(message => discarded.has(message))) {
+				// The batch policy may depend on the removed input. Restart only this batch;
+				// keep other queues and already-dequeued deliveries completely untouched.
+				claim.removed = true;
+				delete this.#queuedMessageClaims[queue];
+				const retained = claim.messages.filter(message => !discarded.has(message));
+				if (queue === "steering") this.#steeringQueue = [...retained, ...this.#steeringQueue];
+				else this.#followUpQueue = [...retained, ...this.#followUpQueue];
+				cancelledPreparations.add(claim.controller);
+			}
+			if (queue === "steering") this.#steeringQueue = this.#steeringQueue.filter(message => !discarded.has(message));
+			else this.#followUpQueue = this.#followUpQueue.filter(message => !discarded.has(message));
+		}
+		// Abort handlers may call back into the API. Publish the complete mutation first.
+		for (const controller of cancelledPreparations) controller.abort();
+		for (const id of removed) {
+			const message = pending.get(id)!.message;
+			try {
+				this.#queuedMessageIdentities.get(message)?.onRemoved?.(id);
+			} catch (error) {
+				logger.error("Queued-message removal callback failed", { error });
+			}
+		}
+		this.#emitQueueChanged();
+		return results;
 	}
 
 	clearSteeringQueue() {
@@ -1544,6 +1773,8 @@ export class Agent {
 	#dequeueMessages(queue: readonly AgentMessage[], mode: "all" | "one-at-a-time"): AgentMessage[] {
 		if (mode === "all") return queue.slice();
 		let count = Math.min(1, queue.length);
+		const owner = this.#queuedCompanionOwners.get(queue[0]);
+		if (owner) count = Math.max(count, queue.findIndex(message => this.#queuedIdentity(message).id === owner) + 1);
 		while (count < queue.length && this.#queuedMessageGrouping?.(queue[count - 1], queue[count])) count++;
 		return queue.slice(0, count);
 	}
@@ -1633,6 +1864,7 @@ export class Agent {
 		this.#state.pendingToolCalls.clear();
 		this.#state.error = undefined;
 		this.clearAllQueues();
+		this.#claimedQueuedMessageIds.clear();
 	}
 
 	/** Send a prompt with an AgentMessage */
@@ -1724,6 +1956,7 @@ export class Agent {
 		this.#state.streamMessage = null;
 		this.#state.error = undefined;
 
+		const removalRevision = this.#pendingQueueRemovalRevision;
 		try {
 			const dequeueSignal = this.#continuationDequeueSignal(signal) ?? continuationAbortController.signal;
 			const messages = this.#state.messages;
@@ -1746,6 +1979,7 @@ export class Agent {
 					await this.#runLoop(queuedFollowUp, undefined, signal, true);
 					return;
 				}
+				if (removalRevision !== this.#pendingQueueRemovalRevision && !this.hasQueuedMessages()) return;
 				throw new Error("No messages to continue from");
 			}
 			if (messages[messages.length - 1].role === "assistant") {
@@ -1772,6 +2006,7 @@ export class Agent {
 					return;
 				}
 
+				if (removalRevision !== this.#pendingQueueRemovalRevision && !this.hasQueuedMessages()) return;
 				throw new Error("Cannot continue from message role: assistant");
 			}
 
