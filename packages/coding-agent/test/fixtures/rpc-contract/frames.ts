@@ -311,6 +311,83 @@ export const rpcContractFixtures = [
 		frame: { id: "cmd-state-1", type: "get_state" } satisfies Extract<RpcCommand, { type: "get_state" }>,
 	},
 	{
+		name: "command-get-pending-messages",
+		category: "command",
+		frame: { id: "cmd-pending-1", type: "get_pending_messages", sessionId: "session-1" } satisfies RpcCommand,
+	},
+	{
+		name: "command-remove-pending-messages",
+		category: "command",
+		frame: {
+			id: "cmd-remove-pending-1",
+			type: "remove_pending_messages",
+			sessionId: "session-1",
+			generation: "runtime-1:0:session-1",
+			ids: ["pending-1", "pending-2", "unknown"],
+		} satisfies RpcCommand,
+	},
+	{
+		name: "response-get-pending-messages",
+		category: "response",
+		frame: {
+			id: "cmd-pending-1",
+			type: "response",
+			command: "get_pending_messages",
+			success: true,
+			data: {
+				sessionId: "session-1",
+				generation: "runtime-1:0:session-1",
+				items: [
+					{
+						id: "pending-1",
+						clientMessageId: "client-1",
+						queue: "steering",
+						state: "queued",
+						removable: true,
+						text: "/skill:review inspect images",
+						images: [{ type: "image", mimeType: "image/png", data: "aW1hZ2U=" }],
+					},
+					{ id: "pending-2", queue: "followUp", state: "claimed", removable: false, text: "Already claimed" },
+				],
+			},
+		} satisfies RpcResponse,
+	},
+	{
+		name: "response-remove-pending-messages",
+		category: "response",
+		frame: {
+			id: "cmd-remove-pending-1",
+			type: "response",
+			command: "remove_pending_messages",
+			success: true,
+			data: {
+				snapshot: {
+					sessionId: "session-1",
+					generation: "runtime-1:0:session-1",
+					items: [
+						{ id: "pending-2", queue: "followUp", state: "claimed", removable: false, text: "Already claimed" },
+					],
+				},
+				results: [
+					{ id: "pending-1", outcome: "removed", clientMessageId: "client-1" },
+					{ id: "pending-2", outcome: "tooLate" },
+					{ id: "unknown", outcome: "notFound" },
+				],
+			},
+		} satisfies RpcResponse,
+	},
+	{
+		name: "response-pending-generation-error",
+		category: "response",
+		frame: {
+			id: "cmd-remove-stale",
+			type: "response",
+			command: "remove_pending_messages",
+			success: false,
+			error: "Pending-message generation mismatch",
+		} satisfies RpcResponse,
+	},
+	{
 		name: "command-get-session-skills",
 		category: "command",
 		frame: {
@@ -723,6 +800,22 @@ export const rpcContractFixtures = [
 			agentInvoked: false,
 			status: "completed",
 			sessionSettled: true,
+		} satisfies RpcPromptResultFrame,
+	},
+	{
+		name: "prompt-result-removed",
+		category: "event",
+		frame: {
+			type: "prompt_result",
+			id: "cmd-prompt-removed",
+			agentInvoked: false,
+			status: "aborted",
+			removed: true,
+			sessionSettled: false,
+			sessionId: "session-1",
+			generation: "runtime-1:0:session-1",
+			pendingMessageId: "pending-1",
+			clientMessageId: "client-1",
 		} satisfies RpcPromptResultFrame,
 	},
 	{

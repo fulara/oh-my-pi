@@ -242,6 +242,51 @@ Guidance does not enforce model compliance, and referenced resources are not pin
 - `{ id?, type: "set_follow_up_mode", mode: "all" | "one-at-a-time" }`
 - `{ id?, type: "set_interrupt_mode", mode: "immediate" | "wait" }`
 
+### Pending user messages
+
+- `{ id?, type: "get_pending_messages", sessionId: string }`
+- `{ id?, type: "remove_pending_messages", sessionId: string, generation: string, ids: string[] }`
+
+`sessionId` is the expected logical session, not a transport ID. A read returns
+`success.data` with `{ sessionId, generation, items }`. Each item has:
+
+```typescript
+{
+  id: string;                  // Opaque input identity, never a text/index key
+  clientMessageId?: string;
+  queue: "steering" | "followUp";
+  state: "queued" | "claimed";
+  removable: boolean;
+  text: string;                // Original visible input, not hidden skill expansion
+  images?: ImageContent[];
+}
+```
+
+Removal requires a nonempty set of unique viewed IDs and the read's generation.
+It returns `{ snapshot, results: [{ id, outcome, clientMessageId? }] }`;
+`outcome` is `removed`, `tooLate` or `notFound`. Session/generation mismatch is a
+command error without mutation. There is no implicit clear-all operation: submit
+the IDs from the viewed snapshot, so later enqueues remain untouched.
+
+Preparation is cancelable before claim. Once dequeued or taken by a live provider,
+an input is conservatively nonremovable, even before transcript persistence,
+before provider acknowledgement, or after abort requeue. This API never recalls
+provider input, aborts active work, removes internal messages, or rewrites history.
+Recent consumed IDs may return `tooLate`; older or unknown IDs return `notFound`.
+No queue push event is required; hosts refresh the snapshot.
+
+Removing an accepted queued prompt completes its original ticket with:
+
+```json
+{"type":"prompt_result","id":"original-prompt-id","agentInvoked":false,"status":"aborted","removed":true,"sessionId":"logical-session","generation":"queue-generation","pendingMessageId":"opaque-input-id","clientMessageId":"original-prompt-id","sessionSettled":false}
+```
+
+`clientMessageId` is optional; `sessionSettled` reflects actual session state.
+`removed: true` is prompt-specific cancellation evidence, including if the
+mutation response timed out. It does **not** mean the running agent yielded or
+ended. Hosts must not clear Busy, restore a composer draft, or synthesize
+`agent_end` from this receipt. Existing Abort and TUI queue restoration stay separate.
+
 ### Compaction
 
 - `{ id?, type: "compact", customInstructions?: string }`
@@ -394,7 +439,7 @@ Data payloads are command-specific and defined in `rpc-types.ts`.
 
 - `agentInvoked: false`: the prompt finished locally (an extension or custom command that started no turn) or failed before reaching the agent.
 - `agentInvoked: true`: the prompt was dispatched or queued for agent work; normal completion reports when the agent **yielded** — see [Yield vs settled](#yield-vs-settled). An abort that wins before dispatch can still report `true` with `status: "aborted"`. A prompt dispatched as a fresh turn reports the first run that started after it was accepted, so a late `agent_end` from an earlier run never completes it. A prompt queued into a live run (`streamingBehavior`) reports at the first yield after its message left the queue. An `agent_end` with `yielded: false` (the agent is retrying, compacting, or answering a stop-time reminder) never completes a prompt.
-- `status`: `"completed"`, `"aborted"` (interrupted by `abort`, `abort_and_prompt`, or a session transition, or dropped by an abort before dispatch), or `"error"`.
+- `status`: `"completed"`, `"aborted"` (interrupted by `abort`, `abort_and_prompt`, or a session transition, dropped by an abort before dispatch, or explicitly removed from the pending queue), or `"error"`.
 - `error` (only with `status: "error"`): `{ message, provider?, model?, httpStatus?, retryable }`. `message` is the provider's error text with OMP-local diagnostics (such as saved request-dump paths) removed. `retryable` marks a transient failure; OMP's own automatic retries have already been exhausted. A prompt that fails before reaching the agent also gets the legacy error response with the same `id` before its `prompt_result`.
 - `sessionSettled`: whether the session is already done when the result is written — see [Yield vs settled](#yield-vs-settled). `false` means background work can still wake the agent; a `session_settled` frame follows once it has.
 
@@ -405,6 +450,7 @@ Local-only slash commands may emit `command_output` frames before completing. Th
 ### Yield vs settled
 
 For agent-invoking work, a prompt's `prompt_result` reports the **agent yield**: it finished its turn (`agent_end` with `yielded: true`), or the prompt was aborted before dispatch or by a session transition. Local-only results and pre-dispatch errors do not require an `agent_end`. The **session is done** only when nothing can wake it again — no run is live or admitted, no steer/follow-up is queued, and no background job (auto-backgrounded `bash`, async `task`, `eval`) or pending delivery will inject its result and start a follow-up turn.
+A `removed: true` receipt cancels only that queued input; it does not indicate session completion.
 
 - `session_settled` is written once per stretch of agent activity, when the session becomes done. If background work was pending at the yield, OMP waits it out; any follow-up runs it triggers stream normally (`agent_start` … `agent_end`) before `session_settled`. It always follows the `prompt_result` frames of the final yield, and is not emitted for prompts that never reached the agent.
 - `prompt_result.sessionSettled` answers the same question at the yield, so a host can tear down immediately when it is `true`.
