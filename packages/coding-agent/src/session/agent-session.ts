@@ -470,6 +470,10 @@ import {
 	isDisplayableQueuedMessage,
 	isHiddenUserCompanion,
 	isUserAuthoredQueuedMessage,
+	isPendingUserMessage,
+	pendingMessagePreview,
+	type PendingMessagesRemoval,
+	type PendingMessagesSnapshot,
 	isUserQueuedMessage,
 	queueChipText,
 	toRestoredQueuedMessage,
@@ -550,6 +554,7 @@ import { YieldQueue } from "./yield-queue";
 export * from "./agent-session-events";
 export * from "./agent-session-types";
 export type * from "./session-skills";
+export type * from "./queued-messages";
 export type { AdvisorStats, AdvisorStatusOverviewEntry, PerAdvisorStat } from "./session-advisors";
 
 const SESSION_STOP_CONTINUATION_CAP = 8;
@@ -1495,6 +1500,7 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 	#transcriptEpoch = 0;
 	/** Latest `session_init` of the transcript the model calls ran on; `init` is null when it has none. */
 	#sessionInit: { sessionFile: string | undefined; init: PersistedSessionInit | null } | undefined;
+	readonly #pendingQueueRuntimeId = crypto.randomUUID();
 	/** Settles when switchSession commits or restores its previous generation on rollback.
 	 *  newSession never rolls its generation back, so it does not delay stale aside/SDK calls. */
 	#sessionGenerationSettled: Promise<void> | undefined;
@@ -9415,6 +9421,9 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 				onPromptAdmitted: onPromptQueuedAdmitted,
 				promptGeneration: queueGeneration,
 				clientMessageId: options?.clientMessageId,
+				displayText: typedText,
+				companions: keywordNotices,
+				onRemoved: options?.onQueuedMessageRemoved,
 			});
 			outcome.sessionClaimed = queued;
 			if (!queued) this.#reportDroppedPrompt(typedText, options, followUps);
@@ -9487,6 +9496,9 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 				prependMessages: prependNotices,
 				rawText: typedText,
 				clientMessageId: options?.clientMessageId,
+				displayText: typedText,
+				companions: keywordNotices,
+				onRemoved: options?.onQueuedMessageRemoved,
 				preprocessed: {
 					images: normalizedImages,
 					descriptionNotice: imageDescriptionNotice,
@@ -9602,7 +9614,10 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 	 */
 	async promptCustomMessage<T = unknown>(
 		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details" | "attribution">,
-		options?: Pick<PromptOptions, "streamingBehavior" | "toolChoice" | "onPromptAdmitted" | "followUps"> & {
+		options?: Pick<
+			PromptOptions,
+			"streamingBehavior" | "toolChoice" | "onPromptAdmitted" | "followUps" | "onQueuedMessageRemoved"
+		> & {
 			queueChipText?: string;
 			queueOnly?: boolean;
 			onPromptQueued?: PromptOptions["onPromptQueued"];
@@ -9613,7 +9628,10 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 
 	async #promptCustomMessage<T = unknown>(
 		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details" | "attribution">,
-		options?: Pick<PromptOptions, "streamingBehavior" | "toolChoice" | "onPromptAdmitted" | "followUps"> & {
+		options?: Pick<
+			PromptOptions,
+			"streamingBehavior" | "toolChoice" | "onPromptAdmitted" | "followUps" | "onQueuedMessageRemoved"
+		> & {
 			queueChipText?: string;
 			queueOnly?: boolean;
 			onPromptQueued?: PromptOptions["onPromptQueued"];
@@ -9663,7 +9681,10 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 	async #dispatchCustomPrompt<T = unknown>(
 		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details" | "attribution">,
 		options:
-			| (Pick<PromptOptions, "streamingBehavior" | "toolChoice" | "onPromptAdmitted" | "followUps"> & {
+			| (Pick<
+					PromptOptions,
+					"streamingBehavior" | "toolChoice" | "onPromptAdmitted" | "followUps" | "onQueuedMessageRemoved"
+			  > & {
 					queueChipText?: string;
 					queueOnly?: boolean;
 					onPromptQueued?: PromptOptions["onPromptQueued"];
@@ -9721,6 +9742,8 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 				prependMessages: queuedNotices,
 				onPromptAdmitted: onPromptQueuedAdmitted,
 				onPromptQueued: options?.onPromptQueued,
+				companions: keywordNotices,
+				onRemoved: options?.onQueuedMessageRemoved,
 			});
 			// Still held only if the message was not queued (an aside whose session changed while it was prepared).
 			this.#reportDroppedCustomPrompt(message, options, followUps);
@@ -9767,6 +9790,8 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 			}
 			await this.#queueCustomMessage(message, streamingBehavior, {
 				queueChipText: options?.queueChipText,
+				companions: keywordNotices,
+				onRemoved: options?.onQueuedMessageRemoved,
 				preprocessed: { content: preparedMessage.content, descriptionNotice },
 				prependMessages: queuedNotices,
 				onPromptAdmitted: onPromptQueuedAdmitted,
@@ -9790,10 +9815,10 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 	}
 
 	/** Describe normalized images in a user-invoked skill prompt before delivery. */
-	async #buildSkillImageDescriptionNotice(message: CustomMessage): Promise<CustomMessage | undefined> {
+	async #buildSkillImageDescriptionNotice(message: CustomMessage, signal?: AbortSignal): Promise<CustomMessage | undefined> {
 		if (!isUserInvokedSkillPrompt(message) || !Array.isArray(message.content)) return undefined;
 		const images = message.content.filter((part): part is ImageContent => part.type === "image");
-		return images.length > 0 ? this.#buildImageDescriptionNotice(images) : undefined;
+		return images.length > 0 ? this.#buildImageDescriptionNotice(images, signal) : undefined;
 	}
 
 	/** Queue ownership belongs to Agent; only actual user deliveries refresh submission policy. */
@@ -10517,6 +10542,7 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 			rawText: text,
 			onPromptQueued: options?.onPromptQueued,
 			clientMessageId: options?.clientMessageId,
+			displayText: text,
 		});
 	}
 
@@ -10590,6 +10616,7 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 				rawText: text,
 				onPromptQueued: options?.onPromptQueued,
 				clientMessageId: options?.clientMessageId,
+				displayText: text,
 			});
 			return;
 		}
@@ -10790,6 +10817,9 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 			 */
 			promptGeneration?: number;
 			clientMessageId?: string;
+			displayText?: string;
+			companions?: CustomMessage[];
+			onRemoved?: PromptOptions["onQueuedMessageRemoved"];
 		},
 	): Promise<boolean> {
 		const attribution = options?.attribution ?? "user";
@@ -10815,6 +10845,72 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 		// vision description already done — reuse them instead of paying a second
 		// vision-model request for the same attachment.
 		const attachmentSourceNotices = this.#createAttachmentSourceNotices(images, timestamp ?? Date.now());
+		if (mode !== "aside") {
+			// ACP admission must finish preparation before deciding whether its client turn is still live.
+			const prepared =
+				options?.requireActiveRun && !preprocessed
+					? await (async () => {
+							const normalized = await this.#normalizeImagesForModel(images);
+							return {
+								images: normalized,
+								descriptionNotice: normalized?.length
+									? await this.#buildImageDescriptionNotice(normalized)
+									: undefined,
+							};
+						})()
+					: preprocessed;
+			if (options?.promptGeneration !== undefined && this.#promptGeneration !== options.promptGeneration)
+				return false;
+			if (
+				options?.requireActiveRun &&
+				(this.#abortInProgress || !this.isStreaming || this.#clientPromptInFlightCount === 0)
+			)
+				return false;
+			const message: AgentMessage = {
+				role: "user",
+				content: [{ type: "text", text }, ...(images ?? [])],
+				clientMessageId,
+				attribution,
+				timestamp: timestamp ?? Date.now(),
+				...(mode === "steer" ? { steering: true } : {}),
+			};
+			this.#queuedMessageRawText.set(message, rawText);
+			const queueOptions = {
+				preview: { text: options?.displayText ?? text, images, clientMessageId },
+				companions: [...prependMessages, ...(options?.companions ?? []), ...attachmentSourceNotices],
+				onRemoved: (pendingMessageId: string) =>
+					options?.onRemoved?.({
+						sessionId: this.sessionId,
+						generation: this.#pendingQueueGeneration,
+						pendingMessageId,
+						clientMessageId,
+					}),
+				prepare: async (signal: AbortSignal) => {
+					const normalized = prepared ? prepared.images : await this.#normalizeImagesForModel(images);
+					signal.throwIfAborted();
+					const description = prepared
+						? prepared.descriptionNotice
+						: normalized?.length
+							? await this.#buildImageDescriptionNotice(normalized, signal)
+							: undefined;
+					signal.throwIfAborted();
+					return {
+						message: { ...message, content: [{ type: "text" as const, text }, ...(normalized ?? [])] },
+						companions: description ? [description] : undefined,
+					};
+				},
+			};
+			this.#allowQueuedMessageDrainRetry();
+			if (mode === "followUp") this.agent.followUp(message, queueOptions);
+			else {
+				this.agent.steer(message, queueOptions);
+				this.#fireSteeringArrival([...queueOptions.companions, message]);
+			}
+			options?.onPromptQueued?.([...queueOptions.companions, message]);
+			options?.onPromptAdmitted?.();
+			if (!options?.skipIdleDrain) this.#scheduleIdleQueueDrain();
+			return true;
+		}
 		const normalizedImages = preprocessed ? preprocessed.images : await this.#normalizeImagesForModel(images);
 		const content: (TextContent | ImageContent)[] = [{ type: "text", text }];
 		if (normalizedImages?.length) {
@@ -10830,57 +10926,25 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 		if (options?.promptGeneration !== undefined && this.#promptGeneration !== options.promptGeneration) {
 			return false;
 		}
-		// `joinActiveTurn` admission: after every await above, the run that was
-		// live at call time may have settled — or `abort()` may have started
-		// (its `#abortInProgress` flag is raised synchronously at entry, while
-		// `isStreaming` can stay true until cleanup drains) — or, with
-		// `requireActiveRun`, the CLIENT turn that admitted this steer may
-		// have settled during the preprocessing awaits while an autonomous
-		// wake (IRC, scheduler) took over `isStreaming`. Classify either as
-		// not-admitted so the caller (the ACP bridge) keeps its content for the
-		// host; the enqueue below is synchronous, so nothing interleaves
-		// between this check and the message landing on the queue.
-		if (
-			options?.requireActiveRun &&
-			(this.#abortInProgress || !this.isStreaming || this.#clientPromptInFlightCount === 0)
-		) {
-			return false;
-		}
-		if (mode === "aside") {
-			if (await this.#sessionGenerationChanged(sessionGeneration)) return false;
-			const records: AgentMessage[] = [...prependMessages, ...attachmentSourceNotices];
-			if (imageDescriptionNotice) records.push(imageDescriptionNotice);
-			const userMessage: AgentMessage = { role: "user", content, clientMessageId, attribution, timestamp: timestamp ?? Date.now() };
-			this.#queuedMessageRawText.set(userMessage, rawText);
-			records.push(userMessage);
-			this.#irc.queueAside(records);
-			options?.onPromptAdmitted?.();
-			// The awaits above (image normalization / vision description) can span the run's
-			// settle, so the run may already be idle by the time the record lands in the aside
-			// queue with no loop left to drain it. Resuming here is a no-op while streaming and
-			// wakes/folds correctly once idle (see #resumeStrandedIrcAsides).
-			this.#resumeStrandedIrcAsides();
-			return true;
-		}
-		// The session-agent notice rides in prependMessages (from prompt() or
-		// #expandQueuedMentions), so it arrives alongside the user message in the same turn (#14093).
-		const queued = this.#pushQueuedUserMessage(
-			mode,
-			[...prependMessages, ...attachmentSourceNotices, ...(imageDescriptionNotice ? [imageDescriptionNotice] : [])],
+		if (await this.#sessionGenerationChanged(sessionGeneration)) return false;
+		const records: AgentMessage[] = [...prependMessages, ...attachmentSourceNotices];
+		if (imageDescriptionNotice) records.push(imageDescriptionNotice);
+		const userMessage: AgentMessage = {
+			role: "user",
 			content,
-			attribution,
-			timestamp ?? Date.now(),
-			rawText,
 			clientMessageId,
-		);
-		options?.onPromptQueued?.(queued);
+			attribution,
+			timestamp: timestamp ?? Date.now(),
+		};
+		this.#queuedMessageRawText.set(userMessage, rawText);
+		records.push(userMessage);
+		this.#irc.queueAside(records);
 		options?.onPromptAdmitted?.();
-		// joinActiveTurn admission must never start an autonomous turn: the
-		// live run owns delivery, and an idle queue stays put until the host
-		// decides what to do with its content.
-		if (!options?.skipIdleDrain) {
-			this.#scheduleIdleQueueDrain();
-		}
+		// The awaits above (image normalization / vision description) can span the run's
+		// settle, so the run may already be idle by the time the record lands in the aside
+		// queue with no loop left to drain it. Resuming here is a no-op while streaming and
+		// wakes/folds correctly once idle (see #resumeStrandedIrcAsides).
+		this.#resumeStrandedIrcAsides();
 		return true;
 	}
 
@@ -11391,6 +11455,8 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 		deliverAs: "steer" | "followUp" | "aside",
 		options?: {
 			queueChipText?: string;
+			companions?: CustomMessage[];
+			onRemoved?: PromptOptions["onQueuedMessageRemoved"];
 			/** Content and vision companion already prepared by the caller; skips re-normalizing and re-describing. */
 			preprocessed?: { content: CustomMessage<T>["content"]; descriptionNotice?: CustomMessage };
 			/** Hidden notices published immediately before this message, in the same synchronous group. */
@@ -11403,6 +11469,7 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 	): Promise<void> {
 		// Captured before the normalization await below — see #sessionGeneration's doc comment.
 		const sessionGeneration = this.#sessionGeneration;
+		const companions = options?.companions ?? [];
 		const details =
 			options?.queueChipText !== undefined
 				? ({
@@ -11423,25 +11490,51 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 			timestamp: Date.now(),
 		};
 		const preprocessed = options?.preprocessed;
-		const prependMessages = options?.prependMessages ?? [];
 		const onPromptAdmitted = options?.onPromptAdmitted;
 		const onPromptQueued = options?.onPromptQueued;
+		if (deliverAs !== "aside" && isPendingUserMessage(appMessage)) {
+			const queueOptions = {
+				preview: pendingMessagePreview(appMessage),
+				companions,
+				onRemoved: (pendingMessageId: string) =>
+					options?.onRemoved?.({
+						sessionId: this.sessionId,
+						generation: this.#pendingQueueGeneration,
+						pendingMessageId,
+						clientMessageId: pendingMessagePreview(appMessage).clientMessageId,
+					}),
+				prepare: async (signal: AbortSignal) => {
+					const normalized = preprocessed
+						? { ...appMessage, content: preprocessed.content }
+						: await this.#normalizeAgentMessageImages(appMessage);
+					signal.throwIfAborted();
+					const description = preprocessed
+						? preprocessed.descriptionNotice
+						: await this.#buildSkillImageDescriptionNotice(normalized, signal);
+					signal.throwIfAborted();
+					return { message: normalized, companions: description ? [description] : undefined };
+				},
+			};
+			this.#allowQueuedMessageDrainRetry();
+			if (deliverAs === "followUp") this.agent.followUp(appMessage, queueOptions);
+			else this.agent.steer(appMessage, queueOptions);
+			onPromptAdmitted?.();
+			this.#scheduleIdleQueueDrain();
+			return;
+		}
 		const normalizedAppMessage = preprocessed
 			? { ...appMessage, content: preprocessed.content }
 			: await this.#normalizeAgentMessageImages(appMessage);
 		const descriptionNotice = preprocessed
 			? preprocessed.descriptionNotice
 			: await this.#buildSkillImageDescriptionNotice(normalizedAppMessage);
+		const allCompanions = descriptionNotice ? [...companions, descriptionNotice] : companions;
 		if (deliverAs === "aside") {
 			if (await this.#sessionGenerationChanged(sessionGeneration)) return;
 			// Non-interrupting: rides the same step-boundary aside poll as
 			// sendCustomMessage's streaming aside branch — not an agent-core queue
 			// entry, so no drain-retry latch and no idle-queue drain scheduling.
-			this.#irc.queueAside([
-				...prependMessages,
-				...(descriptionNotice ? [descriptionNotice] : []),
-				normalizedAppMessage,
-			]);
+			this.#irc.queueAside([...allCompanions, normalizedAppMessage]);
 			onPromptAdmitted?.();
 			// The image-normalization await above can span the run's settle, so the run may
 			// already be idle by the time the record lands in the aside queue with no loop
@@ -11453,13 +11546,9 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 		this.#allowQueuedMessageDrainRetry();
 		// Keyword notices and their user message must enter the queue in one synchronous phase.
 		if (deliverAs === "followUp") {
-			for (const notice of prependMessages) this.agent.followUp(notice);
-			if (descriptionNotice) this.agent.followUp(descriptionNotice);
-			this.agent.followUp(normalizedAppMessage);
+			this.agent.followUp(normalizedAppMessage, { companions: allCompanions });
 		} else {
-			for (const notice of prependMessages) this.agent.steer(notice);
-			if (descriptionNotice) this.agent.steer(descriptionNotice);
-			this.agent.steer(normalizedAppMessage);
+			this.agent.steer(normalizedAppMessage, { companions: allCompanions });
 		}
 		onPromptQueued?.([...prependMessages, ...(descriptionNotice ? [descriptionNotice] : []), normalizedAppMessage]);
 		onPromptAdmitted?.();
@@ -12022,6 +12111,61 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 		const remaining = queue.slice();
 		remaining.splice(start, userIndex - start + 1);
 		return remaining;
+	}
+
+	get #pendingQueueGeneration(): string {
+		return `${this.#pendingQueueRuntimeId}:${this.#sessionGeneration}:${this.sessionId}`;
+	}
+
+	/** Session-scoped, authoritative pending input, including cancellable preparation and claimed delivery. */
+	getPendingMessages(expectedSessionId: string): PendingMessagesSnapshot {
+		if (expectedSessionId !== this.sessionId) throw new Error("Pending-message session mismatch");
+		if (this.#sessionTransitionSettled || this.#isDisposed) throw new Error("Session is transitioning");
+		return {
+			sessionId: this.sessionId,
+			generation: this.#pendingQueueGeneration,
+			items: this.agent
+				.getPendingMessages()
+				.filter(item => isPendingUserMessage(item.message))
+				.map(item => ({
+					id: item.id,
+					queue: item.queue,
+					state: item.state,
+					removable: item.removable,
+					...(item.preview ?? pendingMessagePreview(item.message)),
+				})),
+		};
+	}
+
+	removePendingMessages(
+		expectedSessionId: string,
+		generation: string,
+		ids: readonly string[],
+	): PendingMessagesRemoval {
+		const snapshot = this.getPendingMessages(expectedSessionId);
+		if (generation !== snapshot.generation) throw new Error("Pending-message generation mismatch");
+		if (
+			!Array.isArray(ids) ||
+			ids.length === 0 ||
+			ids.some(id => typeof id !== "string" || id.length === 0) ||
+			new Set(ids).size !== ids.length
+		)
+			throw new Error("Pending-message ids must be a nonempty unique string set");
+		const results = this.agent
+			.removePendingMessages(ids, isPendingUserMessage, isHiddenUserCompanion)
+			.map(result => ({
+				id: result.id,
+				outcome: result.outcome,
+				...(result.outcome === "removed"
+					? {
+							clientMessageId: (
+								result.preview ?? (result.message ? pendingMessagePreview(result.message) : undefined)
+							)?.clientMessageId,
+						}
+					: {}),
+			}));
+		this.#reconcileQueuedMessageDrain();
+		return { snapshot: this.getPendingMessages(expectedSessionId), results };
 	}
 
 	/**

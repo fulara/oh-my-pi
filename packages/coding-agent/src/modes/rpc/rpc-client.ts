@@ -17,6 +17,7 @@ import type { AgentSessionEvent, SessionStats } from "../../session/agent-sessio
 import type { CacheWarmingMode } from "../../session/cache-warmer";
 import type { SessionEntry, SessionTreeNode } from "../../session/session-entries";
 import type { SessionLeaseReport } from "../../session/session-storage";
+import type { PendingMessagesRemoval, PendingMessagesSnapshot } from "../../session/queued-messages";
 import { MAX_RPC_FRAME_BYTES, MAX_RPC_REASSEMBLED_BYTES, RpcFrameDecoder, type RpcProtocolVersion } from "./rpc-frame";
 import type { RpcGoalOp, RpcGoalResult } from "./rpc-goal";
 import {
@@ -855,6 +856,14 @@ export class RpcClient {
 					? state.tokensPerSecond
 					: null,
 		};
+	}
+
+	async getPendingMessages(sessionId: string): Promise<PendingMessagesSnapshot> {
+		return this.#getData(await this.#send({ type: "get_pending_messages", sessionId }));
+	}
+
+	async removePendingMessages(sessionId: string, generation: string, ids: string[]): Promise<PendingMessagesRemoval> {
+		return this.#getData(await this.#send({ type: "remove_pending_messages", sessionId, generation, ids }));
 	}
 
 	/**

@@ -1,0 +1,5 @@
+{
+  "id": "cmd-pending-1",
+  "type": "get_pending_messages",
+  "sessionId": "session-1"
+}

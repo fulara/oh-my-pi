@@ -1,0 +1,12 @@
+{
+  "type": "prompt_result",
+  "id": "cmd-prompt-removed",
+  "agentInvoked": false,
+  "status": "aborted",
+  "removed": true,
+  "sessionSettled": false,
+  "sessionId": "session-1",
+  "generation": "runtime-1:0:session-1",
+  "pendingMessageId": "pending-1",
+  "clientMessageId": "client-1"
+}
