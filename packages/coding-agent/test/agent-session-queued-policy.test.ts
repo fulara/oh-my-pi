@@ -16,6 +16,9 @@ import { HindsightSessionState } from "@oh-my-pi/pi-coding-agent/hindsight/state
 import * as memoryBackend from "@oh-my-pi/pi-coding-agent/memory-backend";
 import type { MemoryBackend } from "@oh-my-pi/pi-coding-agent/memory-backend/types";
 import { loadMnemopiConfig } from "@oh-my-pi/pi-coding-agent/mnemopi/config";
+import { executeRpcPendingMessagesCommand } from "@oh-my-pi/pi-coding-agent/modes/rpc/rpc-mode";
+import { RpcPromptResults } from "@oh-my-pi/pi-coding-agent/modes/rpc/rpc-prompt-results";
+import type { RpcPromptResultFrame } from "@oh-my-pi/pi-coding-agent/modes/rpc/rpc-types";
 import {
 	getMnemopiSessionState,
 	loadMnemopi,
@@ -147,6 +150,157 @@ describe("queued user delivery policy", () => {
 			},
 		};
 	}
+
+	it("removes only a client's viewed id set, preserving later input and hidden internal/advisor work", async () => {
+		const { agent, requests } = setup();
+		await session.runModeExitTeardown(async () => {
+			await session.steer("same text", undefined, { clientMessageId: "client-a" });
+			await session.followUp("same text", undefined, { clientMessageId: "client-b" });
+			const viewed = session.getPendingMessages(session.sessionId);
+			expect(viewed.items.map(item => item.clientMessageId)).toEqual(["client-a", "client-b"]);
+			expect(new Set(viewed.items.map(item => item.id)).size).toBe(2);
+			const advisor: AgentMessage = {
+				role: "custom",
+				customType: "advisor",
+				content: "advice",
+				display: true,
+				attribution: "agent",
+				timestamp: 0,
+			};
+			agent.followUp(advisor);
+			agent.followUp({ role: "developer", content: "internal work", attribution: "agent", timestamp: 0 });
+			await session.steer("new arrival", undefined, { clientMessageId: "client-c" });
+			const result = session.removePendingMessages(
+				session.sessionId,
+				viewed.generation,
+				viewed.items.map(item => item.id),
+			);
+			expect(result.results).toEqual(
+				viewed.items.map(item => ({ id: item.id, outcome: "removed", clientMessageId: item.clientMessageId })),
+			);
+			expect(result.snapshot.items.map(item => item.clientMessageId)).toEqual(["client-c"]);
+			expect(agent.peekFollowUpQueue()).toContain(advisor);
+			expect(agent.peekFollowUpQueue().some(message => message.role === "developer")).toBe(true);
+		});
+		await session.waitForIdle();
+		const delivered = requests.flatMap(request => request.messages).filter(message => message.role === "user");
+		expect(JSON.stringify(delivered)).not.toContain("same text");
+		expect(JSON.stringify(delivered)).toContain("new arrival");
+	});
+
+	it("exposes original skill text and images, and settles only its exact removed RPC ticket while retaining queued work", async () => {
+		setup();
+		const frames: RpcPromptResultFrame[] = [];
+		const results = new RpcPromptResults(session, frame => frames.push(frame));
+		const image: ImageContent = { type: "image", mimeType: "image/png", data: "original-unprocessed-image" };
+		await session.runModeExitTeardown(async () => {
+			const removedTicket = results.begin("removed-rpc");
+			const retainedTicket = results.begin("retained-rpc");
+			const skill = {
+				customType: "skill-prompt",
+				content: [{ type: "text" as const, text: "SECRET EXPANDED SKILL BODY" }, image],
+				display: true,
+				attribution: "user" as const,
+				details: {
+					name: "review",
+					prompt: "/skill:review full submitted input",
+					clientMessageId: "duplicate-correlation",
+				},
+			};
+			await session.promptCustomMessage(skill, {
+				queueOnly: true,
+				streamingBehavior: "steer",
+				queueChipText: "short chip",
+				onQueuedMessageRemoved: receipt => results.remove(removedTicket, receipt),
+			});
+			await session.promptCustomMessage(
+				{ ...skill, content: "second expanded body" },
+				{
+					queueOnly: true,
+					streamingBehavior: "followUp",
+					onQueuedMessageRemoved: receipt => results.remove(retainedTicket, receipt),
+				},
+			);
+			const get = executeRpcPendingMessagesCommand(session, {
+				id: "get",
+				type: "get_pending_messages",
+				sessionId: session.sessionId,
+			});
+			if (!get.success || get.command !== "get_pending_messages") throw new Error("Missing snapshot response");
+			const snapshot = get.data;
+			expect(snapshot.items[0]).toMatchObject({
+				text: "/skill:review full submitted input",
+				images: [image],
+				removable: true,
+			});
+			expect(JSON.stringify(snapshot)).not.toContain("SECRET");
+			const response = executeRpcPendingMessagesCommand(session, {
+				id: "remove",
+				type: "remove_pending_messages",
+				sessionId: session.sessionId,
+				generation: snapshot.generation,
+				ids: [snapshot.items[0].id],
+			});
+			expect(response).toMatchObject({
+				id: "remove",
+				type: "response",
+				command: "remove_pending_messages",
+				success: true,
+				data: {
+					results: [{ id: snapshot.items[0].id, outcome: "removed", clientMessageId: "duplicate-correlation" }],
+				},
+			});
+			expect(frames).toEqual([]);
+			await setImmediate();
+			expect(frames).toEqual([
+				{
+					type: "prompt_result",
+					id: "removed-rpc",
+					status: "aborted",
+					agentInvoked: false,
+					removed: true,
+					sessionId: session.sessionId,
+					generation: snapshot.generation,
+					pendingMessageId: snapshot.items[0].id,
+					clientMessageId: "duplicate-correlation",
+					sessionSettled: false,
+				},
+			]);
+			results.settle(removedTicket);
+			results.completeLocal(removedTicket);
+			await setImmediate();
+			expect(frames.map(frame => frame.id)).toEqual(["removed-rpc"]);
+			session.removePendingMessages(session.sessionId, snapshot.generation, [snapshot.items[1].id]);
+			await setImmediate();
+			expect(frames.map(frame => frame.id)).toEqual(["removed-rpc", "retained-rpc"]);
+		});
+	});
+
+	it("rejects stale generations, wrong sessions and invalid id sets without removing queued input", async () => {
+		setup();
+		await session.runModeExitTeardown(async () => {
+			await session.steer("keep me");
+			const snapshot = session.getPendingMessages(session.sessionId);
+			const id = snapshot.items[0].id;
+			for (const command of [
+				{ sessionId: session.sessionId, generation: "old-runtime", ids: [id] },
+				{ sessionId: "other-session", generation: snapshot.generation, ids: [id] },
+				{ sessionId: session.sessionId, generation: snapshot.generation, ids: [] },
+				{ sessionId: session.sessionId, generation: snapshot.generation, ids: [id, id] },
+			]) {
+				expect(
+					executeRpcPendingMessagesCommand(session, { id: "stale", type: "remove_pending_messages", ...command }),
+				).toMatchObject({ type: "response", command: "remove_pending_messages", success: false });
+				expect(session.getPendingMessages(session.sessionId).items.map(item => item.id)).toEqual([id]);
+			}
+			session.removePendingMessages(session.sessionId, snapshot.generation, [id]);
+			const oldSessionId = session.sessionId;
+			await session.newSession();
+			const replacement = session.getPendingMessages(session.sessionId);
+			expect(replacement.generation).not.toBe(snapshot.generation);
+			expect(() => session.removePendingMessages(oldSessionId, snapshot.generation, [id])).toThrow();
+		});
+	});
 
 	async function setupMemory(
 		backendId: "mnemopi" | "hindsight",

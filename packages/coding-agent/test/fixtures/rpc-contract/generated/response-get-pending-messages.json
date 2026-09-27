@@ -1,0 +1,34 @@
+{
+  "id": "cmd-pending-1",
+  "type": "response",
+  "command": "get_pending_messages",
+  "success": true,
+  "data": {
+    "sessionId": "session-1",
+    "generation": "runtime-1:0:session-1",
+    "items": [
+      {
+        "id": "pending-1",
+        "clientMessageId": "client-1",
+        "queue": "steering",
+        "state": "queued",
+        "removable": true,
+        "text": "/skill:review inspect images",
+        "images": [
+          {
+            "type": "image",
+            "mimeType": "image/png",
+            "data": "aW1hZ2U="
+          }
+        ]
+      },
+      {
+        "id": "pending-2",
+        "queue": "followUp",
+        "state": "claimed",
+        "removable": false,
+        "text": "Already claimed"
+      }
+    ]
+  }
+}

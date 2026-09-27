@@ -152,6 +152,9 @@
 ### Changed
 
 - Updated telemetry attribute names from the `pi.*` namespace to the `omp.*` namespace.
+### Added
+
+- Added authoritative pending-message identities and atomic removal before claim, preserving sibling preprocessing, internal companions and nonremovable provider-owned input across abort requeue.
 
 ## [18.3.3] - 2026-09-27
 

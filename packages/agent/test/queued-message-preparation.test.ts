@@ -158,7 +158,7 @@ describe("queued message preparation", () => {
 				...(failure === "replace" ? [] : ["following batch"]),
 				"newer follow-up",
 			]);
-			expect(agent.state.messages.filter(message => message === steering)).toHaveLength(
+			expect(userTexts(agent.state.messages).filter(text => text === "late steering")).toHaveLength(
 				failure === "replace" ? 0 : 2,
 			);
 			expect(agent.state.messages.filter(message => message === followUp)).toHaveLength(

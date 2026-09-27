@@ -65,6 +65,7 @@ import { cfgPlanEnabled } from "../../plan-mode/settings";
 import planModeApprovedPrompt from "../../prompts/system/plan-mode-approved.md" with { type: "text" };
 import planModeCompactInstructionsPrompt from "../../prompts/system/plan-mode-compact-instructions.md" with { type: "text" };
 import type { AgentSession, AgentSessionEvent } from "../../session/agent-session";
+import type { PendingMessageRemovalReceipt } from "../../session/queued-messages";
 import { findMostRecentNonEmptySession } from "../../session/session-listing";
 import { SKILL_PROMPT_MESSAGE_TYPE, USER_INTERRUPT_LABEL } from "../../session/messages";
 import type { DetachedBranchSnapshot } from "../../session/session-manager";
@@ -307,6 +308,7 @@ export async function runRpcSkillCommand(
 	onPromptAdmitted?: () => void,
 	images?: ImageContent[],
 	clientMessageId?: string,
+	onQueuedMessageRemoved?: (receipt: PendingMessageRemovalReceipt) => void,
 ): Promise<boolean> {
 	const built = prebuilt ?? (await buildSkillPromptMessage(invocation.skill, invocation, "user"));
 	const textBlock: TextContent = { type: "text", text: built.message };
@@ -319,7 +321,7 @@ export async function runRpcSkillCommand(
 			details: { ...built.details, clientMessageId },
 			attribution: "user",
 		},
-		{ streamingBehavior, queueChipText: invocation.queueChipText, onPromptAdmitted },
+		{ streamingBehavior, queueChipText: invocation.queueChipText, onPromptAdmitted, onQueuedMessageRemoved },
 	);
 }
 
@@ -369,6 +371,7 @@ export async function dispatchRpcSkillPrompt(input: {
 				onPromptAdmitted,
 				input.images,
 				input.clientMessageId,
+				receipt => input.results.remove(input.ticket, receipt),
 			),
 		results: input.results,
 		onError: input.onError,
@@ -1172,6 +1175,22 @@ function successResponse<T extends RpcCommand["type"]>(
 
 function errorResponse(id: string | undefined, command: string, message: string, code?: string): RpcResponse {
 	return { id, type: "response", command, success: false, error: message, ...(code ? { code } : {}) };
+}
+
+/** Synchronous mutation boundary shared by stdio RPC and SDK contract verification. */
+export function executeRpcPendingMessagesCommand(
+	session: Pick<AgentSession, "getPendingMessages" | "removePendingMessages">,
+	command: Extract<RpcCommand, { type: "get_pending_messages" | "remove_pending_messages" }>,
+): RpcResponse {
+	try {
+		const data =
+			command.type === "get_pending_messages"
+				? session.getPendingMessages(command.sessionId)
+				: session.removePendingMessages(command.sessionId, command.generation, command.ids);
+		return successResponse(command.id, command.type, data);
+	} catch (cause) {
+		return errorResponse(command.id, command.type, cause instanceof Error ? cause.message : String(cause));
+	}
 }
 
 function getRpcLocalOptions(session: AgentSession) {
@@ -2929,6 +2948,10 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 				};
 				return success(id, "get_state", state);
 			}
+
+			case "get_pending_messages":
+			case "remove_pending_messages":
+				return executeRpcPendingMessagesCommand(session, command);
 
 			case "get_activity":
 				return success(id, command.type, await activity.snapshot(command.sessionId));

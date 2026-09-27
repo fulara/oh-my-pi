@@ -48,6 +48,7 @@ import type { XdevState } from "../tools/xdev";
 import type { CodexAutoRedeemCoordinator } from "./codex-auto-reset";
 import type { SettingsGatedToolDelta } from "./session-tools";
 import type { SessionManager } from "./session-manager";
+import type { PendingMessageRemovalReceipt } from "./queued-messages";
 
 /** Maximum time the interactive shutdown path waits for Mnemopi consolidation. */
 export const SHUTDOWN_CONSOLIDATE_BUDGET_MS = 1_500;
@@ -406,6 +407,8 @@ export interface PromptOptions {
 	images?: ImageContent[];
 	/** Client correlation metadata carried by the actual user message. */
 	clientMessageId?: string;
+	/** Receives authoritative queue removal before delivery; does not imply an agent/run abort. */
+	onQueuedMessageRemoved?: (receipt: PendingMessageRemovalReceipt) => void;
 	/** Queue behavior while streaming. `"aside"` is non-interrupting — it does not steer/follow-up
 	 *  an in-flight tool batch, injecting at the next step boundary instead (see
 	 *  AgentSession.sendUserMessage's `deliverAs: "aside"`). */

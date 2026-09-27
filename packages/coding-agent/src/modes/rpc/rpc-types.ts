@@ -16,6 +16,7 @@ import type { PlanModeState } from "../../plan-mode/state";
 import type { AgentSessionEvent, SessionStats } from "../../session/agent-session";
 import type { FileEntry, SessionEntry, SessionTreeNode } from "../../session/session-entries";
 import type { UsageLimitState } from "../../session/usage-limit";
+import type { PendingMessagesRemoval, PendingMessagesSnapshot } from "../../session/queued-messages";
 import type { SessionSkillsCatalogResult, SessionSkillsState } from "../../session/session-skills";
 import type { RpcSessionRecapSnapshot } from "../../session/session-recap";
 import type { AvailableSlashCommandSource } from "../../slash-commands/available-commands";
@@ -76,6 +77,8 @@ export type RpcCommand =
 	// State
 	| { id?: string; type: "get_state" }
 	| { id?: string; type: "get_activity"; sessionId: string }
+	| { id?: string; type: "get_pending_messages"; sessionId: string }
+	| { id?: string; type: "remove_pending_messages"; sessionId: string; generation: string; ids: string[] }
 	| {
 			id?: string;
 			type: "get_activity_detail";
@@ -361,6 +364,13 @@ export interface RpcPromptResultFrame {
 	agentInvoked: boolean;
 	status: RpcPromptStatus;
 	error?: RpcPromptError;
+	/** This prompt alone was removed from the queue; never a run/agent termination signal. */
+	removed?: boolean;
+	/** Authoritative removal receipt, populated only when `removed` is true. */
+	sessionId?: string;
+	generation?: string;
+	pendingMessageId?: string;
+	clientMessageId?: string;
 	/**
 	 * The agent yielded and nothing will wake the session again: no run is live and no
 	 * queued message or background job (async bash/task/eval) will inject a follow-up.
@@ -549,6 +559,8 @@ export type RpcResponse =
 	// State
 	| { id?: string; type: "response"; command: "get_state"; success: true; data: RpcSessionState }
 	| { id?: string; type: "response"; command: "get_activity"; success: true; data: SessionActivitySnapshot }
+	| { id?: string; type: "response"; command: "get_pending_messages"; success: true; data: PendingMessagesSnapshot }
+	| { id?: string; type: "response"; command: "remove_pending_messages"; success: true; data: PendingMessagesRemoval }
 	| { id?: string; type: "response"; command: "get_activity_detail"; success: true; data: SessionActivityDetail }
 	| { id?: string; type: "response"; command: "get_session_recap"; success: true; data: RpcSessionRecapSnapshot }
 	| { id?: string; type: "response"; command: "get_session_skills"; success: true; data: SessionSkillsCatalogResult }
