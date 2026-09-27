@@ -94,7 +94,6 @@ import {
 	escapeXmlText,
 	formatDuration,
 	getAgentDbPath,
-	isEnoent,
 	isBunTestRuntime,
 	isEnoent,
 	isInteractiveHost,

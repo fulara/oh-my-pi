@@ -928,6 +928,12 @@
 
 - Fixed agents looping for hours when every turn spends the whole output limit on reasoning: length-stop retries now tell the model its reasoning was discarded and to act in smaller steps, and a subagent whose length-stop recovery gives up now fails with that error instead of being re-prompted into the same loop
 - Fixed tagging a model with `^` mid-session dropping the provider prompt cache for every following turn: new `m<N>` pseudonyms now arrive as a hidden session notice instead of rewriting the `task` description, which only absorbs them at a base-prompt rebuild
+### Fixed
+
+- Fura fork: retained durable RPC prompt identity, session skills, BTW transition ownership and session activity/recaps on OMP 18.3.3, alongside upstream's batched rewind results and MCP structured-result persistence.
+- RPC now emits `session_settled` when an async-wait delivery drains without waking the agent; an older drain cannot settle a newer continuation.
+- Fura fork: shared TUI/RPC idle recaps react to settings changes after a terminal settle without duplicating a delivered recap; pending/in-flight work remains guarded against queues, compaction, drafts and stale session provenance.
+- Replaced the local generated-file test workaround with upstream's corrected `schema.gen.ts` fixture; generated-header and invalid-UTF-8 protection remain covered.
 
 ## [18.3.3] - 2026-09-27
 
@@ -962,11 +968,6 @@
 - Preserved MCP `structuredContent` in live tool-result details so evaluation callers can consume server data without reparsing model-facing JSON; spilled results continue to retain an artifact reference without duplicating the payload in session history.
 - Fixed Collab hosts becoming unable to reclaim a room after a brief network interruption; hosts now retry room recovery without losing guests or queued updates.
 - Fixed one-shot commands that stopped before completing, such as `omp config set` on a fresh Windows profile, incorrectly exiting successfully without output; they now report failure with diagnostic guidance.
-### Fixed
-
-- Fura fork: rebased RPC handlers onto 18.3.2's typed settings registry, canonical URL normalization and ticket-based prompt results while retaining durable client prompt identity, skill attachments, BTW transition ownership and session activity/recaps.
-- Fura fork: shared TUI/RPC idle recaps react to settings changes after a terminal settle without duplicating a delivered recap; pending/in-flight work remains guarded against queues, compaction, drafts and stale session provenance.
-- Removed the obsolete edit regression row that rejected an unmarked `generated.ts` by basename alone; generated-header and invalid-UTF-8 protection remain covered, consistent with #13139.
 
 ## [18.3.2] - 2026-09-25
 
