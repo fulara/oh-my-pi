@@ -872,6 +872,17 @@
 - Fixed multiline pastes splitting into separate submissions after a terminal drops bracketed-paste mode, and text typed right after Enter being erased by the post-submit clear ([#13440](https://github.com/can1357/oh-my-pi/pull/13440) by [@Dante-dan](https://github.com/Dante-dan)).
 - Fixed subagents never compacting when the parent sets `compaction.midTurnEnabled: false`; a subagent's run is a single turn, so subagents keep mid-run compaction on unless a spawn overrides it ([#13212](https://github.com/can1357/oh-my-pi/pull/13212)).
 - Fixed the exit resume hint so the `omp --resume <id>` command prints on its own line, letting triple-click select just the command ([#12748](https://github.com/can1357/oh-my-pi/pull/12748) by [@F0Rextasy](https://github.com/F0Rextasy)).
+### Added
+
+- Fura fork: added `get_pending_messages` and `remove_pending_messages` RPC/SDK operations with generation guards, original text/image previews and exact-input removal receipts that do not abort or settle an active turn.
+
+### Fixed
+
+- Fura fork: retained durable RPC prompt identity, session skills, BTW transition ownership and session activity/recaps on OMP 18.3.3, alongside upstream's batched rewind results and MCP structured-result persistence.
+- RPC now emits `session_settled` when an async-wait delivery drains without waking the agent; an older drain cannot settle a newer continuation.
+- Fura fork: shared TUI/RPC idle recaps react to settings changes after a terminal settle without duplicating a delivered recap; pending/in-flight work remains guarded against queues, compaction, drafts and stale session provenance.
+- Replaced the local generated-file test workaround with upstream's corrected `schema.gen.ts` fixture; generated-header and invalid-UTF-8 protection remain covered.
+- Fura fork: preserved RPC, pending-input and process-ownership contracts on OMP 18.4.0; task lifecycle test fixtures now provide session identities, and the native test runner keeps vendored NAPI examples outside first-party test gates.
 
 ## [18.4.0] - 2026-09-28
 
@@ -928,16 +939,6 @@
 
 - Fixed agents looping for hours when every turn spends the whole output limit on reasoning: length-stop retries now tell the model its reasoning was discarded and to act in smaller steps, and a subagent whose length-stop recovery gives up now fails with that error instead of being re-prompted into the same loop
 - Fixed tagging a model with `^` mid-session dropping the provider prompt cache for every following turn: new `m<N>` pseudonyms now arrive as a hidden session notice instead of rewriting the `task` description, which only absorbs them at a base-prompt rebuild
-### Added
-
-- Fura fork: added `get_pending_messages` and `remove_pending_messages` RPC/SDK operations with generation guards, original text/image previews and exact-input removal receipts that do not abort or settle an active turn.
-
-### Fixed
-
-- Fura fork: retained durable RPC prompt identity, session skills, BTW transition ownership and session activity/recaps on OMP 18.3.3, alongside upstream's batched rewind results and MCP structured-result persistence.
-- RPC now emits `session_settled` when an async-wait delivery drains without waking the agent; an older drain cannot settle a newer continuation.
-- Fura fork: shared TUI/RPC idle recaps react to settings changes after a terminal settle without duplicating a delivered recap; pending/in-flight work remains guarded against queues, compaction, drafts and stale session provenance.
-- Replaced the local generated-file test workaround with upstream's corrected `schema.gen.ts` fixture; generated-header and invalid-UTF-8 protection remain covered.
 
 ## [18.3.3] - 2026-09-27
 

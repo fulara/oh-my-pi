@@ -36,6 +36,7 @@ describe("IRC wake turn yield reset", () => {
 		let observer: ((records: unknown[]) => ((error?: unknown) => void | Promise<void>) | undefined) | undefined;
 		const session = {
 			...createSessionDefaults(),
+			sessionManager: { getSessionId: () => "wake-session" },
 			getToolByName: (name: string) => (name === "yield" ? yieldTool : undefined),
 			subscribe: () => () => {},
 			setIrcWakeTurnObserver: (obs: typeof observer) => {
