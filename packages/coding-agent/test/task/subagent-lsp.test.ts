@@ -63,9 +63,7 @@ function createYieldingSession(): AgentSession {
 		agent: { state: { systemPrompt: ["test"] } },
 		model: undefined,
 		extensionRunner: undefined,
-		sessionManager: {
-			appendSessionInit: () => {},
-		},
+		sessionManager: { appendSessionInit: () => {}, getSessionId: () => "test-session" },
 		getActiveToolNames: () => ["yield"],
 		getEnabledToolNames: () => ["yield"],
 		subscribe: (listener: (event: AgentSessionEvent) => void) => {
