@@ -1,4 +1,6 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "bun:test";
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
 import { Agent } from "@oh-my-pi/pi-agent-core";
 import type { Model } from "@oh-my-pi/pi-ai";
 import { getBundledModel } from "@oh-my-pi/pi-catalog/models";
@@ -183,6 +185,31 @@ describe("AgentSession.switchSession previous-context build", () => {
 		expect(onCwdChange).toHaveBeenCalledWith(targetDir.path(), sourceDir.path());
 		expect(sessionManager.getSessionFile()).toBe(previousSessionFile);
 		expect(sessionManager.getCwd()).toBe(sourceDir.path());
+	});
+	it.each([false, true])("accepts a cwd alias without adopting another project (callback: %s)", async withCallback => {
+		const sourceDir = TempDir.createSync("@pi-switch-cwd-alias-source-");
+		const aliasesDir = TempDir.createSync("@pi-switch-cwd-alias-");
+		tempDirs.push(sourceDir, aliasesDir);
+		const alias = path.join(aliasesDir.path(), "project");
+		await fs.symlink(sourceDir.path(), alias, "junction");
+
+		const { session, sessionManager } = buildSession(sourceDir);
+		const targetManager = SessionManager.create(alias, aliasesDir.path());
+		targetManager.appendMessage({ role: "user", content: "resumed through alias", timestamp: 2 });
+		await targetManager.ensureOnDisk();
+		const targetSessionFile = targetManager.getSessionFile()!;
+		await targetManager.close();
+
+		const onCwdChange = vi.fn(async () => false);
+		const switched = await session.switchSession(targetSessionFile, withCallback ? { onCwdChange } : undefined);
+
+		expect(switched).toBe(true);
+		expect(onCwdChange).not.toHaveBeenCalled();
+		expect(sessionManager.getSessionFile()).toBe(targetSessionFile);
+		expect(await fs.realpath(sessionManager.getCwd())).toBe(await fs.realpath(sourceDir.path()));
+		expect(session.agent.state.messages).toContainEqual(
+			expect.objectContaining({ role: "user", content: "resumed through alias" }),
+		);
 	});
 	it("rejects callback-free switches across project directories", async () => {
 		const sourceDir = TempDir.createSync("@pi-switch-no-callback-source-");
