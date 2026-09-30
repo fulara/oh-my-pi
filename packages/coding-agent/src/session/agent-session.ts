@@ -108,6 +108,7 @@ import {
 	withFileLock,
 } from "@oh-my-pi/pi-utils";
 import { writeArchive } from "@oh-my-pi/pi-utils/ar";
+import { normalizePathForComparison } from "@oh-my-pi/pi-utils/dirs";
 import type { AdvisorConfig } from "@oh-my-pi/pi-tui/overlays/advisor-config";
 import { formatUsageResetWindow } from "@oh-my-pi/pi-tui/overlays/usage-display";
 import { loadAdvisorTranscriptCosts } from "../advisor";
@@ -7676,7 +7677,10 @@ export class AgentSession implements SettingsScope {
 	}
 
 	/** Describe normalized images in a user-invoked skill prompt before delivery. */
-	async #buildSkillImageDescriptionNotice(message: CustomMessage, signal?: AbortSignal): Promise<CustomMessage | undefined> {
+	async #buildSkillImageDescriptionNotice(
+		message: CustomMessage,
+		signal?: AbortSignal,
+	): Promise<CustomMessage | undefined> {
 		if (!isUserInvokedSkillPrompt(message) || !Array.isArray(message.content)) return undefined;
 		const images = message.content.filter((part): part is ImageContent => part.type === "image");
 		return images.length > 0 ? this.#buildImageDescriptionNotice(images, signal) : undefined;
@@ -11559,16 +11563,18 @@ export class AgentSession implements SettingsScope {
 			if (options?.preserveLocalCwd) {
 				this.sessionManager.setCwdWithoutRelocation(previousSessionState.cwd);
 			} else {
-				if (!options?.onCwdChange && path.resolve(recordedCwd) !== path.resolve(previousSessionState.cwd)) {
+				const previousCwd = normalizePathForComparison(previousSessionState.cwd);
+				const recordedCwdChanged = normalizePathForComparison(recordedCwd) !== previousCwd;
+				if (!options?.onCwdChange && recordedCwdChanged) {
 					throw SESSION_CWD_CHANGE_REJECTED;
 				}
 				if (options?.onCwdChange) {
-					if (path.resolve(newCwd) !== path.resolve(previousSessionState.cwd)) {
+					if (normalizePathForComparison(newCwd) !== previousCwd) {
 						cwdChangeTarget = newCwd;
 						if (!(await options.onCwdChange(newCwd, previousSessionState.cwd))) {
 							throw SESSION_CWD_CHANGE_REJECTED;
 						}
-					} else if (path.resolve(recordedCwd) !== path.resolve(previousSessionState.cwd)) {
+					} else if (recordedCwdChanged) {
 						throw SESSION_CWD_CHANGE_REJECTED;
 					}
 				}

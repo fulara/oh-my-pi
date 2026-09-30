@@ -738,6 +738,11 @@
 ### Removed
 
 - Removed the bash tool's `env` parameter; services inherit the configured shell environment
+### Fixed
+
+- Preserve removable image-bearing skill prompts and atomically remove their hidden vision companions across queued preprocessing.
+- Resume sessions through symlink aliases of the current project without treating them as cross-project cwd changes; explicit adoption is still required for a different project.
+- Preserve task parent-session ownership before concurrency waits in the upstream speculative-launch path.
 
 ## [18.4.3] - 2026-09-28
 
