@@ -64,7 +64,10 @@ describe("subagent context window after a model swap", () => {
 				state: { messages: [] },
 				model: primary,
 				extensionRunner: undefined,
-				sessionManager: { appendSessionInit: () => {} },
+				sessionManager: {
+					appendSessionInit: () => {},
+					getSessionId: () => "context-window-swap",
+				},
 				getActiveToolNames: () => ["yield"],
 				getEnabledToolNames: () => ["yield"],
 				subscribe: (listener: (event: { type: string; [key: string]: unknown }) => void) => {

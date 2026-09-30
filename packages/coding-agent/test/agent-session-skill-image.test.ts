@@ -171,3 +171,72 @@ it("drops an image-bearing skill when aborted during vision preprocessing", asyn
 	expect(mock.calls.length).toBe(0);
 	expect(session.messages.length).toBe(0);
 });
+
+it("removes a queued skill image before any vision request while retaining other input", async () => {
+	const { session, mock, visionCalls } = setup();
+	await session.runModeExitTeardown(async () => {
+		await session.promptCustomMessage(skill, { streamingBehavior: "followUp", queueOnly: true });
+		const pending = session.getPendingMessages(session.sessionId);
+		await session.followUp("surviving input");
+		const removed = session.removePendingMessages(
+			session.sessionId,
+			pending.generation,
+			pending.items.map(item => item.id),
+		);
+		expect(removed.results.map(item => item.outcome)).toEqual(["removed"]);
+	});
+	await session.prompt("kickoff");
+	await session.waitForIdle();
+	expect(visionCalls()).toBe(0);
+	const delivered = JSON.stringify(mock.calls.map(call => call.context.messages));
+	expect(delivered).toContain("surviving input");
+	expect(delivered).not.toContain("Expanded skill.");
+	expect(delivered).not.toContain("A red square.");
+});
+
+it("removes a skill and its prepared vision companion after a concurrent turn takes ownership", async () => {
+	const visionStarted = Promise.withResolvers<void>();
+	const releaseVision = Promise.withResolvers<void>();
+	const otherStarted = Promise.withResolvers<void>();
+	const releaseOther = Promise.withResolvers<void>();
+	const { session, mock, visionCalls } = setup({
+		beforeVisionReply: async () => {
+			visionStarted.resolve();
+			await releaseVision.promise;
+		},
+		responses: [
+			async () => {
+				otherStarted.resolve();
+				await releaseOther.promise;
+				return { content: ["other done"] };
+			},
+		],
+	});
+	const removedIds: string[] = [];
+	const skillDispatch = session.promptCustomMessage(skill, {
+		streamingBehavior: "followUp",
+		onQueuedMessageRemoved: receipt => removedIds.push(receipt.pendingMessageId),
+	});
+	await visionStarted.promise;
+	const otherTurn = session.prompt("other turn");
+	await otherStarted.promise;
+	releaseVision.resolve();
+	try {
+		await skillDispatch;
+		const pending = session.getPendingMessages(session.sessionId);
+		const ids = pending.items.map(item => item.id);
+		expect(ids).toHaveLength(1);
+		const removed = session.removePendingMessages(session.sessionId, pending.generation, ids);
+		expect(removed.results.map(item => item.outcome)).toEqual(["removed"]);
+		expect(removedIds).toEqual(ids);
+	} finally {
+		releaseOther.resolve();
+		await otherTurn;
+	}
+	await session.waitForIdle();
+	expect(visionCalls()).toBe(1);
+	const delivered = JSON.stringify(mock.calls.map(call => call.context.messages));
+	expect(delivered).toContain("other turn");
+	expect(delivered).not.toContain("Expanded skill.");
+	expect(delivered).not.toContain("A red square.");
+});

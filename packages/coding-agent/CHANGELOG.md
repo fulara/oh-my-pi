@@ -1920,6 +1920,11 @@ Older entries are archived in [packages/coding-agent/CHANGELOG.md@3cc89b92a410](
 ### Removed
 
 - Removed the bash tool's `env` parameter; services inherit the configured shell environment
+### Fixed
+
+- Preserve removable image-bearing skill prompts and atomically remove their hidden vision companions across queued preprocessing.
+- Resume sessions through symlink aliases of the current project without treating them as cross-project cwd changes; explicit adoption is still required for a different project.
+- Preserve task parent-session ownership before concurrency waits in the upstream speculative-launch path.
 
 Older entries are archived in [packages/coding-agent/CHANGELOG.md@5041889e64d3](https://github.com/can1357/oh-my-pi/blob/5041889e64d39ab59633bbc45b6dbb143fc936cc/packages/coding-agent/CHANGELOG.md).
 ## [18.4.3] - 2026-09-28

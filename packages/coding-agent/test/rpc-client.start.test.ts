@@ -8,13 +8,17 @@ import { parseSessionEntries } from "@oh-my-pi/pi-coding-agent/session/session-l
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
 
 describe("RpcClient.start", () => {
-	test("starts and switches legacy sessions without capturing or deleting repository snapshots", async () => {
+	test("starts and switches legacy sessions through cwd aliases without capturing or deleting repository snapshots", async () => {
 		const root = await fs.mkdtemp(path.join(os.tmpdir(), "omp-rpc-no-repo-snapshots-"));
-		const cwd = path.join(root, "repo");
+		const repoDir = path.join(root, "repo");
+		const cwd = path.join(root, "repo-alias");
 		const sessionDir = path.join(root, "sessions");
 		let client: RpcClient | undefined;
 		try {
-			await fs.mkdir(cwd);
+			await fs.mkdir(repoDir);
+			// Keep this alias in the persisted header; the child process starts at
+			// the physical cwd, which must not count as a cross-project switch.
+			await fs.symlink(repoDir, cwd, "junction");
 			const git = (...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
 			git("init", "--quiet");
 			git("config", "user.name", "RPC test");
