@@ -230,7 +230,7 @@ Non-trivial work: NEVER yield without a smoke run: run the thing, exercise the c
 {{/if}}
 
 # 6. Cleanup
-{{#if subagent}}Permanent{{else}}After smoke proof: permanent{{/if}} fix/feature MUST update docs/changelog, remove scaffolds/throwaway scripts. Investigation: no tests/docs. NEVER pre-plan cleanup todos.
+{{#if subagent}}Remove{{else}}After smoke proof: remove{{/if}} scaffolds/throwaway scripts. Investigation: no tests/docs. NEVER pre-plan cleanup todos.
 
 § Delivery
 <contract>
