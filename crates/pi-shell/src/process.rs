@@ -33,10 +33,10 @@ mod platform {
 	/// Stable Linux process reference backed by a pidfd.
 	#[derive(Clone)]
 	pub struct Process {
-		pid:        i32,
-		pidfd:      Arc<OwnedFd>,
+		pid: i32,
+		pidfd: Arc<OwnedFd>,
 		start_time: u64,
-		boot_id:    &'static str,
+		boot_id: &'static str,
 	}
 
 	impl Process {
@@ -270,8 +270,8 @@ mod platform {
 	/// original target.
 	#[derive(Clone)]
 	pub struct Process {
-		pid:          i32,
-		start_tvsec:  u64,
+		pid: i32,
+		start_tvsec: u64,
 		start_tvusec: u64,
 	}
 
@@ -534,6 +534,7 @@ mod platform {
 
 	use super::ProcessStatus;
 
+
 	const PROCESS_REFERENCE_ACCESS: u32 =
 		sys::PROCESS_TERMINATE | sys::PROCESS_QUERY_LIMITED_INFORMATION | sys::SYNCHRONIZE;
 
@@ -542,8 +543,8 @@ mod platform {
 	/// the kernel-reported creation time, which pins identity even if the PID is
 	/// recycled while we hold the handle.
 	pub struct Process {
-		pid:           i32,
-		handle:        Arc<OwnedHandle>,
+		pid: i32,
+		handle: Arc<OwnedHandle>,
 		creation_time: u64,
 	}
 
@@ -983,7 +984,7 @@ impl Process {
 /// Shared signal guard. Unix parentage is live and revalidated; Windows PPIDs
 /// can refer to recycled processes, so only the host itself is protected there.
 struct HostProtection {
-	pids:   HashSet<i32>,
+	pids: HashSet<i32>,
 	#[cfg(unix)]
 	groups: HashSet<i32>,
 }
@@ -1249,8 +1250,8 @@ impl TerminationTargets {
 /// that happened to acquire the recycled pid between the child exiting and
 /// the run being cancelled (issue #4605).
 struct SpawnedProcess {
-	process:     Option<Process>,
-	pgid:        Option<i32>,
+	process: Option<Process>,
+	pgid: Option<i32>,
 	group_owned: bool,
 	descendants: Vec<Process>,
 }
@@ -1307,7 +1308,7 @@ impl SpawnedProcess {
 /// explicit — only processes this run actually spawned are ever signalled.
 #[derive(Default)]
 struct RegistryState {
-	spawned:       Vec<Arc<Mutex<SpawnedProcess>>>,
+	spawned: Vec<Arc<Mutex<SpawnedProcess>>>,
 	/// The next `spawned.len()` at which `record` runs a sweep. Bounds sweep
 	/// frequency when the live set stabilizes above the initial threshold:
 	/// without this watermark, every subsequent `record` would find
@@ -1389,9 +1390,11 @@ impl SpawnRegistry {
 		state
 			.spawned
 			.iter()
-			.filter_map(|entry| entry.process.as_ref())
-			.filter(|process| process.status() == ProcessStatus::Running)
-			.map(Process::pid)
+			.filter_map(|entry| {
+				let entry = entry.lock();
+				let process = entry.process.as_ref()?;
+				(process.status() == ProcessStatus::Running).then(|| process.pid())
+			})
 			.collect()
 	}
 

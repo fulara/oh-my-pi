@@ -18,7 +18,7 @@ import * as path from "node:path";
 import { type } from "@oh-my-pi/omptype";
 import { Agent, AgentBusyError, type AgentMessage, type AgentTool } from "@oh-my-pi/pi-agent-core";
 import type { ImageContent } from "@oh-my-pi/pi-ai";
-import { createMockModel, type MockModel, type MockResponse } from "@oh-my-pi/pi-ai/providers/mock";
+import { createMockModel, type MockHandler, type MockModel } from "@oh-my-pi/pi-ai/providers/mock";
 import { getBundledModel } from "@oh-my-pi/pi-catalog/models";
 import { ModelRegistry } from "@oh-my-pi/pi-coding-agent/config/model-registry";
 import type { PromptTemplate } from "@oh-my-pi/pi-coding-agent/config/prompt-templates";
@@ -83,7 +83,7 @@ describe("AgentSession queued steer delivery", () => {
 	});
 
 	async function createSession(
-		responses: MockResponse[],
+		responses: MockHandler[],
 		promptTemplates: PromptTemplate[] = [],
 		sessionManager = SessionManager.inMemory(),
 	): Promise<SteerHarness> {
@@ -100,6 +100,40 @@ describe("AgentSession queued steer delivery", () => {
 		session = new AgentSession({ agent, sessionManager, settings, modelRegistry, promptTemplates });
 		return { session, sessionManager, mock };
 	}
+
+	it("settles a text-removed queued prompt receipt without removing another input", async () => {
+		const started = Promise.withResolvers<void>();
+		const release = Promise.withResolvers<void>();
+		const { session, mock } = await createSession([
+			async () => {
+				started.resolve();
+				await release.promise;
+				return { content: ["running complete"] };
+			},
+			{ content: ["survivor complete"] },
+		]);
+		const receipts: string[] = [];
+		const running = session.prompt("running");
+		await started.promise;
+		try {
+			await session.prompt("removed input", {
+				streamingBehavior: "followUp",
+				clientMessageId: "removed-client",
+				onQueuedMessageRemoved: receipt => receipts.push(receipt.clientMessageId!),
+			});
+			await session.followUp("kept input");
+			expect(session.removeQueuedMessage("removed input", "followUp")).toBe(true);
+			expect(receipts).toEqual(["removed-client"]);
+			expect(session.getPendingMessages(session.sessionId).items.map(item => item.text)).toEqual(["kept input"]);
+		} finally {
+			release.resolve();
+			await running;
+		}
+		await session.waitForIdle();
+		const delivered = JSON.stringify(mock.calls.map(call => call.context.messages));
+		expect(delivered).toContain("kept input");
+		expect(delivered).not.toContain("removed input");
+	});
 
 	function steerCollabPrompt(target: AgentSession, text: string): Promise<boolean> {
 		return target.promptCustomMessage(
