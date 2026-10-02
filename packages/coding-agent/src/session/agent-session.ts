@@ -9114,15 +9114,10 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 	): Promise<CustomMessage | undefined> {
 		const controller = new AbortController();
 		this.#imageDescriptionAbortControllers.add(controller);
+		const signals = [controller.signal, AbortSignal.timeout(IMAGE_DESCRIPTION_ADMISSION_TIMEOUT_MS)];
+		if (signal) signals.push(signal);
 		try {
-			return await this.#providerBoundary.buildImageDescriptionNotice(
-				normalizedImages,
-				AbortSignal.any([
-					controller.signal,
-					AbortSignal.timeout(IMAGE_DESCRIPTION_ADMISSION_TIMEOUT_MS),
-					...(signal ? [signal] : []),
-				]),
-			);
+			return await this.#providerBoundary.buildImageDescriptionNotice(normalizedImages, AbortSignal.any(signals));
 		} finally {
 			this.#imageDescriptionAbortControllers.delete(controller);
 		}
@@ -12054,7 +12049,18 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 		if (index < 0) return undefined;
 
 		const removed = selected[index];
-		this.agent.replaceQueue(queue, this.#withoutQueuedUserMessage(selected, index));
+		if (isPendingUserMessage(selected[index])) {
+			const pending = this.agent.getPendingMessages().find(item => item.message === selected[index]);
+			if (
+				!pending ||
+				this.agent.removePendingMessages([pending.id], isPendingUserMessage, isHiddenUserCompanion)[0]?.outcome !==
+					"removed"
+			) {
+				return undefined;
+			}
+		} else {
+			this.agent.replaceQueue(queue, this.#withoutQueuedUserMessage(selected, index));
+		}
 		this.#reconcileQueuedMessageDrain();
 		return toRestoredQueuedMessage(removed);
 	}
