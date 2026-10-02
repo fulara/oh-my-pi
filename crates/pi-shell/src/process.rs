@@ -33,10 +33,10 @@ mod platform {
 	/// Stable Linux process reference backed by a pidfd.
 	#[derive(Clone)]
 	pub struct Process {
-		pid:        i32,
-		pidfd:      Arc<OwnedFd>,
+		pid: i32,
+		pidfd: Arc<OwnedFd>,
 		start_time: u64,
-		boot_id:    &'static str,
+		boot_id: &'static str,
 	}
 
 	impl Process {
@@ -367,8 +367,8 @@ mod platform {
 	/// original target.
 	#[derive(Clone)]
 	pub struct Process {
-		pid:          i32,
-		start_tvsec:  u64,
+		pid: i32,
+		start_tvsec: u64,
 		start_tvusec: u64,
 	}
 
@@ -764,16 +764,16 @@ mod platform {
 	#[repr(C)]
 	#[allow(non_snake_case, reason = "Windows PROCESSENTRY32W field names must match Win32 ABI")]
 	struct PROCESSENTRY32W {
-		dwSize:              u32,
-		cntUsage:            u32,
-		th32ProcessID:       u32,
-		th32DefaultHeapID:   usize,
-		th32ModuleID:        u32,
-		cntThreads:          u32,
+		dwSize: u32,
+		cntUsage: u32,
+		th32ProcessID: u32,
+		th32DefaultHeapID: usize,
+		th32ModuleID: u32,
+		cntThreads: u32,
 		th32ParentProcessID: u32,
-		pcPriClassBase:      i32,
-		dwFlags:             u32,
-		szExeFile:           [u16; 260],
+		pcPriClassBase: i32,
+		dwFlags: u32,
+		szExeFile: [u16; 260],
 	}
 
 	#[repr(C)]
@@ -789,35 +789,35 @@ mod platform {
 	#[repr(C)]
 	#[derive(Clone, Copy)]
 	struct UnicodeString {
-		length:         u16,
+		length: u16,
 		maximum_length: u16,
-		buffer:         usize,
+		buffer: usize,
 	}
 
 	#[repr(C)]
 	#[derive(Clone, Copy)]
 	struct PebPartial {
-		reserved1:          [u8; 2],
-		being_debugged:     u8,
-		reserved2:          [u8; 1],
-		reserved3:          [usize; 2],
-		loader:             usize,
+		reserved1: [u8; 2],
+		being_debugged: u8,
+		reserved2: [u8; 1],
+		reserved3: [usize; 2],
+		loader: usize,
 		process_parameters: usize,
 	}
 
 	#[repr(C)]
 	#[derive(Clone, Copy)]
 	struct UserProcessParametersPartial {
-		reserved1:       [u8; 16],
-		reserved2:       [usize; 10],
+		reserved1: [u8; 16],
+		reserved2: [usize; 10],
 		image_path_name: UnicodeString,
-		command_line:    UnicodeString,
+		command_line: UnicodeString,
 	}
 
 	#[repr(C)]
 	#[derive(Clone, Copy, Default)]
 	struct Filetime {
-		dw_low_date_time:  u32,
+		dw_low_date_time: u32,
 		dw_high_date_time: u32,
 	}
 
@@ -917,8 +917,8 @@ mod platform {
 	/// the kernel-reported creation time, which pins identity even if the PID is
 	/// recycled while we hold the handle.
 	pub struct Process {
-		pid:           i32,
-		handle:        Arc<OwnedHandle>,
+		pid: i32,
+		handle: Arc<OwnedHandle>,
 		creation_time: u64,
 	}
 
@@ -1241,16 +1241,16 @@ mod platform {
 
 	const fn process_entry() -> PROCESSENTRY32W {
 		PROCESSENTRY32W {
-			dwSize:              mem::size_of::<PROCESSENTRY32W>() as u32,
-			cntUsage:            0,
-			th32ProcessID:       0,
-			th32DefaultHeapID:   0,
-			th32ModuleID:        0,
-			cntThreads:          0,
+			dwSize: mem::size_of::<PROCESSENTRY32W>() as u32,
+			cntUsage: 0,
+			th32ProcessID: 0,
+			th32DefaultHeapID: 0,
+			th32ModuleID: 0,
+			cntThreads: 0,
 			th32ParentProcessID: 0,
-			pcPriClassBase:      0,
-			dwFlags:             0,
-			szExeFile:           [0; 260],
+			pcPriClassBase: 0,
+			dwFlags: 0,
+			szExeFile: [0; 260],
 		}
 	}
 
@@ -1625,7 +1625,7 @@ impl Process {
 /// Shared signal guard. Unix parentage is live and revalidated; Windows PPIDs
 /// can refer to recycled processes, so only the host itself is protected there.
 struct HostProtection {
-	pids:   HashSet<i32>,
+	pids: HashSet<i32>,
 	#[cfg(unix)]
 	groups: HashSet<i32>,
 }
@@ -1844,8 +1844,8 @@ impl TerminationTargets {
 /// that happened to acquire the recycled pid between the child exiting and
 /// the run being cancelled (issue #4605).
 struct SpawnedProcess {
-	process:     Option<Process>,
-	pgid:        Option<i32>,
+	process: Option<Process>,
+	pgid: Option<i32>,
 	group_owned: bool,
 	descendants: Vec<Process>,
 }
@@ -1902,7 +1902,7 @@ impl SpawnedProcess {
 /// explicit — only processes this run actually spawned are ever signalled.
 #[derive(Default)]
 struct RegistryState {
-	spawned:       Vec<Arc<Mutex<SpawnedProcess>>>,
+	spawned: Vec<Arc<Mutex<SpawnedProcess>>>,
 	/// The next `spawned.len()` at which `record` runs a sweep. Bounds sweep
 	/// frequency when the live set stabilizes above the initial threshold:
 	/// without this watermark, every subsequent `record` would find
@@ -1984,9 +1984,11 @@ impl SpawnRegistry {
 		state
 			.spawned
 			.iter()
-			.filter_map(|entry| entry.process.as_ref())
-			.filter(|process| process.status() == ProcessStatus::Running)
-			.map(Process::pid)
+			.filter_map(|entry| {
+				let entry = entry.lock();
+				let process = entry.process.as_ref()?;
+				(process.status() == ProcessStatus::Running).then(|| process.pid())
+			})
 			.collect()
 	}
 
