@@ -8096,15 +8096,10 @@ export class AgentSession implements SettingsScope {
 	): Promise<CustomMessage | undefined> {
 		const controller = new AbortController();
 		this.#imageDescriptionAbortControllers.add(controller);
+		const signals = [controller.signal, AbortSignal.timeout(IMAGE_DESCRIPTION_ADMISSION_TIMEOUT_MS)];
+		if (signal) signals.push(signal);
 		try {
-			return await this.#providerBoundary.buildImageDescriptionNotice(
-				normalizedImages,
-				AbortSignal.any([
-					controller.signal,
-					AbortSignal.timeout(IMAGE_DESCRIPTION_ADMISSION_TIMEOUT_MS),
-					...(signal ? [signal] : []),
-				]),
-			);
+			return await this.#providerBoundary.buildImageDescriptionNotice(normalizedImages, AbortSignal.any(signals));
 		} finally {
 			this.#imageDescriptionAbortControllers.delete(controller);
 		}
@@ -8528,7 +8523,10 @@ export class AgentSession implements SettingsScope {
 	 */
 	async promptCustomMessage<T = unknown>(
 		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details" | "attribution">,
-		options?: Pick<PromptOptions, "streamingBehavior" | "toolChoice" | "onPromptAdmitted" | "onQueuedMessageRemoved"> & {
+		options?: Pick<
+			PromptOptions,
+			"streamingBehavior" | "toolChoice" | "onPromptAdmitted" | "onQueuedMessageRemoved"
+		> & {
 			queueChipText?: string;
 			queueOnly?: boolean;
 			onPromptQueued?: PromptOptions["onPromptQueued"];
@@ -8539,7 +8537,10 @@ export class AgentSession implements SettingsScope {
 
 	async #promptCustomMessage<T = unknown>(
 		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details" | "attribution">,
-		options?: Pick<PromptOptions, "streamingBehavior" | "toolChoice" | "onPromptAdmitted" | "onQueuedMessageRemoved"> & {
+		options?: Pick<
+			PromptOptions,
+			"streamingBehavior" | "toolChoice" | "onPromptAdmitted" | "onQueuedMessageRemoved"
+		> & {
 			queueChipText?: string;
 			queueOnly?: boolean;
 			onPromptQueued?: PromptOptions["onPromptQueued"];
@@ -9651,38 +9652,26 @@ export class AgentSession implements SettingsScope {
 		if (options?.promptGeneration !== undefined && this.#promptGeneration !== options.promptGeneration) {
 			return false;
 		}
-		// `joinActiveTurn` admission: after every await above, the run that was
-		// live at call time may have settled — or `abort()` may have started
-		// (its `#abortInProgress` flag is raised synchronously at entry, while
-		// `isStreaming` can stay true until cleanup drains) — or, with
-		// `requireActiveRun`, the CLIENT turn that admitted this steer may
-		// have settled during the preprocessing awaits while an autonomous
-		// wake (IRC, scheduler) took over `isStreaming`. Classify either as
-		// not-admitted so the caller (the ACP bridge) keeps its content for the
-		// host; the enqueue below is synchronous, so nothing interleaves
-		// between this check and the message landing on the queue.
-		if (
-			options?.requireActiveRun &&
-			(this.#abortInProgress || !this.isStreaming || this.#clientPromptInFlightCount === 0)
-		) {
-			return false;
-		}
-		if (mode === "aside") {
-			if (await this.#sessionGenerationChanged(sessionGeneration)) return false;
-			const records: AgentMessage[] = [...prependMessages, ...attachmentSourceNotices];
-			if (imageDescriptionNotice) records.push(imageDescriptionNotice);
-			const userMessage: AgentMessage = { role: "user", content, clientMessageId, attribution, timestamp: timestamp ?? Date.now() };
-			this.#queuedMessageRawText.set(userMessage, rawText);
-			records.push(userMessage);
-			this.#irc.queueAside(records);
-			options?.onPromptAdmitted?.();
-			// The awaits above (image normalization / vision description) can span the run's
-			// settle, so the run may already be idle by the time the record lands in the aside
-			// queue with no loop left to drain it. Resuming here is a no-op while streaming and
-			// wakes/folds correctly once idle (see #resumeStrandedIrcAsides).
-			this.#resumeStrandedIrcAsides();
-			return true;
-		}
+		if (await this.#sessionGenerationChanged(sessionGeneration)) return false;
+		const records: AgentMessage[] = [...prependMessages, ...attachmentSourceNotices];
+		if (imageDescriptionNotice) records.push(imageDescriptionNotice);
+		const userMessage: AgentMessage = {
+			role: "user",
+			content,
+			clientMessageId,
+			attribution,
+			timestamp: timestamp ?? Date.now(),
+		};
+		this.#queuedMessageRawText.set(userMessage, rawText);
+		records.push(userMessage);
+		this.#irc.queueAside(records);
+		options?.onPromptAdmitted?.();
+		// The awaits above (image normalization / vision description) can span the run's
+		// settle, so the run may already be idle by the time the record lands in the aside
+		// queue with no loop left to drain it. Resuming here is a no-op while streaming and
+		// wakes/folds correctly once idle (see #resumeStrandedIrcAsides).
+		this.#resumeStrandedIrcAsides();
+		return true;
 	}
 
 	/**
@@ -10611,7 +10600,18 @@ export class AgentSession implements SettingsScope {
 		if (index < 0) return undefined;
 
 		const removed = selected[index];
-		this.agent.replaceQueue(queue, this.#withoutQueuedUserMessage(selected, index));
+		if (isPendingUserMessage(selected[index])) {
+			const pending = this.agent.getPendingMessages().find(item => item.message === selected[index]);
+			if (
+				!pending ||
+				this.agent.removePendingMessages([pending.id], isPendingUserMessage, isHiddenUserCompanion)[0]?.outcome !==
+					"removed"
+			) {
+				return undefined;
+			}
+		} else {
+			this.agent.replaceQueue(queue, this.#withoutQueuedUserMessage(selected, index));
+		}
 		this.#reconcileQueuedMessageDrain();
 		return toRestoredQueuedMessage(removed);
 	}

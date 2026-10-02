@@ -897,6 +897,7 @@ export const rpcContractFixtures = [
 				autoCompactionEnabled: true,
 				messageCount: 4,
 				queuedMessageCount: 0,
+				queuedMessages: { steering: [], followUp: [] },
 				hasPendingAsyncWork: false,
 				isSettled: true,
 				fastModeEnabled: false,
