@@ -17,7 +17,6 @@ import * as path from "node:path";
 import { ThinkingLevel } from "@oh-my-pi/pi-agent-core";
 import type { Model } from "@oh-my-pi/pi-ai";
 import { getOAuthProviders } from "@oh-my-pi/pi-ai/oauth";
-import type { ImageContent } from "@oh-my-pi/pi-ai";
 import { toolWireSchema } from "@oh-my-pi/pi-ai/utils/schema";
 import { modelsAreEqual } from "@oh-my-pi/pi-catalog/models";
 import type { AgentToolResult } from "@oh-my-pi/pi-agent-core";
@@ -2722,6 +2721,7 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 						clientMessageId,
 						...(command.type === "prompt" ? { streamingBehavior: command.streamingBehavior } : {}),
 						onPromptAdmitted,
+						onQueuedMessageRemoved: receipt => promptResults.remove(ticket, receipt),
 					}),
 				results: promptResults,
 				onError: onPromptError(command.id, command.type),

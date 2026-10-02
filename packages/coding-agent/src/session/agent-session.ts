@@ -7180,14 +7180,16 @@ export class AgentSession implements SettingsScope {
 	 * let abort() cancel it. Either way the image stays saved and the notice says the
 	 * description is unavailable.
 	 */
-	async #buildImageDescriptionNotice(normalizedImages: ImageContent[]): Promise<CustomMessage | undefined> {
+	async #buildImageDescriptionNotice(
+		normalizedImages: ImageContent[],
+		signal?: AbortSignal,
+	): Promise<CustomMessage | undefined> {
 		const controller = new AbortController();
 		this.#imageDescriptionAbortControllers.add(controller);
+		const signals = [controller.signal, AbortSignal.timeout(IMAGE_DESCRIPTION_ADMISSION_TIMEOUT_MS)];
+		if (signal) signals.push(signal);
 		try {
-			return await this.#providerBoundary.buildImageDescriptionNotice(
-				normalizedImages,
-				AbortSignal.any([controller.signal, AbortSignal.timeout(IMAGE_DESCRIPTION_ADMISSION_TIMEOUT_MS)]),
-			);
+			return await this.#providerBoundary.buildImageDescriptionNotice(normalizedImages, AbortSignal.any(signals));
 		} finally {
 			this.#imageDescriptionAbortControllers.delete(controller);
 		}
@@ -7543,7 +7545,10 @@ export class AgentSession implements SettingsScope {
 	 */
 	async promptCustomMessage<T = unknown>(
 		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details" | "attribution">,
-		options?: Pick<PromptOptions, "streamingBehavior" | "toolChoice" | "onPromptAdmitted" | "onQueuedMessageRemoved"> & {
+		options?: Pick<
+			PromptOptions,
+			"streamingBehavior" | "toolChoice" | "onPromptAdmitted" | "onQueuedMessageRemoved"
+		> & {
 			queueChipText?: string;
 			queueOnly?: boolean;
 		},
@@ -7553,7 +7558,10 @@ export class AgentSession implements SettingsScope {
 
 	async #promptCustomMessage<T = unknown>(
 		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details" | "attribution">,
-		options?: Pick<PromptOptions, "streamingBehavior" | "toolChoice" | "onPromptAdmitted" | "onQueuedMessageRemoved"> & {
+		options?: Pick<
+			PromptOptions,
+			"streamingBehavior" | "toolChoice" | "onPromptAdmitted" | "onQueuedMessageRemoved"
+		> & {
 			queueChipText?: string;
 			queueOnly?: boolean;
 		},
@@ -8432,22 +8440,26 @@ export class AgentSession implements SettingsScope {
 		if (options?.promptGeneration !== undefined && this.#promptGeneration !== options.promptGeneration) {
 			return false;
 		}
-		if (mode === "aside") {
-			if (await this.#sessionGenerationChanged(sessionGeneration)) return false;
-			const records: AgentMessage[] = [...prependMessages, ...attachmentSourceNotices];
-			if (imageDescriptionNotice) records.push(imageDescriptionNotice);
-			const userMessage: AgentMessage = { role: "user", content, clientMessageId, attribution, timestamp: timestamp ?? Date.now() };
-			this.#queuedMessageRawText.set(userMessage, rawText);
-			records.push(userMessage);
-			this.#irc.queueAside(records);
-			options?.onPromptAdmitted?.();
-			// The awaits above (image normalization / vision description) can span the run's
-			// settle, so the run may already be idle by the time the record lands in the aside
-			// queue with no loop left to drain it. Resuming here is a no-op while streaming and
-			// wakes/folds correctly once idle (see #resumeStrandedIrcAsides).
-			this.#resumeStrandedIrcAsides();
-			return true;
-		}
+		if (await this.#sessionGenerationChanged(sessionGeneration)) return false;
+		const records: AgentMessage[] = [...prependMessages, ...attachmentSourceNotices];
+		if (imageDescriptionNotice) records.push(imageDescriptionNotice);
+		const userMessage: AgentMessage = {
+			role: "user",
+			content,
+			clientMessageId,
+			attribution,
+			timestamp: timestamp ?? Date.now(),
+		};
+		this.#queuedMessageRawText.set(userMessage, rawText);
+		records.push(userMessage);
+		this.#irc.queueAside(records);
+		options?.onPromptAdmitted?.();
+		// The awaits above (image normalization / vision description) can span the run's
+		// settle, so the run may already be idle by the time the record lands in the aside
+		// queue with no loop left to drain it. Resuming here is a no-op while streaming and
+		// wakes/folds correctly once idle (see #resumeStrandedIrcAsides).
+		this.#resumeStrandedIrcAsides();
+		return true;
 	}
 
 	#scheduleIdleQueueDrain(): void {
@@ -9115,7 +9127,18 @@ export class AgentSession implements SettingsScope {
 		if (index < 0) return undefined;
 
 		const removed = selected[index];
-		this.agent.replaceQueue(queue, this.#withoutQueuedUserMessage(selected, index));
+		if (isPendingUserMessage(selected[index])) {
+			const pending = this.agent.getPendingMessages().find(item => item.message === selected[index]);
+			if (
+				!pending ||
+				this.agent.removePendingMessages([pending.id], isPendingUserMessage, isHiddenUserCompanion)[0]?.outcome !==
+					"removed"
+			) {
+				return undefined;
+			}
+		} else {
+			this.agent.replaceQueue(queue, this.#withoutQueuedUserMessage(selected, index));
+		}
 		this.#reconcileQueuedMessageDrain();
 		return toRestoredQueuedMessage(removed);
 	}

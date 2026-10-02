@@ -563,8 +563,21 @@ describe("dispatchRpcSkillPrompt", () => {
 				await dispatch("client-follow-up", "followUp");
 				// Source/prebuilt metadata cannot override runtime correlation or
 				// claim an identity when the caller supplied none.
-				await runRpcSkillCommand(session, { skill, args: "fix this" }, "steer", prebuilt, undefined, undefined, "runtime-id");
-				await runRpcSkillCommand(session, { skill, args: "fix this" }, "steer", prebuilt);
+				await runRpcSkillCommand(
+					session,
+					{ skill, args: "fix this", queueChipText: `/skill:${skill.name} fix this` },
+					"steer",
+					prebuilt,
+					undefined,
+					undefined,
+					"runtime-id",
+				);
+				await runRpcSkillCommand(
+					session,
+					{ skill, args: "fix this", queueChipText: `/skill:${skill.name} fix this` },
+					"steer",
+					prebuilt,
+				);
 			} finally {
 				clock.mockRestore();
 			}

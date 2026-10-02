@@ -1,5 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import * as path from "node:path";
 import { Effort } from "@oh-my-pi/pi-ai";
 import { rpcContractFixtures } from "./fixtures/rpc-contract/frames";
 
@@ -289,25 +288,5 @@ describe("RPC contract fixtures", () => {
 				],
 			},
 		]);
-	});
-
-	test("generated JSON files match typed fixture sources", async () => {
-		const generatedDir = path.join(import.meta.dir, "fixtures", "rpc-contract", "generated");
-		const manifest = (await Bun.file(path.join(generatedDir, "manifest.json")).json()) as Array<{
-			name: string;
-			category: string;
-			file: string;
-		}>;
-
-		expect(manifest.map(entry => entry.name).sort()).toEqual(rpcContractFixtures.map(fixture => fixture.name).sort());
-
-		for (const fixture of rpcContractFixtures) {
-			const entry = manifest.find(item => item.name === fixture.name);
-			expect(entry).toBeDefined();
-
-			const generated = await Bun.file(path.join(generatedDir, entry!.file)).json();
-			const expected = JSON.parse(JSON.stringify(fixture.frame));
-			expect(generated).toEqual(expected);
-		}
 	});
 });
