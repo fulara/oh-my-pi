@@ -917,6 +917,7 @@ export const rpcContractFixtures = [
 				],
 				planMode,
 				goalMode,
+				goal: goalMode,
 				sessionSkills,
 				systemPrompt: ["You are a reliable coding agent."],
 				dumpTools: [{ name: "read", description: "Read files", parameters: { type: "object" } }],
