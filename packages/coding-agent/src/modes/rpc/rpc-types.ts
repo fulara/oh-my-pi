@@ -22,7 +22,6 @@ import type { AgentProgress } from "@oh-my-pi/pi-tui/tools/task";
 import type { SubagentEventPayload, SubagentLifecyclePayload, SubagentProgressPayload } from "../../task";
 import type { TodoPhase } from "@oh-my-pi/pi-tui/tools/todo";
 import type { RpcMessagesPage } from "./rpc-messages";
-import type { GoalModeState } from "../../goals/state";
 import type { RpcGoalOp, RpcGoalResult } from "./rpc-goal";
 
 export interface RpcPlanReviewEvent {
@@ -62,7 +61,6 @@ export type RpcCommand =
 	| { id?: string; type: "abort_and_prompt"; message: string; images?: ImageContent[] }
 	| { id?: string; type: "new_session"; parentSession?: string }
 	| { id?: string; type: "open_session"; sessionDir: string }
-	| { id?: string; type: "fork" }
 	| { id?: string; type: "btw_start"; btwId: string; question: string }
 	| { id?: string; type: "btw_cancel"; btwId: string }
 	| { id?: string; type: "btw_release"; btwId: string }
@@ -449,7 +447,6 @@ export type RpcResponse =
 	| { id?: string; type: "response"; command: "abort_and_prompt"; success: true }
 	| { id?: string; type: "response"; command: "new_session"; success: true; data: { cancelled: boolean } }
 	| { id?: string; type: "response"; command: "open_session"; success: true; data: RpcOpenSessionResult }
-	| { id?: string; type: "response"; command: "fork"; success: true; data: { cancelled: boolean } }
 	| { id?: string; type: "response"; command: "btw_start"; success: true; data: { btwId: string } }
 	| { id?: string; type: "response"; command: "btw_cancel"; success: true; data: { btwId: string } }
 	| { id?: string; type: "response"; command: "btw_release"; success: true; data: { btwId: string } }

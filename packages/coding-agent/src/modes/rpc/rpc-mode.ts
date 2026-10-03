@@ -11,7 +11,7 @@
  * - Prompt completion: one `prompt_result` per accepted prompt, correlated by the command `id`
  * - Extension UI: Extension UI requests are emitted, client responds with extension_ui_response
  */
-import * as fs from "node:fs";
+import { createWriteStream } from "node:fs";
 import * as path from "node:path";
 import { ThinkingLevel } from "@oh-my-pi/pi-agent-core";
 import { getOAuthProviders } from "@oh-my-pi/pi-ai/oauth";
@@ -58,6 +58,7 @@ import { SessionBusyError } from "../../session/agent-session";
 import { CACHE_WARMING_MODES } from "../../session/cache-warmer";
 import { type PlanApprovalDetails, resolvePlanTitle } from "../../plan-mode/approved-plan";
 import { cfgPlanEnabled } from "../../plan-mode/settings";
+import type { PlanModeState } from "../../plan-mode/state";
 import planModeApprovedPrompt from "../../prompts/system/plan-mode-approved.md" with { type: "text" };
 import planModeCompactInstructionsPrompt from "../../prompts/system/plan-mode-compact-instructions.md" with { type: "text" };
 import type { AgentSession, AgentSessionEvent } from "../../session/agent-session";
@@ -1198,7 +1199,7 @@ export function createFuraRpcRuntime(
 ): {
 	handleCommand(command: RpcCommand): Promise<RpcResponse | undefined>;
 	handleSessionEvent(event: AgentSessionEvent): Promise<void>;
-	reconcileSessionMode(): Promise<void>;
+	reconcileSessionMode(initialPlanMode?: PlanModeState): Promise<void>;
 	dispose(): Promise<void>;
 } {
 	const restorePlanTools = async (): Promise<void> => {
@@ -1648,7 +1649,7 @@ export function createFuraRpcRuntime(
 		return btwDisposal;
 	};
 
-	const reconcileSessionMode = async (): Promise<void> => {
+	const reconcileSessionMode = async (initialPlanMode?: PlanModeState): Promise<void> => {
 		await cancelAllBtw();
 		await restorePlanTools();
 		await restoreGoalTools();
@@ -1678,6 +1679,20 @@ export function createFuraRpcRuntime(
 			if (restored?.enabled && restored.goal.status === "active") await activateGoalTools();
 			return;
 		}
+		// Initial SDK plan state need not have a journal mode entry yet.
+		// Session switches pass no initial state and only restore their target journal.
+		if (sessionContext.mode === "none" && initialPlanMode?.enabled) {
+			await enterPlanMode(
+				{
+					type: "set_plan_mode",
+					enabled: true,
+					planFilePath: initialPlanMode.planFilePath,
+					workflow: initialPlanMode.workflow,
+				},
+				{ persist: false },
+			);
+			return;
+		}
 
 		if (sessionContext.mode === "plan" || sessionContext.mode === "plan_paused") {
 			if (!cfgPlanEnabled.get(session.settings)) {
@@ -1698,13 +1713,6 @@ export function createFuraRpcRuntime(
 	const handleCommand = async (command: RpcCommand): Promise<RpcResponse | undefined> => {
 		try {
 			switch (command.type) {
-				case "fork": {
-					if (session.isStreaming) {
-						return errorResponse(command.id, "fork", "Cannot fork while a prompt is in progress.");
-					}
-					const cancelled = !(await session.fork());
-					return successResponse(command.id, "fork", { cancelled });
-				}
 				case "btw_start":
 					return startBtw(command);
 				case "btw_cancel":
@@ -2088,7 +2096,7 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 	// JS thread and never reports backpressure, so a client that stops reading
 	// stdout froze the whole worker, stdin reader included. An fd write stream
 	// writes from the threadpool and reports backpressure, letting the writer spool.
-	const stdout = process.platform === "win32" ? fs.createWriteStream("", { fd: 1, autoClose: false }) : process.stdout;
+	const stdout = process.platform === "win32" ? createWriteStream("", { fd: 1, autoClose: false }) : process.stdout;
 	const outputWriter = new RpcOutputWriter(stdout, failure => {
 		logger.error("RPC output delivery failed", { error: String(failure) });
 		void session.dispose().finally(() => process.exit(1));
@@ -2409,9 +2417,10 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 		});
 	});
 	session.setSessionSwitchReconciler(() => furaRuntime.reconcileSessionMode());
+	const initialPlanMode = session.getPlanModeState();
 	await goalController.reconcile();
 	await goalController.settled();
-	await furaRuntime.reconcileSessionMode();
+	await furaRuntime.reconcileSessionMode(initialPlanMode);
 
 	// Discriminates a store failure from any other dispose rejection below.
 	let persistenceFailure: Error | undefined;
