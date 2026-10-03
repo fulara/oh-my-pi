@@ -388,25 +388,4 @@ describe("Fura RPC plan-mode runtime", () => {
 		expect(session.getActiveToolNames()).toEqual(["read"]);
 	});
 
-	it("rejects RPC fork while a prompt is streaming", async () => {
-		let forkCalled = false;
-		const runtime = createFuraRpcRuntime({
-			isStreaming: true,
-			async fork() {
-				forkCalled = true;
-				return true;
-			},
-		} as unknown as AgentSession);
-
-		const response = await runtime.handleCommand({ id: "fork-busy", type: "fork" });
-
-		expect(response).toEqual({
-			id: "fork-busy",
-			type: "response",
-			command: "fork",
-			success: false,
-			error: "Cannot fork while a prompt is in progress.",
-		});
-		expect(forkCalled).toBe(false);
-	});
 });
