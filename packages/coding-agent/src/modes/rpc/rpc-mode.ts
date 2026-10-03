@@ -72,6 +72,7 @@ import { findMostRecentNonEmptySession, findRecentSessionContinuation } from "..
 import { probeSessionLeases } from "../../session/session-storage";
 import { type PlanApprovalDetails, resolvePlanTitle } from "../../plan-mode/approved-plan";
 import { cfgPlanEnabled } from "../../plan-mode/settings";
+import type { PlanModeState } from "../../plan-mode/state";
 import planModeApprovedPrompt from "../../prompts/system/plan-mode-approved.md" with { type: "text" };
 import planModeCompactInstructionsPrompt from "../../prompts/system/plan-mode-compact-instructions.md" with {
 	type: "text",
@@ -1358,7 +1359,7 @@ export function createFuraRpcRuntime(
 ): {
 	handleCommand(command: RpcCommand): Promise<RpcResponse | undefined>;
 	handleSessionEvent(event: AgentSessionEvent): Promise<void>;
-	reconcileSessionMode(): Promise<void>;
+	reconcileSessionMode(initialPlanMode?: PlanModeState): Promise<void>;
 	dispose(): Promise<void>;
 } {
 	const restorePlanTools = async (): Promise<void> => {
@@ -1808,7 +1809,7 @@ export function createFuraRpcRuntime(
 		return btwDisposal;
 	};
 
-	const reconcileSessionMode = async (): Promise<void> => {
+	const reconcileSessionMode = async (initialPlanMode?: PlanModeState): Promise<void> => {
 		await cancelAllBtw();
 		await restorePlanTools();
 		await restoreGoalTools();
@@ -1838,6 +1839,20 @@ export function createFuraRpcRuntime(
 			if (restored?.enabled && restored.goal.status === "active") await activateGoalTools();
 			return;
 		}
+		// Initial SDK plan state need not have a journal mode entry yet.
+		// Session switches pass no initial state and only restore their target journal.
+		if (sessionContext.mode === "none" && initialPlanMode?.enabled) {
+			await enterPlanMode(
+				{
+					type: "set_plan_mode",
+					enabled: true,
+					planFilePath: initialPlanMode.planFilePath,
+					workflow: initialPlanMode.workflow,
+				},
+				{ persist: false },
+			);
+			return;
+		}
 
 		if (sessionContext.mode === "plan" || sessionContext.mode === "plan_paused") {
 			if (!cfgPlanEnabled.get(session.settings)) {
@@ -1858,13 +1873,6 @@ export function createFuraRpcRuntime(
 	const handleCommand = async (command: RpcCommand): Promise<RpcResponse | undefined> => {
 		try {
 			switch (command.type) {
-				case "fork": {
-					if (session.isStreaming) {
-						return errorResponse(command.id, "fork", "Cannot fork while a prompt is in progress.");
-					}
-					const cancelled = !(await session.fork());
-					return successResponse(command.id, "fork", { cancelled });
-				}
 				case "btw_start":
 					return startBtw(command);
 				case "btw_cancel":
@@ -2694,9 +2702,10 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 		});
 	});
 	session.setSessionSwitchReconciler(() => furaRuntime.reconcileSessionMode());
+	const initialPlanMode = session.getPlanModeState();
 	await goalController.reconcile();
 	await goalController.settled();
-	await furaRuntime.reconcileSessionMode();
+	await furaRuntime.reconcileSessionMode(initialPlanMode);
 
 	// Discriminates a store failure from any other dispose rejection below.
 	let persistenceFailure: Error | undefined;

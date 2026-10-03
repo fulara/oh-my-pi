@@ -100,25 +100,6 @@ describe("Fura RPC active-tool runtime", () => {
 		expect(session.agent.state.tools.map(tool => tool.name)).toEqual(["read"]);
 	});
 
-	it("fork delegates to the upstream session fork API", async () => {
-		const session = await createSession(["read"]);
-		const previousSessionFile = session.sessionFile;
-		expect(previousSessionFile).toBeTruthy();
-
-		const runtime = createFuraRpcRuntime(session);
-		const response = await runtime.handleCommand({ id: "fork-1", type: "fork" });
-
-		expect(response).toEqual({
-			id: "fork-1",
-			type: "response",
-			command: "fork",
-			success: true,
-			data: { cancelled: false },
-		});
-		expect(session.sessionFile).toBeTruthy();
-		expect(session.sessionFile).not.toBe(previousSessionFile);
-	});
-
 	it("streams a BTW snapshot without mutating the source and promotes it to a new session", async () => {
 		const model = createMockModel({ responses: [{ content: ["Side answer"] }] });
 		const session = await createSession(["read"], model);
