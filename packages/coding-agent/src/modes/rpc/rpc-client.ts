@@ -789,15 +789,6 @@ export class RpcClient {
 	}
 
 	/**
-	 * Fork the current persisted session.
-	 * @returns Object with `cancelled: true` if the fork could not be created or an extension cancelled it.
-	 */
-	async fork(): Promise<{ cancelled: boolean }> {
-		const response = await this.#send({ type: "fork" });
-		return this.#getData(response);
-	}
-
-	/**
 	 * Get current session state.
 	 */
 	async getState(): Promise<RpcSessionState> {

@@ -26,7 +26,6 @@ import type { TodoPhase } from "@oh-my-pi/pi-tui/tools/todo";
 import type { LogoutAccount } from "@oh-my-pi/pi-tui/overlays/logout-account-selector";
 import type { LivePhase } from "@oh-my-pi/pi-tui/apps/live-visualizer";
 import type { RpcMessagesPage } from "./rpc-messages";
-import type { GoalModeState } from "../../goals/state";
 import type { RpcGoalOp, RpcGoalResult } from "./rpc-goal";
 import type { BtwHistoryRecord } from "../../session/btw-history";
 
@@ -68,7 +67,6 @@ export type RpcCommand =
 	| { id?: string; type: "abort_and_restore_queue" }
 	| { id?: string; type: "new_session"; parentSession?: string }
 	| { id?: string; type: "open_session"; sessionDir: string; provider?: string; modelId?: string }
-	| { id?: string; type: "fork" }
 	| { id?: string; type: "btw_start"; btwId: string; question: string }
 	| { id?: string; type: "btw_cancel"; btwId: string }
 	| { id?: string; type: "btw_release"; btwId: string }
@@ -544,7 +542,6 @@ export type RpcResponse =
 	  }
 	| { id?: string; type: "response"; command: "new_session"; success: true; data: { cancelled: boolean } }
 	| { id?: string; type: "response"; command: "open_session"; success: true; data: RpcOpenSessionResult }
-	| { id?: string; type: "response"; command: "fork"; success: true; data: { cancelled: boolean } }
 	| { id?: string; type: "response"; command: "btw_start"; success: true; data: { btwId: string } }
 	| { id?: string; type: "response"; command: "btw_cancel"; success: true; data: { btwId: string } }
 	| { id?: string; type: "response"; command: "btw_release"; success: true; data: { btwId: string } }
