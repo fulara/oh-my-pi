@@ -41,6 +41,8 @@ interface PythonBinding {
 	listenerNames: Record<string, string>;
 	/** Definitions emitted although no command or frame reaches them. */
 	extraDefs: string[];
+	/** Open records returned as new input: validate required fields while preserving provider metadata. */
+	strictOpenRecords: string[];
 }
 
 const PYTHON_BINDING: PythonBinding = {
@@ -70,6 +72,7 @@ const PYTHON_BINDING: PythonBinding = {
 	pathResults: ["export_html"],
 	listenerNames: { extension_ui_request: "on_ui_request" },
 	extraDefs: ["AskAnswer"],
+	strictOpenRecords: ["BranchImageContent"],
 };
 
 const PYTHON_KEYWORDS = new Set([
@@ -272,11 +275,15 @@ class PythonEmitter {
 				this.#runtime.add("decode_str");
 				return "decode_str";
 			case "integer":
-				this.#runtime.add("decode_int");
-				return "decode_int";
-			case "number":
-				this.#runtime.add("decode_float");
-				return "decode_float";
+			case "number": {
+				const decoder = type.kind === "integer" ? "decode_int" : "decode_float";
+				this.#runtime.add(decoder);
+				if (type.minimum !== undefined) {
+					this.#runtime.add("at_least");
+					return `at_least(${decoder}, ${type.minimum})`;
+				}
+				return decoder;
+			}
 			case "boolean":
 				this.#runtime.add("decode_bool");
 				return "decode_bool";
@@ -404,8 +411,15 @@ class PythonEmitter {
 		const args = discriminator
 			? `${pyString(discriminator)}, frozenset({${values.map(pyString).join(", ")}})`
 			: "None, None";
+		let requiredFields = "";
+		if (def.kind === "object" && this.#binding.strictOpenRecords.includes(name)) {
+			const validators = def.fields
+				.filter(field => field.required && field.key !== discriminator)
+				.map(field => `${pyString(field.key)}: ${this.#decoder(field.type, `${name}.${field.key}`)}`);
+			requiredFields = `, {${validators.join(", ")}}`;
+		}
 		this.#exports.push(`parse_${snake(name)}`);
-		return `parse_${snake(name)} = cast("Decoder[${name}]", open_record(${args}))\n${docstring(`Decodes a \`${name}\` open record: checks the discriminator and keeps every key.`, "").trimEnd()}`;
+		return `parse_${snake(name)} = cast("Decoder[${name}]", open_record(${args}${requiredFields}))\n${docstring(`Decodes a \`${name}\` open record: checks the discriminator${requiredFields ? " and required input fields" : ""} and keeps every key.`, "").trimEnd()}`;
 	}
 
 	#emitDataclass(def: Extract<WireDef, { kind: "object" }>, base?: string): string {

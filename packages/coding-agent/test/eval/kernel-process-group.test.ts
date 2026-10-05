@@ -35,24 +35,32 @@ async function ready(stream: ReadableStream<Uint8Array>) {
 
 afterEach(() => vi.restoreAllMocks());
 
+async function pipeFailureFixture(write: () => number | Promise<number>) {
+	const proc = Bun.spawn([process.execPath, "-e", fixture], {
+		detached: true,
+		stdin: "pipe",
+		stdout: "pipe",
+		stderr: "pipe",
+	});
+	const owner = Process.fromPid(proc.pid);
+	if (!owner) throw new Error("Cannot pin disposable pipe-failure fixture");
+	await ready(proc.stdout);
+	const kernel = new TestKernel();
+	kernel.setProcess({
+		pid: proc.pid,
+		stdin: { write, flush: () => undefined, end: () => proc.stdin.end() },
+		stdout: proc.stdout,
+		stderr: proc.stderr,
+		exited: proc.exited,
+	} as unknown as Parameters<TestKernel["setProcess"]>[0]);
+	return { proc, owner, kernel };
+}
+
 describe("BaseKernel stdin failures", () => {
 	test("settles an execution with a TransportError and retires the kernel when the stdin write rejects", async () => {
-		const exited = Promise.withResolvers<number>();
-		const proc = {
-			pid: undefined,
-			// A pending pipe write rejects with EPIPE once the runner's stdin is gone, while the process may still live.
-			stdin: {
-				write: () => Promise.reject(new Error("EPIPE: broken pipe, write")),
-				flush: () => undefined,
-				end: () => {},
-			},
-			stdout: new ReadableStream<Uint8Array>(),
-			stderr: new ReadableStream<Uint8Array>(),
-			exited: exited.promise,
-			kill: () => exited.resolve(0),
-		};
-		const kernel = new TestKernel();
-		kernel.setProcess(proc as unknown as Parameters<TestKernel["setProcess"]>[0]);
+		const { proc, owner, kernel } = await pipeFailureFixture(() =>
+			Promise.reject(new Error("EPIPE: broken pipe, write")),
+		);
 		try {
 			// No timeoutMs: before the fix this execution never settled.
 			const result = await kernel.execute("print(1)");
@@ -64,25 +72,17 @@ describe("BaseKernel stdin failures", () => {
 			expect(result.error).toMatchObject({ name: "TransportError", value: "EPIPE: broken pipe, write" });
 			// The broken pipe is terminal: the kernel stops reporting alive (so the session replaces it) and is killed.
 			expect(kernel.isAlive()).toBe(false);
-			expect(await exited.promise).toBe(0);
+			await proc.exited;
+			expect(owner.status()).toBe(ProcessStatus.Exited);
 		} finally {
-			await kernel.shutdown({ timeoutMs: 50 });
+			expect(await kernel.shutdown({ timeoutMs: 50 })).toEqual({ confirmed: true });
+			await owner.terminate({ group: false, gracefulMs: -1 });
 		}
 	});
 
 	test("retires the kernel when a write fails after its request was already aborted", async () => {
-		const exited = Promise.withResolvers<number>();
 		const write = Promise.withResolvers<number>();
-		const proc = {
-			pid: undefined,
-			stdin: { write: () => write.promise, flush: () => undefined, end: () => {} },
-			stdout: new ReadableStream<Uint8Array>(),
-			stderr: new ReadableStream<Uint8Array>(),
-			exited: exited.promise,
-			kill: () => exited.resolve(0),
-		};
-		const kernel = new TestKernel();
-		kernel.setProcess(proc as unknown as Parameters<TestKernel["setProcess"]>[0]);
+		const { proc, owner, kernel } = await pipeFailureFixture(() => write.promise);
 		try {
 			const controller = new AbortController();
 			const request = kernel.submitRequest("tool-call", "payload", { signal: controller.signal });
@@ -92,63 +92,43 @@ describe("BaseKernel stdin failures", () => {
 
 			// The pipe breaks after the caller has gone: the kernel must still be retired.
 			write.reject(new Error("EPIPE: broken pipe, write"));
-			expect(await exited.promise).toBe(0);
+			await proc.exited;
+			expect(owner.status()).toBe(ProcessStatus.Exited);
 			expect(kernel.isAlive()).toBe(false);
 		} finally {
-			await kernel.shutdown({ timeoutMs: 50 });
+			expect(await kernel.shutdown({ timeoutMs: 50 })).toEqual({ confirmed: true });
+			await owner.terminate({ group: false, gracefulMs: -1 });
 		}
 	});
 
 	test("fails a control request and retires the kernel when its stdin write rejects", async () => {
-		const exited = Promise.withResolvers<number>();
-		const proc = {
-			pid: undefined,
-			stdin: {
-				write: () => Promise.reject(new Error("EPIPE: broken pipe, write")),
-				flush: () => undefined,
-				end: () => {},
-			},
-			stdout: new ReadableStream<Uint8Array>(),
-			stderr: new ReadableStream<Uint8Array>(),
-			exited: exited.promise,
-			kill: () => exited.resolve(0),
-		};
-		const kernel = new TestKernel();
-		kernel.setProcess(proc as unknown as Parameters<TestKernel["setProcess"]>[0]);
+		const { proc, owner, kernel } = await pipeFailureFixture(() =>
+			Promise.reject(new Error("EPIPE: broken pipe, write")),
+		);
 		try {
 			// The control timeout is far beyond the test timeout: only the write failure can settle this.
 			await expect(kernel.requestControl("snapshot", undefined, 60_000)).rejects.toThrow("EPIPE");
-			expect(await exited.promise).toBe(0);
+			await proc.exited;
+			expect(owner.status()).toBe(ProcessStatus.Exited);
 			expect(kernel.isAlive()).toBe(false);
 		} finally {
-			await kernel.shutdown({ timeoutMs: 50 });
+			expect(await kernel.shutdown({ timeoutMs: 50 })).toEqual({ confirmed: true });
+			await owner.terminate({ group: false, gracefulMs: -1 });
 		}
 	});
 
 	test("fails a control request and retires the kernel when its stdin write throws synchronously", async () => {
-		const exited = Promise.withResolvers<number>();
-		const proc = {
-			pid: undefined,
-			stdin: {
-				write: () => {
-					throw new Error("EPIPE: broken pipe, write");
-				},
-				flush: () => undefined,
-				end: () => {},
-			},
-			stdout: new ReadableStream<Uint8Array>(),
-			stderr: new ReadableStream<Uint8Array>(),
-			exited: exited.promise,
-			kill: () => exited.resolve(0),
-		};
-		const kernel = new TestKernel();
-		kernel.setProcess(proc as unknown as Parameters<TestKernel["setProcess"]>[0]);
+		const { proc, owner, kernel } = await pipeFailureFixture(() => {
+			throw new Error("EPIPE: broken pipe, write");
+		});
 		try {
 			await expect(kernel.requestControl("snapshot", undefined, 60_000)).rejects.toThrow("EPIPE");
-			expect(await exited.promise).toBe(0);
+			await proc.exited;
+			expect(owner.status()).toBe(ProcessStatus.Exited);
 			expect(kernel.isAlive()).toBe(false);
 		} finally {
-			await kernel.shutdown({ timeoutMs: 50 });
+			expect(await kernel.shutdown({ timeoutMs: 50 })).toEqual({ confirmed: true });
+			await owner.terminate({ group: false, gracefulMs: -1 });
 		}
 	});
 });

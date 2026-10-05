@@ -90,9 +90,9 @@ describe("archive prelude", () => {
 		writeSession(app, "app-empty", "2024-04-01T00:00:00.000Z");
 		libSession = writeSession(lib, "lib", "2024-02-01T00:00:00.000Z", { prompt: "lib refactor", answered: true });
 		writeSession(path.join(root, "idle"), "idle", "2024-05-01T00:00:00.000Z");
-		recordSessionRecap(newApp, app, "first recap");
-		recordSessionRecap(newApp, app, "second recap");
-		recordSessionRecap(libSession, lib, "lib recap");
+		recordSessionRecap(newApp, app, "first recap", null);
+		recordSessionRecap(newApp, app, "second recap", null);
+		recordSessionRecap(libSession, lib, "lib recap", null);
 		const history = HistoryStorage.open();
 		history.add("deploy the archive", app, newApp);
 		history.add("archive cleanup", lib, libSession);

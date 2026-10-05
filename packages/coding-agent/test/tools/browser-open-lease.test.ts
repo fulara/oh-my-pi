@@ -290,10 +290,10 @@ describe("browser open — an abandoned browser acquisition does not hold up the
 			return stalledConnect.promise;
 		});
 		const killGate = Promise.withResolvers<void>();
-		spyOn(attach, "gracefulKillTreeOnce").mockImplementation(async pid => {
+		spyOn(attach, "gracefulKillTreeOnce").mockImplementation(async owned => {
 			events.push("kill-start");
 			await killGate.promise;
-			process.kill(pid, "SIGKILL");
+			await owned.terminate({ group: false, gracefulMs: -1 });
 			events.push("kill-end");
 		});
 		const browser = { connected: true, disconnect: () => undefined } as unknown as Browser;
@@ -315,44 +315,60 @@ describe("browser open — an abandoned browser acquisition does not hold up the
 });
 
 describe("browser open — failed spawned-app acquisition reaps its owned process (#9537)", () => {
-	it("kills the OMP-spawned process when no page target can be published", async () => {
-		const disconnectSpy = vi.fn();
-		const browser = {
-			key: "spawned:/tmp/chrome-headless-shell",
-			kind: { kind: "spawned", path: "/tmp/chrome-headless-shell" },
-			refCount: 0,
-			browser: {
-				connected: true,
-				disconnect: disconnectSpy,
-				wsEndpoint: () => "ws://127.0.0.1/devtools/browser/test",
-				targets: () => [],
-				pages: async () => [],
-				waitForTarget: async () => {
-					throw new TimeoutError("No page target appeared");
+	it("kills only its spawned process when no page target can be published", async () => {
+		// Real native termination needs real children; await exit, not guessed delays.
+		const command = [
+			process.execPath,
+			"-e",
+			"Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => new Response('fixture') })",
+		];
+		const victim = attach.spawnBrowserApplication(command, os.tmpdir());
+		const sentinel = attach.spawnBrowserApplication(command, os.tmpdir());
+		const sentinelIdentity = sentinel.ownedProcess.identity();
+		try {
+			const disconnectSpy = vi.fn();
+			const browser = {
+				key: `spawned:${victim.subprocess.pid}`,
+				kind: { kind: "spawned", path: process.execPath },
+				refCount: 0,
+				browser: {
+					connected: true,
+					disconnect: disconnectSpy,
+					wsEndpoint: () => "ws://127.0.0.1/devtools/browser/test",
+					targets: () => [],
+					pages: async () => [],
+					waitForTarget: async () => {
+						throw new TimeoutError("No page target appeared");
+					},
 				},
-			},
-			pid: 4242,
-			subprocess: { pid: 4242, exitCode: null },
-			stealth: { browserSession: null, override: null },
-		} as unknown as registry.BrowserHandle;
-		spyOn(registry, "acquireBrowser").mockResolvedValue(browser);
-		const killSpy = spyOn(attach, "gracefulKillTreeOnce").mockResolvedValue(undefined);
+				pid: victim.subprocess.pid,
+				subprocess: victim.subprocess,
+				ownedProcess: victim.ownedProcess,
+				ownedProcessExited: victim.subprocess.exited,
+				stealth: { browserSession: null, override: null },
+			} as unknown as registry.BrowserHandle;
+			spyOn(registry, "acquireBrowser").mockResolvedValue(browser);
 
-		const invokeBrowser = createBrowserHost();
-		await expect(
-			invokeBrowser({
-				action: "open",
-				name: "failed-open",
-				app: { path: "/tmp/chrome-headless-shell" },
-				timeout: 1,
-			}),
-		).rejects.toBeInstanceOf(ToolError);
-
-		expect(disconnectSpy).toHaveBeenCalledTimes(1);
-		expect(killSpy).toHaveBeenCalledTimes(1);
-		expect(killSpy.mock.calls[0]?.[0]).toBe(4242);
-		expect(registry.getBrowsersMapForTest().size).toBe(0);
-		expect(getTabsMapForTest().has("failed-open")).toBe(false);
+			await expect(
+				createBrowserHost()({
+					action: "open",
+					name: "failed-open",
+					app: { path: process.execPath },
+					timeout: 1,
+				}),
+			).rejects.toBeInstanceOf(ToolError);
+			await attach.waitForBrowserProcessExit(victim.ownedProcess, victim.subprocess.exited);
+			expect(disconnectSpy).toHaveBeenCalledTimes(1);
+			expect(sentinel.subprocess.exitCode).toBeNull();
+			expect(sentinel.ownedProcess.identity()).toBe(sentinelIdentity);
+			expect(registry.getBrowsersMapForTest().size).toBe(0);
+			expect(getTabsMapForTest().has("failed-open")).toBe(false);
+		} finally {
+			for (const owned of [victim, sentinel]) {
+				await owned.ownedProcess.terminate({ group: false, gracefulMs: -1 });
+				await attach.waitForBrowserProcessExit(owned.ownedProcess, owned.subprocess.exited);
+			}
+		}
 	});
 });
 
