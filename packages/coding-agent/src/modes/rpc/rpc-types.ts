@@ -68,7 +68,8 @@ export type RpcCommand =
 	| { id?: string; type: "new_session"; parentSession?: string }
 	| { id?: string; type: "open_session"; sessionDir: string; provider?: string; modelId?: string }
 	| { id?: string; type: "btw_start"; btwId: string; question: string }
-	| { id?: string; type: "btw_cancel"; btwId: string }
+	/** `btwId` targets the Fura side channel; otherwise `recordId` targets upstream BTW. */
+	| { id?: string; type: "btw_cancel"; btwId?: string; recordId?: string }
 	| { id?: string; type: "btw_release"; btwId: string }
 	| { id?: string; type: "btw_promote"; btwId: string }
 
@@ -215,7 +216,6 @@ export type RpcCommand =
 
 	// Side questions (/btw); answers stream as `btw_delta` / `btw_record` frames
 	| { id?: string; type: "btw"; question: string; recordId?: string }
-	| { id?: string; type: "btw_cancel"; recordId?: string }
 	| { id?: string; type: "get_btw_history" };
 
 // ============================================================================

@@ -387,5 +387,4 @@ describe("Fura RPC plan-mode runtime", () => {
 		expect(response).toMatchObject({ success: true });
 		expect(session.getActiveToolNames()).toEqual(["read"]);
 	});
-
 });
