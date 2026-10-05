@@ -26,6 +26,7 @@ import type {
 	RpcAvailableSlashCommand,
 	RpcBtwDeltaFrame,
 	RpcBtwRecordFrame,
+	RpcBtwUpdateFrame,
 	RpcCommand,
 	RpcExtensionUIRequest,
 	RpcExtensionUIResponse,
@@ -43,6 +44,7 @@ import type {
 	RpcLivePhaseFrame,
 	RpcLiveTranscriptFrame,
 	RpcOpenSessionResult,
+	RpcPlanReviewEvent,
 	RpcPromptError,
 	RpcPromptResultFrame,
 	RpcReadyFrame,
@@ -212,6 +214,12 @@ export type Frames = Assert<
 		liveEnd: Outbound<RpcLiveEndFrame, Wire.LiveEndEvent>;
 		btwDelta: Outbound<RpcBtwDeltaFrame, Wire.BtwDeltaEvent>;
 		btwRecord: Outbound<RpcBtwRecordFrame, Wire.BtwRecordEvent>;
+		planReview: Outbound<RpcPlanReviewEvent, Wire.PlanReviewEvent>;
+		btwStarted: Outbound<Extract<RpcBtwUpdateFrame, { state: "started" }>, Wire.BtwStartedEvent>;
+		btwStreaming: Outbound<Extract<RpcBtwUpdateFrame, { state: "streaming" }>, Wire.BtwStreamingEvent>;
+		btwCompleted: Outbound<Extract<RpcBtwUpdateFrame, { state: "completed" }>, Wire.BtwCompletedEvent>;
+		btwCancelled: Outbound<Extract<RpcBtwUpdateFrame, { state: "cancelled" }>, Wire.BtwCancelledEvent>;
+		btwError: Outbound<Extract<RpcBtwUpdateFrame, { state: "error" }>, Wire.BtwErrorEvent>;
 		hostToolCall: Outbound<RpcHostToolCallRequest, Wire.HostToolCallRequest>;
 		hostToolCancel: Outbound<RpcHostToolCancelRequest, Wire.HostToolCancelRequest>;
 		hostUriRequest: Outbound<RpcHostUriRequest, Wire.HostUriRequest>;

@@ -200,3 +200,28 @@ fn result_unwrap_and_nullable() {
 	assert!(CancelSubagentCommand::decode(None).is_err());
 	assert!(<SteerCommand as Command>::decode(None).is_ok());
 }
+
+#[test]
+fn btw_notifications_route_by_state_and_reject_incomplete_completion() {
+	let raw = json!({"type": "btw_update", "btwId": "side-1", "state": "completed", "answer": "Side answer", "canPromote": true});
+	let RpcNotification::BtwUpdateEvent(BtwUpdateEvent::Completed(completed)) =
+		notification(raw.clone()).unwrap()
+	else {
+		panic!("not a completed BTW");
+	};
+	assert_eq!(
+		(completed.btw_id.as_str(), completed.answer.as_str(), completed.can_promote),
+		("side-1", "Side answer", true)
+	);
+	assert_eq!(
+		serde_json::to_value(RpcNotification::BtwUpdateEvent(BtwUpdateEvent::Completed(completed)))
+			.unwrap(),
+		raw
+	);
+	assert!(
+		notification(
+			json!({"type": "btw_update", "btwId": "side-1", "state": "completed", "canPromote": true})
+		)
+		.is_err()
+	);
+}

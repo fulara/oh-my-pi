@@ -41,12 +41,25 @@ export const rpcCommands: readonly RpcCommandSpec[] = [
 	{
 		name: "prompt",
 		doc: "Submit a prompt; acknowledged once admitted, completed by its `prompt_result`.",
-		params: { message: "string", "images?": IMAGES, "streamingBehavior?": "StreamingBehavior" },
+		params: {
+			message: "string",
+			"images?": IMAGES,
+			"clientMessageId?": "string",
+			"streamingBehavior?": "StreamingBehavior",
+		},
 		result: "PromptAck",
 		completion: "prompt_result",
 	},
-	{ name: "steer", doc: "Queue a steering message.", params: { message: "string", "images?": IMAGES } },
-	{ name: "follow_up", doc: "Queue a follow-up message.", params: { message: "string", "images?": IMAGES } },
+	{
+		name: "steer",
+		doc: "Queue a steering message.",
+		params: { message: "string", "images?": IMAGES, "clientMessageId?": "string" },
+	},
+	{
+		name: "follow_up",
+		doc: "Queue a follow-up message.",
+		params: { message: "string", "images?": IMAGES, "clientMessageId?": "string" },
+	},
 	{
 		name: "remove_queued_message",
 		doc: "Remove one pending queued message by its queue-chip text.",
@@ -82,6 +95,78 @@ export const rpcCommands: readonly RpcCommandSpec[] = [
 		doc: "Continue the newest non-empty session in a directory, or start a fresh one there. Give provider and modelId together to override the saved model; otherwise an unavailable saved model fails the request.",
 		params: { sessionDir: "string", "provider?": "string", "modelId?": "string" },
 		result: "OpenSessionResult",
+	},
+	{
+		name: "btw_start",
+		doc: "Start an isolated BTW answer.",
+		params: { btwId: "string", question: "string" },
+		result: { btwId: "string" },
+	},
+	{
+		name: "btw_cancel",
+		doc: "Cancel an isolated BTW answer by btwId, or the running side question (only recordId when given).",
+		params: {
+			"btwId?": doc("string", "Isolated answer selector; mutually exclusive with recordId."),
+			"recordId?": doc("string", "Persisted side-question selector; omitted to cancel the running side question."),
+		},
+		result: {
+			"btwId?": doc("string", "Returned when the request selected an isolated answer by btwId."),
+			"cancelled?": doc("boolean", "Returned for persisted side-question cancellation, with or without recordId."),
+		},
+	},
+	{
+		name: "btw_release",
+		doc: "Release an isolated BTW answer.",
+		params: { btwId: "string" },
+		result: { btwId: "string" },
+	},
+	{
+		name: "btw_promote",
+		doc: "Promote a BTW answer to a persisted session.",
+		params: { btwId: "string" },
+		result: { btwId: "string", sessionId: "string", sessionFile: "string" },
+	},
+	{
+		name: "get_activity",
+		doc: "Read authoritative session activity.",
+		params: { sessionId: "string" },
+		result: "SessionActivitySnapshot",
+	},
+	{
+		name: "get_activity_detail",
+		doc: "Read an activity item from the specified generation.",
+		params: { sessionId: "string", generation: "string", kind: "ActivityKind", activityId: "string" },
+		result: "SessionActivityDetail",
+	},
+	{
+		name: "get_pending_messages",
+		doc: "Read removable pending inputs.",
+		params: { sessionId: "string" },
+		result: "PendingMessagesSnapshot",
+	},
+	{
+		name: "remove_pending_messages",
+		doc: "Remove identified pending inputs from the specified generation.",
+		params: { sessionId: "string", generation: "string", ids: "string[]" },
+		result: "PendingMessagesRemoval",
+	},
+	{
+		name: "get_session_recap",
+		doc: "Read the persisted session recap.",
+		params: { sessionId: "string" },
+		result: "SessionRecapSnapshot",
+	},
+	{
+		name: "get_session_skills",
+		doc: "Read session skill selection and catalog.",
+		params: { sessionId: "string", journalSessionId: "string" },
+		result: "SessionSkillsCatalogResult",
+	},
+	{
+		name: "set_session_skills",
+		doc: "Apply a revision-guarded session skill selection.",
+		params: { sessionId: "string", journalSessionId: "string", expectedRevision: "string", skillIds: "string[]" },
+		result: "SessionSkillsState",
 	},
 
 	{ name: "get_state", doc: "Snapshot the session state.", result: "SessionState" },
@@ -130,6 +215,41 @@ export const rpcCommands: readonly RpcCommandSpec[] = [
 		params: { phases: "TodoPhase[]" },
 		result: { todoPhases: "TodoPhase[]" },
 		unwrap: "todoPhases",
+	},
+	{
+		name: "set_plan_mode",
+		doc: "Enable or disable the browser plan workflow.",
+		params: { enabled: "boolean", "planFilePath?": "string", "workflow?": "'parallel' | 'iterative'" },
+		result: { planMode: "PlanModeState | null" },
+	},
+	{
+		name: "approve_plan_mode",
+		doc: "Approve a plan and dispatch execution with the chosen context policy.",
+		params: {
+			"planFilePath?": "string",
+			finalPlanFilePath: "string",
+			"preserveContext?": "boolean",
+			"compactBeforeExecute?": "boolean",
+		},
+		result: {
+			finalPlanFilePath: "string",
+			contextPreserved: "boolean",
+			"compactionOutcome?": "'ok' | 'cancelled' | 'failed'",
+			executionDispatched: "boolean",
+		},
+	},
+	{
+		name: "goal_mode",
+		doc: "Change the browser goal workflow.",
+		params: "GoalModeParams",
+		result: { goalMode: "GoalModeState | null" },
+	},
+	{
+		name: "set_active_tools",
+		doc: "Restrict the session to the named active tools.",
+		params: { toolNames: "string[]" },
+		result: { toolNames: "string[]" },
+		unwrap: "toolNames",
 	},
 	{
 		name: "set_host_tools",
@@ -357,13 +477,6 @@ export const rpcCommands: readonly RpcCommandSpec[] = [
 		params: { question: "string", "recordId?": "string" },
 		result: { record: "BtwHistoryRecord" },
 		unwrap: "record",
-	},
-	{
-		name: "btw_cancel",
-		doc: "Cancel the running side question (only topic `recordId` when given); false when none matches.",
-		params: { "recordId?": "string" },
-		result: { cancelled: "boolean" },
-		unwrap: "cancelled",
 	},
 	{
 		name: "get_btw_history",

@@ -1595,6 +1595,37 @@ mod tests {
 	}
 
 	#[test]
+	fn short_frames_remain_valid_for_vision_backends() {
+		let options = [
+			SnapcompactRenderOptions { size: 64, font: Some("8x8".into()), ..Default::default() },
+			SnapcompactRenderOptions {
+				size: 128,
+				font: Some("8x13".into()),
+				cell_width: Some(8),
+				cell_height: Some(16),
+				stretch: Some(false),
+				..Default::default()
+			},
+			SnapcompactRenderOptions { size: 256, columns: Some(2), ..Default::default() },
+			SnapcompactRenderOptions {
+				size: 60,
+				font: Some("8x8".into()),
+				cell_width: Some(6),
+				cell_height: Some(6),
+				..Default::default()
+			},
+		];
+		for options in options {
+			let png = png_bytes(render_snapcompact_png_sync("Hello.".into(), options).unwrap());
+			let decoded = image::load_from_memory(&png).unwrap();
+			assert!(
+				decoded.height() >= 64,
+				"short frames must exceed the backend's rejected 32px boundary"
+			);
+		}
+	}
+
+	#[test]
 	fn columns_validates_and_renders_doc_frames() {
 		assert!(
 			render_snapcompact_png_sync("x".into(), SnapcompactRenderOptions {

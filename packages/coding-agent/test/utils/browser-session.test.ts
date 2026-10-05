@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "bun:test";
+import { type ChildProcess, spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { LoginCancelledError } from "@oh-my-pi/pi-ai/error";
 import * as launchModule from "@oh-my-pi/pi-coding-agent/tools/browser/launch";
 import { captureBrowserSession } from "@oh-my-pi/pi-coding-agent/utils/browser-session";
+import { Process, ProcessStatus } from "@oh-my-pi/pi-natives";
 import type { Browser, LaunchOptions, PuppeteerNode } from "puppeteer-core";
 
 const request = {
@@ -12,13 +14,34 @@ const request = {
 	cookieNames: ["__Secure-next-auth.session-token", "next-auth.session-token"],
 };
 const profiles: string[] = [];
+const subprocesses: Array<{ subprocess: ChildProcess; exited: Promise<void> }> = [];
 
 afterEach(async () => {
+	await Promise.all(
+		subprocesses.splice(0).map(async ({ subprocess, exited }) => {
+			if (subprocess.exitCode === null && subprocess.signalCode === null) subprocess.stdin?.end();
+			await exited;
+		}),
+	);
 	vi.restoreAllMocks();
 	await Promise.all(profiles.splice(0).map(dir => fs.rm(dir, { recursive: true, force: true })));
 });
 
 function browserFixture() {
+	// An independent watchdog bounds this disposable child if the runner dies.
+	// Synchronization uses stdin EOF and the exit promise, never clock delays.
+	const subprocess = spawn(
+		process.execPath,
+		[
+			"-e",
+			'process.stdin.resume(); process.stdin.on("end", () => process.exit(0)); setTimeout(() => process.exit(0), 30_000);',
+		],
+		{ detached: true, stdio: ["pipe", "ignore", "ignore"] },
+	);
+	const exited = new Promise<void>(resolve => subprocess.once("exit", () => resolve()));
+	subprocesses.push({ subprocess, exited });
+	const pid = subprocess.pid;
+	if (pid === undefined) throw new Error("Disposable sign-in fixture did not spawn");
 	const readCookies = vi.fn(async () => ({
 		cookies: [
 			{ name: "csrf", value: "other-cookie" },
@@ -34,8 +57,10 @@ function browserFixture() {
 	const browser = Object.assign(new EventEmitter(), {
 		connected: true,
 		createBrowserContext: async () => ({ newPage: async () => page }),
-		process: () => null,
+		process: () => subprocess,
 		close: vi.fn(async () => {
+			subprocess.stdin.end();
+			await exited;
 			browser.connected = false;
 			browser.emit("disconnected");
 		}),
@@ -50,7 +75,7 @@ function browserFixture() {
 	const launch = vi.fn(launchBrowser);
 	vi.spyOn(launchModule, "ensureChromiumExecutable").mockResolvedValue("/fake/chromium");
 	const load = vi.spyOn(launchModule, "loadPuppeteer").mockResolvedValue({ launch } as unknown as PuppeteerNode);
-	return { browser, page, readCookies, launch, launchBrowser, load };
+	return { browser, subprocess, pid, page, readCookies, launch, launchBrowser, load };
 }
 
 async function expectProfilesRemoved() {
@@ -64,6 +89,35 @@ describe("browser session capture", () => {
 		expect(fixture.readCookies).toHaveBeenCalledWith("Network.getCookies", { urls: [request.url] });
 		expect(fixture.browser.connected).toBe(false);
 		await expectProfilesRemoved();
+	});
+
+	it("terminates the retained sign-in process when close fails and PID lookup is unavailable", async () => {
+		const fixture = browserFixture();
+		const owned = Process.fromPid(fixture.pid);
+		if (!owned || owned.ppid !== process.pid) throw new Error("Cannot pin disposable sign-in fixture");
+		fixture.browser.close.mockRejectedValue(new Error("CDP close failed"));
+		fixture.readCookies.mockImplementation(async () => {
+			// Lose discovery after startup; only the original identity may authorize cleanup.
+			vi.spyOn(Process, "fromPid").mockReturnValue(null);
+			return { cookies: [{ name: request.cookieNames[0]!, value: "secret-session" }] };
+		});
+
+		await expect(captureBrowserSession(request)).resolves.toBe("secret-session");
+		expect(owned.status()).toBe(ProcessStatus.Exited);
+		await expectProfilesRemoved();
+	});
+
+	it("reports an unpinned live sign-in resource and preserves its profile without signaling", async () => {
+		const fixture = browserFixture();
+		const owned = Process.fromPid(fixture.pid);
+		if (!owned || owned.ppid !== process.pid) throw new Error("Cannot pin disposable sign-in fixture");
+		vi.spyOn(Process, "fromPid").mockReturnValue(null);
+
+		await expect(captureBrowserSession(request)).rejects.toThrow(
+			`Sign-in browser cleanup refused (PID ${fixture.pid})`,
+		);
+		expect(owned.status()).toBe(ProcessStatus.Running);
+		for (const profile of profiles) expect((await fs.stat(profile)).isDirectory()).toBe(true);
 	});
 
 	it("captures an unprefixed Perplexity session when the secure cookie is absent", async () => {
