@@ -21,9 +21,8 @@ import { toolWireSchema } from "@oh-my-pi/pi-ai/utils/schema";
 import { modelsAreEqual } from "@oh-my-pi/pi-catalog/models";
 import type { AgentToolResult } from "@oh-my-pi/pi-agent-core";
 import { CompactionCancelledError } from "@oh-my-pi/pi-agent-core/compaction";
-import type { AssistantMessage, TextContent } from "@oh-my-pi/pi-ai";
+import type { AssistantMessage, ImageContent, TextContent } from "@oh-my-pi/pi-ai";
 import { $env, isEnoent, isRecord, logger, prompt, Snowflake, toError, withTimeout } from "@oh-my-pi/pi-utils";
-import { reset as resetCapabilities } from "../../capability";
 import { clearPluginRootsAndCaches, resolveActiveProjectRegistryPath } from "../../discovery/helpers";
 import {
 	type ExtensionAskDialogQuestion,
@@ -43,7 +42,6 @@ import {
 	type Skill,
 	type SkillPromptInput,
 } from "../../extensibility/skills";
-import { loadSlashCommands } from "../../extensibility/slash-commands";
 import type { Goal } from "@oh-my-pi/pi-tui/tools/goal";
 import { cfgGoalEnabled } from "../../goals/settings";
 import { InternalUrlRouter, resolveLocalUrlToPath } from "../../internal-urls";
@@ -628,13 +626,13 @@ export class RpcInputDispatcher {
 			// Bash and predict_word retain their immediate side channel. Prompts,
 			// steers, follow-ups and steer_subagent start through the serial tail, but
 			// dispatchRpcInputFrame backgrounds their admission.
-			if (BACKGROUND_COMMANDS.has(command.type)) {
+			if (BACKGROUND_COMMANDS.has(command.type) && !(command.type === "btw_cancel" && "btwId" in command)) {
 				dispatchRpcInputFrame(command, this.#deps);
 				return;
 			}
 
 			let task: Promise<void>;
-			if (command.type === "btw_cancel" || command.type === "btw_release") {
+			if ((command.type === "btw_cancel" && "btwId" in command) || command.type === "btw_release") {
 				let pending = false;
 				for (const start of this.#pendingBtw.keys()) {
 					if (start.btwId !== command.btwId) continue;
@@ -678,7 +676,7 @@ export class RpcInputDispatcher {
 		try {
 			const response = await this.#deps.handleCommand(command);
 			if (pending) {
-				if (command.type === "btw_cancel" && !response.success) {
+				if (command.type === "btw_cancel" && !response.success && typeof command.btwId === "string") {
 					this.#deps.output({ type: "btw_update", btwId: command.btwId, state: "cancelled" });
 				}
 				this.#deps.output(successResponse(command.id, command.type, { btwId: command.btwId }));
@@ -1723,6 +1721,12 @@ export function createFuraRpcRuntime(
 	};
 
 	const cancelBtw = (command: Extract<RpcCommand, { type: "btw_cancel" }>): RpcResponse => {
+		if (typeof command.btwId !== "string" || !command.btwId.trim()) {
+			return errorResponse(command.id, "btw_cancel", "btwId must be a non-empty string.");
+		}
+		if ("recordId" in command) {
+			return errorResponse(command.id, "btw_cancel", "btwId and recordId are mutually exclusive.");
+		}
 		const request = btwRequests.get(command.btwId);
 		if (!request) return errorResponse(command.id, "btw_cancel", `BTW request ${command.btwId} was not found.`);
 		if (request.state === "running") {
@@ -1845,7 +1849,7 @@ export function createFuraRpcRuntime(
 				case "btw_start":
 					return startBtw(command);
 				case "btw_cancel":
-					return cancelBtw(command);
+					return "btwId" in command ? cancelBtw(command) : undefined;
 				case "btw_release":
 					return releaseBtw(command);
 				case "btw_promote":

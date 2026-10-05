@@ -37,12 +37,9 @@ describe("headless Chromium profile cleanup (issue #7058)", () => {
 		const dir = await makeProfileDir();
 		const ebusy = Object.assign(new Error(`EBUSY: resource busy or locked, rm '${dir}'`), { code: "EBUSY" });
 		const removeSpy = spyOn(piUtils, "removeWithRetries").mockRejectedValue(ebusy);
-		const warnSpy = spyOn(piUtils.logger, "warn");
 		try {
-			// Must resolve — a cleanup failure never propagates as a crash.
-			await expect(removeUserDataDir(dir)).resolves.toBeUndefined();
-			expect(removeSpy).toHaveBeenCalledTimes(1);
-			expect(warnSpy).toHaveBeenCalledTimes(1);
+			await removeUserDataDir(dir);
+			expect(fs.existsSync(dir)).toBe(true);
 		} finally {
 			removeSpy.mockRestore();
 			// Real removal so the fixture does not leak.
@@ -50,7 +47,7 @@ describe("headless Chromium profile cleanup (issue #7058)", () => {
 		}
 	});
 
-	it("removes the handle's profile directory when the headless browser is disposed", async () => {
+	it("preserves the profile when the browser has no retained process ownership", async () => {
 		const dir = await makeProfileDir();
 		const handle = {
 			key: "headless:1",
@@ -59,14 +56,16 @@ describe("headless Chromium profile cleanup (issue #7058)", () => {
 			userDataDir: dir,
 			browser: {
 				connected: true,
-				process: () => ({ pid: 4242 }),
 				close: () => Promise.resolve(),
 			},
 			stealth: { browserSession: null, override: null },
 		} as unknown as BrowserHandle;
-
-		await releaseBrowser(handle, { kill: false });
-
-		expect(fs.existsSync(dir)).toBe(false);
+		try {
+			await expect(releaseBrowser(handle, { kill: false })).rejects.toBeInstanceOf(Error);
+			expect(fs.existsSync(path.join(dir, "SingletonLock"))).toBe(true);
+			expect(fs.existsSync(path.join(dir, "Default", "Preferences"))).toBe(true);
+		} finally {
+			await fs.promises.rm(dir, { recursive: true, force: true });
+		}
 	});
 });

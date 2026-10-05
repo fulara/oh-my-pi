@@ -14,7 +14,6 @@ import {
 	readArgsCollapseIntoGroup,
 	readArgsHaveTarget,
 } from "@oh-my-pi/pi-tui/chat/read-tool-group";
-import { RecapNotice } from "@oh-my-pi/pi-tui/chat/recap-notice";
 import { TodoReminderComponent } from "@oh-my-pi/pi-tui/chat/todo-reminder";
 import { isNativeRendering } from "@oh-my-pi/pi-tui/native/state";
 import { textContent } from "@oh-my-pi/pi-tui/chat/transcript-entry";

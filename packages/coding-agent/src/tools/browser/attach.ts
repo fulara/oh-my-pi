@@ -2,8 +2,8 @@ import * as fs from "node:fs/promises";
 import * as net from "node:net";
 import * as path from "node:path";
 import { Process, ProcessStatus } from "@oh-my-pi/pi-natives";
-import { getBrowserProfilesDir, untilAborted } from "@oh-my-pi/pi-utils";
-import type { Socket } from "bun";
+import { getBrowserProfilesDir, logger, untilAborted, withTimeout } from "@oh-my-pi/pi-utils";
+import type { Socket, Subprocess } from "bun";
 import type { Browser, Page, Target } from "puppeteer-core";
 import { throwIfAborted } from "../tool-errors";
 import { ToolError } from "@oh-my-pi/pi-tui/tools/tool-errors";
@@ -723,11 +723,70 @@ async function pickPageFromList(pages: Page[], options: PickTargetOptions): Prom
 }
 
 /**
- * SIGTERM the process tree, wait briefly, then SIGKILL anything still alive.
- * Single-process variant for our own spawned children.
+ * Launch a dedicated application and pin its identity before any asynchronous
+ * attach work. An unreadable identity is not permission to rediscover a PID.
  */
-export async function gracefulKillTreeOnce(pid: number, gracePeriodMs = 2000): Promise<void> {
-	const process = Process.fromPid(pid);
-	if (!process) return;
-	await process.terminate({ gracefulMs: gracePeriodMs, timeoutMs: 500 });
+export function spawnBrowserApplication(
+	argv: string[],
+	cwd: string,
+): { subprocess: Subprocess; ownedProcess: Process } {
+	const subprocess = Bun.spawn(argv, {
+		cwd,
+		detached: true,
+		stdout: "ignore",
+		stderr: "ignore",
+		stdin: "ignore",
+	});
+	let ownedProcess: Process | null;
+	try {
+		ownedProcess = Process.fromPid(subprocess.pid);
+	} catch (error) {
+		const message = `Cannot pin browser application ${JSON.stringify(argv[0])} (PID ${subprocess.pid}); cleanup refused and the application may still be running: ${error instanceof Error ? error.message : String(error)}`;
+		logger.warn(message, { pid: subprocess.pid });
+		throw new ToolError(message, { pid: subprocess.pid });
+	}
+	if (
+		!ownedProcess ||
+		ownedProcess.ppid !== process.pid ||
+		subprocess.exitCode !== null ||
+		subprocess.signalCode !== null ||
+		(process.platform !== "win32" && ownedProcess.groupId() !== subprocess.pid)
+	) {
+		const message = `Cannot establish ownership of browser application ${JSON.stringify(argv[0])} (PID ${subprocess.pid}); cleanup refused without a birth-pinned identity and dedicated process group. The application may still be running.`;
+		logger.warn(message, { pid: subprocess.pid });
+		throw new ToolError(message, { pid: subprocess.pid });
+	}
+	subprocess.unref();
+	return { subprocess, ownedProcess };
+}
+
+/** Terminate only the browser process instance pinned when this host created it. */
+export async function gracefulKillTreeOnce(ownedProcess: Process, gracePeriodMs = 2000): Promise<void> {
+	let terminated: boolean;
+	try {
+		terminated = await ownedProcess.terminate({ group: false, gracefulMs: gracePeriodMs, timeoutMs: 500 });
+	} catch (error) {
+		const message = `Browser process tree cleanup failed (PID ${ownedProcess.pid}); the resource may still be running: ${error instanceof Error ? error.message : String(error)}`;
+		logger.warn(message, { pid: ownedProcess.pid });
+		throw new ToolError(message, { pid: ownedProcess.pid });
+	}
+	if (!terminated) {
+		const message = `Browser process tree cleanup refused or incomplete (PID ${ownedProcess.pid}); the resource may still be running. No PID/group fallback was attempted.`;
+		logger.warn(message, { pid: ownedProcess.pid });
+		throw new ToolError(message, { pid: ownedProcess.pid });
+	}
+}
+
+/** Confirm the original runtime-owned child exited; an unobservable native identity is not proof. */
+export async function waitForBrowserProcessExit(ownedProcess: Process, exited: Promise<number | void>): Promise<void> {
+	try {
+		await withTimeout(exited, 500, "Timed out awaiting owned browser process exit");
+	} catch (error) {
+		const message = `Browser process exit unconfirmed (PID ${ownedProcess.pid}); the resource may still be running. No PID/group fallback was attempted.`;
+		logger.warn(message, { pid: ownedProcess.pid });
+		throw new ToolError(message, {
+			pid: ownedProcess.pid,
+			error: error instanceof Error ? error.message : String(error),
+		});
+	}
 }

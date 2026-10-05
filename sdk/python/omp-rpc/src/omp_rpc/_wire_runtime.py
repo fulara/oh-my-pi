@@ -16,6 +16,17 @@ JsonObject: TypeAlias = dict[str, JsonValue]
 
 T = TypeVar("T")
 Decoder: TypeAlias = Callable[[object, str], T]
+N = TypeVar("N", int, float)
+
+
+def at_least(inner: Decoder[N], minimum: int | float) -> Decoder[N]:
+    def decode(value: object, path: str) -> N:
+        decoded = inner(value, path)
+        if decoded < minimum:
+            raise ValueError(f"{path} must be at least {minimum}")
+        return decoded
+
+    return decode
 
 
 @dataclass(slots=True, frozen=True)
@@ -124,13 +135,19 @@ def scalar_or_array(item: Decoder[T]) -> Decoder[tuple[T, ...]]:
     return decode
 
 
-def open_record(key: str | None, values: frozenset[str] | None) -> Decoder[JsonObject]:
-    """Decoder for an open record: checks the `key` discriminator against `values`, keeps every key."""
+def open_record(
+    key: str | None, values: frozenset[str] | None,
+    required_fields: Mapping[str, Decoder[object]] | None = None,
+) -> Decoder[JsonObject]:
+    """Checks the discriminator and any required input fields, retaining all metadata."""
 
     def decode(value: object, path: str) -> JsonObject:
         payload = decode_json_object(value, path)
         if key is not None and values is not None:
             literal(values)(payload.get(key), f"{path}.{key}")
+        if required_fields is not None:
+            for field, validator in required_fields.items():
+                required(payload, field, validator, path)
         return payload
 
     return decode

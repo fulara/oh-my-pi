@@ -51,6 +51,22 @@ func TestSessionEventsRouteThroughNestedUnions(t *testing.T) {
 	}
 }
 
+func TestBtwNotificationsRouteByStateAndRejectIncompleteCompletion(t *testing.T) {
+	value := decodeFrame(t, `{"type":"btw_update","btwId":"side-1","state":"completed","answer":"Side answer","canPromote":true}`)
+	update, ok := value.(BtwUpdateEvent)
+	if !ok {
+		t.Fatalf("not a BTW update: %#v", value)
+	}
+	completed, ok := update.Value.(BtwCompletedEvent)
+	if !ok || completed.BtwID != "side-1" || completed.Answer != "Side answer" || !completed.CanPromote {
+		t.Fatalf("not a completed BTW: %#v", update.Value)
+	}
+	var frame RpcServerFrame
+	if err := json.Unmarshal([]byte(`{"type":"btw_update","btwId":"side-1","state":"completed","canPromote":true}`), &frame); err == nil {
+		t.Fatal("incomplete completion decoded")
+	}
+}
+
 func TestExtensionUiRequestRoutesByMethod(t *testing.T) {
 	value := decodeFrame(t, `{"type":"extension_ui_request","id":"ui-1","method":"confirm","title":"Delete?","message":"Really"}`)
 	request, ok := value.(ExtensionUiRequest)

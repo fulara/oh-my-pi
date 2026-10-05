@@ -96,5 +96,4 @@ describe("EventController idle compaction teardown", () => {
 		expect(runIdleCompaction).toHaveBeenCalledTimes(1);
 		controller.dispose();
 	});
-
 });

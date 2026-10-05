@@ -12,6 +12,18 @@ import { doc, type WireDefs } from "./dsl";
 
 const JSON_OBJECT = "Record<string, unknown>";
 
+const IMAGE_CONTENT = doc(
+	{
+		type: "'image'",
+		data: doc("string", "Base64-encoded image bytes."),
+		mimeType: "string",
+		"detail?": "'auto' | 'low' | 'high' | 'original'",
+		"url?": "string",
+		"providerFile?": JSON_OBJECT,
+	},
+	"Inline image; also the shape hosts send with prompts.",
+);
+
 /** Open records: transcript content, messages, usage, and assistant streaming events. */
 export const messageDefs = {
 	Attribution: doc("'user' | 'agent'", "Who initiated a message, for billing and attribution."),
@@ -25,17 +37,8 @@ export const messageDefs = {
 		"itemId?": "string",
 	},
 	RedactedThinkingContent: { type: "'redactedThinking'", data: "string" },
-	ImageContent: doc(
-		{
-			type: "'image'",
-			data: doc("string", "Base64-encoded image bytes."),
-			mimeType: "string",
-			"detail?": "'auto' | 'low' | 'high' | 'original'",
-			"url?": "string",
-			"providerFile?": JSON_OBJECT,
-		},
-		"Inline image; also the shape hosts send with prompts.",
-	),
+	ImageContent: IMAGE_CONTENT,
+	BranchImageContent: IMAGE_CONTENT,
 	ToolCall: {
 		type: "'toolCall'",
 		id: "string",

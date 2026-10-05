@@ -10,6 +10,7 @@ from typing import Callable, Final, Literal, Mapping, NotRequired, Sequence, Typ
 from ._extension_ui import ExtensionUiRequestMixin
 from ._wire_runtime import (
     array,
+    at_least,
     decode_bool,
     decode_float,
     decode_int,
@@ -220,6 +221,17 @@ class RedactedThinkingContent(TypedDict):
 
 
 class ImageContent(TypedDict):
+    """Inline image; also the shape hosts send with prompts."""
+    type: Literal["image"]
+    data: str
+    """Base64-encoded image bytes."""
+    mimeType: str
+    detail: NotRequired[Literal["auto", "low", "high", "original"]]
+    url: NotRequired[str]
+    providerFile: NotRequired[JsonObject]
+
+
+class BranchImageContent(TypedDict):
     """Inline image; also the shape hosts send with prompts."""
     type: Literal["image"]
     data: str
@@ -547,6 +559,145 @@ class ModelInfo:
 
 
 @dataclass(slots=True, frozen=True, kw_only=True)
+class PlanModeState:
+    enabled: bool
+    plan_file_path: str
+    workflow: Literal["parallel", "iterative"] | None = None
+    reentry: bool | None = None
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
+class ActivityItem:
+    id: str
+    kind: ActivityKind
+    label: str
+    status: ActivityStatus
+    started_at: float
+    detail_available: bool
+    ended_at: float | None = None
+    tool_call_id: str | None = None
+    exit_code: int | None = None
+    queued: bool | None = None
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
+class ActivitySourceState:
+    available: bool
+    error: str | None = None
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
+class ActivitySources:
+    jobs: ActivitySourceState
+    agents: ActivitySourceState
+    services: ActivitySourceState
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
+class SessionActivitySnapshot:
+    session_id: str
+    generation: str
+    observed_at: float
+    items: tuple[ActivityItem, ...]
+    sources: ActivitySources
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
+class SessionActivityDetail:
+    session_id: str
+    generation: str
+    kind: ActivityKind
+    activity_id: str
+    text: str
+    truncated: bool
+    observed_at: float
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
+class PendingMessage:
+    id: str
+    queue: QueuedMessageQueue
+    state: Literal["queued", "claimed"]
+    removable: bool
+    text: str
+    images: tuple[ImageContent, ...] | None = None
+    client_message_id: str | None = None
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
+class PendingMessagesSnapshot:
+    session_id: str
+    generation: str
+    items: tuple[PendingMessage, ...]
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
+class PendingMessageRemovalResult:
+    id: str
+    outcome: Literal["removed", "tooLate", "notFound"]
+    client_message_id: str | None = None
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
+class PendingMessagesRemoval:
+    snapshot: PendingMessagesSnapshot
+    results: tuple[PendingMessageRemovalResult, ...]
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
+class SessionRecap:
+    id: int
+    text: str
+    created_at: float
+    source_leaf_id: str | None
+    stale: bool | None
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
+class SessionRecapSnapshot:
+    session_id: str
+    enabled: bool
+    idle_seconds: float
+    generating: bool
+    recap: SessionRecap | None
+    error: str | None = None
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
+class SessionSkillDescriptor:
+    id: str
+    name: str
+    hash: str
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
+class SessionSkillCatalogEntry:
+    id: str
+    name: str
+    description: str
+    status: Literal["available", "changed", "missing"]
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
+class SessionSkillsState:
+    session_id: str
+    journal_session_id: str
+    revision: str
+    selected: tuple[SessionSkillDescriptor, ...]
+    active_revision: str
+    active: tuple[SessionSkillDescriptor, ...]
+    pending: bool
+    applying: bool
+    error: str | None = None
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
+class SessionSkillsCatalogResult:
+    state: SessionSkillsState
+    catalog: tuple[SessionSkillCatalogEntry, ...]
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
 class TodoItem:
     content: str
     status: TodoStatus
@@ -671,6 +822,9 @@ class SessionState:
     context_usage: ContextUsage | None = None
     goal: GoalModeState | None = None
     """Current goal mode; null when the session has no goal."""
+    plan_mode: PlanModeState | None = None
+    goal_mode: GoalModeState | None = None
+    session_skills: SessionSkillsState | None = None
 
 
 @dataclass(slots=True, frozen=True, kw_only=True)
@@ -769,11 +923,13 @@ class AbortAndRestoreQueueResult:
 class BranchMessage:
     entry_id: str
     text: str
+    image_count: int
 
 
 @dataclass(slots=True, frozen=True, kw_only=True)
 class BranchResult:
     text: str
+    images: tuple[BranchImageContent, ...]
     cancelled: bool
 
 
@@ -867,6 +1023,9 @@ class SubagentSnapshot:
     task: str | None = None
     assignment: str | None = None
     session_file: str | None = None
+    parent_session_id: str | None = None
+    session_id: str | None = None
+    started_at: int | None = None
     progress: JsonObject | None = None
     """Raw `AgentProgress` record."""
     parent_tool_call_id: str | None = None
@@ -1118,6 +1277,12 @@ class ModelChangedEvent:
 
 
 @dataclass(slots=True, frozen=True, kw_only=True)
+class SessionSkillsUpdatedEvent:
+    type: Literal["session_skills_updated"] = "session_skills_updated"
+    session_skills: SessionSkillsState
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
 class ConfigWarningsChangedEvent:
     type: Literal["config_warnings_changed"] = "config_warnings_changed"
 
@@ -1223,6 +1388,11 @@ class PromptResultEvent:
     """Nothing will wake the session again; when false a `session_settled` follows once background work drains."""
     id: str | None = None
     error: PromptError | None = None
+    removed: bool | None = None
+    session_id: str | None = None
+    generation: str | None = None
+    pending_message_id: str | None = None
+    client_message_id: str | None = None
 
 
 @dataclass(slots=True, frozen=True, kw_only=True)
@@ -1236,6 +1406,56 @@ class ExtensionError:
     type: Literal["extension_error"] = "extension_error"
     extension_path: str
     event: str
+    error: str
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
+class PlanReviewEvent:
+    type: Literal["plan_review"] = "plan_review"
+    session_id: str | None
+    plan_file_path: str
+    final_plan_file_path: str
+    content: str
+    title: str | None = None
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
+class BtwStartedEvent:
+    type: Literal["btw_update"] = "btw_update"
+    btw_id: str
+    state: Literal["started"] = "started"
+    question: str
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
+class BtwStreamingEvent:
+    type: Literal["btw_update"] = "btw_update"
+    btw_id: str
+    state: Literal["streaming"] = "streaming"
+    delta: str
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
+class BtwCompletedEvent:
+    type: Literal["btw_update"] = "btw_update"
+    btw_id: str
+    state: Literal["completed"] = "completed"
+    answer: str
+    can_promote: bool
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
+class BtwCancelledEvent:
+    type: Literal["btw_update"] = "btw_update"
+    btw_id: str
+    state: Literal["cancelled"] = "cancelled"
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
+class BtwErrorEvent:
+    type: Literal["btw_update"] = "btw_update"
+    btw_id: str
+    state: Literal["error"] = "error"
     error: str
 
 
@@ -1256,6 +1476,8 @@ class SubagentLifecyclePayload:
     description: str | None = None
     session_file: str | None = None
     parent_tool_call_id: str | None = None
+    parent_session_id: str | None = None
+    session_id: str | None = None
     detached: bool | None = None
     """The subagent runs as a detached background job."""
 
@@ -1578,6 +1800,46 @@ class LogoutResult:
     remaining_source: str | None = None
 
 
+@dataclass(slots=True, frozen=True, kw_only=True)
+class BtwStartResult:
+    btw_id: str
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
+class BtwCancelResult:
+    btw_id: str
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
+class BtwReleaseResult:
+    btw_id: str
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
+class BtwPromoteResult:
+    btw_id: str
+    session_id: str
+    session_file: str
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
+class SetPlanModeResult:
+    plan_mode: PlanModeState | None
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
+class ApprovePlanModeResult:
+    final_plan_file_path: str
+    context_preserved: bool
+    execution_dispatched: bool
+    compaction_outcome: Literal["ok", "cancelled", "failed"] | None = None
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
+class GoalModeResult:
+    goal_mode: GoalModeState | None
+
+
 UserContent: TypeAlias = TextContent | ImageContent
 
 
@@ -1622,6 +1884,10 @@ parse_redacted_thinking_content = cast("Decoder[RedactedThinkingContent]", open_
 
 parse_image_content = cast("Decoder[ImageContent]", open_record("type", frozenset({"image"})))
 """Decodes a `ImageContent` open record: checks the discriminator and keeps every key."""
+
+
+parse_branch_image_content = cast("Decoder[BranchImageContent]", open_record("type", frozenset({"image"}), {"data": decode_str, "mimeType": decode_str}))
+"""Decodes a `BranchImageContent` open record: checks the discriminator and required input fields and keeps every key."""
 
 
 parse_tool_call = cast("Decoder[ToolCall]", open_record("type", frozenset({"toolCall"})))
@@ -1813,6 +2079,177 @@ def parse_model_info(value: object, path: str = "ModelInfo") -> ModelInfo:
     )
 
 
+def parse_plan_mode_state(value: object, path: str = "PlanModeState") -> PlanModeState:
+    payload = expect_object(value, path)
+    return PlanModeState(
+        enabled=required(payload, "enabled", decode_bool, path),
+        plan_file_path=required(payload, "planFilePath", decode_str, path),
+        workflow=optional(payload, "workflow", cast('Decoder[Literal["parallel", "iterative"]]', literal(frozenset({"parallel", "iterative"}))), path),
+        reentry=optional(payload, "reentry", decode_bool, path),
+    )
+
+
+def parse_activity_item(value: object, path: str = "ActivityItem") -> ActivityItem:
+    payload = expect_object(value, path)
+    return ActivityItem(
+        id=required(payload, "id", decode_str, path),
+        kind=required(payload, "kind", _decode_activity_kind, path),
+        label=required(payload, "label", decode_str, path),
+        status=required(payload, "status", _decode_activity_status, path),
+        started_at=required(payload, "startedAt", decode_float, path),
+        detail_available=required(payload, "detailAvailable", decode_bool, path),
+        ended_at=optional(payload, "endedAt", decode_float, path),
+        tool_call_id=optional(payload, "toolCallId", decode_str, path),
+        exit_code=optional(payload, "exitCode", decode_int, path),
+        queued=optional(payload, "queued", decode_bool, path),
+    )
+
+
+def parse_activity_source_state(value: object, path: str = "ActivitySourceState") -> ActivitySourceState:
+    payload = expect_object(value, path)
+    return ActivitySourceState(
+        available=required(payload, "available", decode_bool, path),
+        error=optional(payload, "error", decode_str, path),
+    )
+
+
+def parse_activity_sources(value: object, path: str = "ActivitySources") -> ActivitySources:
+    payload = expect_object(value, path)
+    return ActivitySources(
+        jobs=required(payload, "jobs", parse_activity_source_state, path),
+        agents=required(payload, "agents", parse_activity_source_state, path),
+        services=required(payload, "services", parse_activity_source_state, path),
+    )
+
+
+def parse_session_activity_snapshot(value: object, path: str = "SessionActivitySnapshot") -> SessionActivitySnapshot:
+    payload = expect_object(value, path)
+    return SessionActivitySnapshot(
+        session_id=required(payload, "sessionId", decode_str, path),
+        generation=required(payload, "generation", decode_str, path),
+        observed_at=required(payload, "observedAt", decode_float, path),
+        items=required(payload, "items", array(parse_activity_item), path),
+        sources=required(payload, "sources", parse_activity_sources, path),
+    )
+
+
+def parse_session_activity_detail(value: object, path: str = "SessionActivityDetail") -> SessionActivityDetail:
+    payload = expect_object(value, path)
+    return SessionActivityDetail(
+        session_id=required(payload, "sessionId", decode_str, path),
+        generation=required(payload, "generation", decode_str, path),
+        kind=required(payload, "kind", _decode_activity_kind, path),
+        activity_id=required(payload, "activityId", decode_str, path),
+        text=required(payload, "text", decode_str, path),
+        truncated=required(payload, "truncated", decode_bool, path),
+        observed_at=required(payload, "observedAt", decode_float, path),
+    )
+
+
+def parse_pending_message(value: object, path: str = "PendingMessage") -> PendingMessage:
+    payload = expect_object(value, path)
+    return PendingMessage(
+        id=required(payload, "id", decode_str, path),
+        queue=required(payload, "queue", _decode_queued_message_queue, path),
+        state=required(payload, "state", cast('Decoder[Literal["queued", "claimed"]]', literal(frozenset({"queued", "claimed"}))), path),
+        removable=required(payload, "removable", decode_bool, path),
+        text=required(payload, "text", decode_str, path),
+        images=optional(payload, "images", array(parse_image_content), path),
+        client_message_id=optional(payload, "clientMessageId", decode_str, path),
+    )
+
+
+def parse_pending_messages_snapshot(value: object, path: str = "PendingMessagesSnapshot") -> PendingMessagesSnapshot:
+    payload = expect_object(value, path)
+    return PendingMessagesSnapshot(
+        session_id=required(payload, "sessionId", decode_str, path),
+        generation=required(payload, "generation", decode_str, path),
+        items=required(payload, "items", array(parse_pending_message), path),
+    )
+
+
+def parse_pending_message_removal_result(value: object, path: str = "PendingMessageRemovalResult") -> PendingMessageRemovalResult:
+    payload = expect_object(value, path)
+    return PendingMessageRemovalResult(
+        id=required(payload, "id", decode_str, path),
+        outcome=required(payload, "outcome", cast('Decoder[Literal["removed", "tooLate", "notFound"]]', literal(frozenset({"removed", "tooLate", "notFound"}))), path),
+        client_message_id=optional(payload, "clientMessageId", decode_str, path),
+    )
+
+
+def parse_pending_messages_removal(value: object, path: str = "PendingMessagesRemoval") -> PendingMessagesRemoval:
+    payload = expect_object(value, path)
+    return PendingMessagesRemoval(
+        snapshot=required(payload, "snapshot", parse_pending_messages_snapshot, path),
+        results=required(payload, "results", array(parse_pending_message_removal_result), path),
+    )
+
+
+def parse_session_recap(value: object, path: str = "SessionRecap") -> SessionRecap:
+    payload = expect_object(value, path)
+    return SessionRecap(
+        id=required(payload, "id", decode_int, path),
+        text=required(payload, "text", decode_str, path),
+        created_at=required(payload, "createdAt", decode_float, path),
+        source_leaf_id=required(payload, "sourceLeafId", nullable(decode_str), path),
+        stale=required(payload, "stale", nullable(decode_bool), path),
+    )
+
+
+def parse_session_recap_snapshot(value: object, path: str = "SessionRecapSnapshot") -> SessionRecapSnapshot:
+    payload = expect_object(value, path)
+    return SessionRecapSnapshot(
+        session_id=required(payload, "sessionId", decode_str, path),
+        enabled=required(payload, "enabled", decode_bool, path),
+        idle_seconds=required(payload, "idleSeconds", decode_float, path),
+        generating=required(payload, "generating", decode_bool, path),
+        recap=required(payload, "recap", nullable(parse_session_recap), path),
+        error=optional(payload, "error", decode_str, path),
+    )
+
+
+def parse_session_skill_descriptor(value: object, path: str = "SessionSkillDescriptor") -> SessionSkillDescriptor:
+    payload = expect_object(value, path)
+    return SessionSkillDescriptor(
+        id=required(payload, "id", decode_str, path),
+        name=required(payload, "name", decode_str, path),
+        hash=required(payload, "hash", decode_str, path),
+    )
+
+
+def parse_session_skill_catalog_entry(value: object, path: str = "SessionSkillCatalogEntry") -> SessionSkillCatalogEntry:
+    payload = expect_object(value, path)
+    return SessionSkillCatalogEntry(
+        id=required(payload, "id", decode_str, path),
+        name=required(payload, "name", decode_str, path),
+        description=required(payload, "description", decode_str, path),
+        status=required(payload, "status", cast('Decoder[Literal["available", "changed", "missing"]]', literal(frozenset({"available", "changed", "missing"}))), path),
+    )
+
+
+def parse_session_skills_state(value: object, path: str = "SessionSkillsState") -> SessionSkillsState:
+    payload = expect_object(value, path)
+    return SessionSkillsState(
+        session_id=required(payload, "sessionId", decode_str, path),
+        journal_session_id=required(payload, "journalSessionId", decode_str, path),
+        revision=required(payload, "revision", decode_str, path),
+        selected=required(payload, "selected", array(parse_session_skill_descriptor), path),
+        active_revision=required(payload, "activeRevision", decode_str, path),
+        active=required(payload, "active", array(parse_session_skill_descriptor), path),
+        pending=required(payload, "pending", decode_bool, path),
+        applying=required(payload, "applying", decode_bool, path),
+        error=optional(payload, "error", decode_str, path),
+    )
+
+
+def parse_session_skills_catalog_result(value: object, path: str = "SessionSkillsCatalogResult") -> SessionSkillsCatalogResult:
+    payload = expect_object(value, path)
+    return SessionSkillsCatalogResult(
+        state=required(payload, "state", parse_session_skills_state, path),
+        catalog=required(payload, "catalog", array(parse_session_skill_catalog_entry), path),
+    )
+
+
 def parse_todo_item(value: object, path: str = "TodoItem") -> TodoItem:
     payload = expect_object(value, path)
     return TodoItem(
@@ -1940,6 +2377,9 @@ def parse_session_state(value: object, path: str = "SessionState") -> SessionSta
         dump_tools=defaulted(payload, "dumpTools", array(parse_tool_descriptor), path, ()),
         context_usage=optional(payload, "contextUsage", parse_context_usage, path),
         goal=defaulted(payload, "goal", nullable(parse_goal_mode_state), path, None),
+        plan_mode=defaulted(payload, "planMode", nullable(parse_plan_mode_state), path, None),
+        goal_mode=defaulted(payload, "goalMode", nullable(parse_goal_mode_state), path, None),
+        session_skills=optional(payload, "sessionSkills", parse_session_skills_state, path),
     )
 
 
@@ -2055,6 +2495,7 @@ def parse_branch_message(value: object, path: str = "BranchMessage") -> BranchMe
     return BranchMessage(
         entry_id=required(payload, "entryId", decode_str, path),
         text=required(payload, "text", decode_str, path),
+        image_count=required(payload, "imageCount", at_least(decode_int, 0), path),
     )
 
 
@@ -2062,6 +2503,7 @@ def parse_branch_result(value: object, path: str = "BranchResult") -> BranchResu
     payload = expect_object(value, path)
     return BranchResult(
         text=required(payload, "text", decode_str, path),
+        images=required(payload, "images", array(parse_branch_image_content), path),
         cancelled=required(payload, "cancelled", decode_bool, path),
     )
 
@@ -2172,6 +2614,9 @@ def parse_subagent_snapshot(value: object, path: str = "SubagentSnapshot") -> Su
         task=optional(payload, "task", decode_str, path),
         assignment=optional(payload, "assignment", decode_str, path),
         session_file=optional(payload, "sessionFile", decode_str, path),
+        parent_session_id=optional(payload, "parentSessionId", decode_str, path),
+        session_id=optional(payload, "sessionId", decode_str, path),
+        started_at=optional(payload, "startedAt", decode_int, path),
         progress=optional(payload, "progress", decode_json_object, path),
         parent_tool_call_id=optional(payload, "parentToolCallId", decode_str, path),
     )
@@ -2455,6 +2900,14 @@ def parse_model_changed_event(value: object, path: str = "ModelChangedEvent") ->
     )
 
 
+def parse_session_skills_updated_event(value: object, path: str = "SessionSkillsUpdatedEvent") -> SessionSkillsUpdatedEvent:
+    payload = expect_object(value, path)
+    required(payload, "type", cast('Decoder[Literal["session_skills_updated"]]', literal(frozenset({"session_skills_updated"}))), path)
+    return SessionSkillsUpdatedEvent(
+        session_skills=required(payload, "sessionSkills", parse_session_skills_state, path),
+    )
+
+
 def parse_config_warnings_changed_event(value: object, path: str = "ConfigWarningsChangedEvent") -> ConfigWarningsChangedEvent:
     payload = expect_object(value, path)
     required(payload, "type", cast('Decoder[Literal["config_warnings_changed"]]', literal(frozenset({"config_warnings_changed"}))), path)
@@ -2578,6 +3031,11 @@ def parse_prompt_result_event(value: object, path: str = "PromptResultEvent") ->
         session_settled=required(payload, "sessionSettled", decode_bool, path),
         id=optional(payload, "id", decode_str, path),
         error=optional(payload, "error", parse_prompt_error, path),
+        removed=optional(payload, "removed", decode_bool, path),
+        session_id=optional(payload, "sessionId", decode_str, path),
+        generation=optional(payload, "generation", decode_str, path),
+        pending_message_id=optional(payload, "pendingMessageId", decode_str, path),
+        client_message_id=optional(payload, "clientMessageId", decode_str, path),
     )
 
 
@@ -2594,6 +3052,68 @@ def parse_extension_error(value: object, path: str = "ExtensionError") -> Extens
     return ExtensionError(
         extension_path=required(payload, "extensionPath", decode_str, path),
         event=required(payload, "event", decode_str, path),
+        error=required(payload, "error", decode_str, path),
+    )
+
+
+def parse_plan_review_event(value: object, path: str = "PlanReviewEvent") -> PlanReviewEvent:
+    payload = expect_object(value, path)
+    required(payload, "type", cast('Decoder[Literal["plan_review"]]', literal(frozenset({"plan_review"}))), path)
+    return PlanReviewEvent(
+        session_id=required(payload, "sessionId", nullable(decode_str), path),
+        plan_file_path=required(payload, "planFilePath", decode_str, path),
+        final_plan_file_path=required(payload, "finalPlanFilePath", decode_str, path),
+        content=required(payload, "content", decode_str, path),
+        title=optional(payload, "title", decode_str, path),
+    )
+
+
+def parse_btw_started_event(value: object, path: str = "BtwStartedEvent") -> BtwStartedEvent:
+    payload = expect_object(value, path)
+    required(payload, "type", cast('Decoder[Literal["btw_update"]]', literal(frozenset({"btw_update"}))), path)
+    required(payload, "state", cast('Decoder[Literal["started"]]', literal(frozenset({"started"}))), path)
+    return BtwStartedEvent(
+        btw_id=required(payload, "btwId", decode_str, path),
+        question=required(payload, "question", decode_str, path),
+    )
+
+
+def parse_btw_streaming_event(value: object, path: str = "BtwStreamingEvent") -> BtwStreamingEvent:
+    payload = expect_object(value, path)
+    required(payload, "type", cast('Decoder[Literal["btw_update"]]', literal(frozenset({"btw_update"}))), path)
+    required(payload, "state", cast('Decoder[Literal["streaming"]]', literal(frozenset({"streaming"}))), path)
+    return BtwStreamingEvent(
+        btw_id=required(payload, "btwId", decode_str, path),
+        delta=required(payload, "delta", decode_str, path),
+    )
+
+
+def parse_btw_completed_event(value: object, path: str = "BtwCompletedEvent") -> BtwCompletedEvent:
+    payload = expect_object(value, path)
+    required(payload, "type", cast('Decoder[Literal["btw_update"]]', literal(frozenset({"btw_update"}))), path)
+    required(payload, "state", cast('Decoder[Literal["completed"]]', literal(frozenset({"completed"}))), path)
+    return BtwCompletedEvent(
+        btw_id=required(payload, "btwId", decode_str, path),
+        answer=required(payload, "answer", decode_str, path),
+        can_promote=required(payload, "canPromote", decode_bool, path),
+    )
+
+
+def parse_btw_cancelled_event(value: object, path: str = "BtwCancelledEvent") -> BtwCancelledEvent:
+    payload = expect_object(value, path)
+    required(payload, "type", cast('Decoder[Literal["btw_update"]]', literal(frozenset({"btw_update"}))), path)
+    required(payload, "state", cast('Decoder[Literal["cancelled"]]', literal(frozenset({"cancelled"}))), path)
+    return BtwCancelledEvent(
+        btw_id=required(payload, "btwId", decode_str, path),
+    )
+
+
+def parse_btw_error_event(value: object, path: str = "BtwErrorEvent") -> BtwErrorEvent:
+    payload = expect_object(value, path)
+    required(payload, "type", cast('Decoder[Literal["btw_update"]]', literal(frozenset({"btw_update"}))), path)
+    required(payload, "state", cast('Decoder[Literal["error"]]', literal(frozenset({"error"}))), path)
+    return BtwErrorEvent(
+        btw_id=required(payload, "btwId", decode_str, path),
         error=required(payload, "error", decode_str, path),
     )
 
@@ -2617,6 +3137,8 @@ def parse_subagent_lifecycle_payload(value: object, path: str = "SubagentLifecyc
         description=optional(payload, "description", decode_str, path),
         session_file=optional(payload, "sessionFile", decode_str, path),
         parent_tool_call_id=optional(payload, "parentToolCallId", decode_str, path),
+        parent_session_id=optional(payload, "parentSessionId", decode_str, path),
+        session_id=optional(payload, "sessionId", decode_str, path),
         detached=optional(payload, "detached", decode_bool, path),
     )
 
@@ -2996,6 +3518,10 @@ def parse_rpc_agent_event(value: object, path: str = "RpcAgentEvent") -> RpcAgen
     return dispatch("type", _RPC_AGENT_EVENT_CASES)(value, path)
 
 
+def parse_btw_update_event(value: object, path: str = "BtwUpdateEvent") -> BtwUpdateEvent:
+    return dispatch("state", _BTW_UPDATE_EVENT_CASES)(value, path)
+
+
 def parse_notification(value: object, path: str = "notification") -> RpcNotification:
     """Decodes one unsolicited frame; a `type` this client does not model yields `UnknownNotification`."""
     payload = expect_object(value, path)
@@ -3032,6 +3558,7 @@ _RPC_AGENT_EVENT_CASES: Final[dict[str, Decoder[RpcAgentEvent]]] = {
         "retry_fallback_applied": parse_retry_fallback_applied_event,
         "retry_fallback_succeeded": parse_retry_fallback_succeeded_event,
         "model_changed": parse_model_changed_event,
+        "session_skills_updated": parse_session_skills_updated_event,
         "config_warnings_changed": parse_config_warnings_changed_event,
         "advisor_cost_changed": parse_advisor_cost_changed_event,
         "advisor_yielded": parse_advisor_yielded_event,
@@ -3043,6 +3570,15 @@ _RPC_AGENT_EVENT_CASES: Final[dict[str, Decoder[RpcAgentEvent]]] = {
         "thinking_level_changed": parse_thinking_level_changed_event,
         "goal_updated": parse_goal_updated_event,
         "queue_update": parse_queue_update_event,
+}
+
+
+_BTW_UPDATE_EVENT_CASES: Final[dict[str, Decoder[BtwUpdateEvent]]] = {
+        "started": parse_btw_started_event,
+        "streaming": parse_btw_streaming_event,
+        "completed": parse_btw_completed_event,
+        "cancelled": parse_btw_cancelled_event,
+        "error": parse_btw_error_event,
 }
 
 
@@ -3086,6 +3622,7 @@ _RPC_NOTIFICATION_CASES: Final[dict[str, Decoder[RpcNotification]]] = {
         "retry_fallback_applied": parse_rpc_agent_event,
         "retry_fallback_succeeded": parse_rpc_agent_event,
         "model_changed": parse_rpc_agent_event,
+        "session_skills_updated": parse_rpc_agent_event,
         "config_warnings_changed": parse_rpc_agent_event,
         "advisor_cost_changed": parse_rpc_agent_event,
         "advisor_yielded": parse_rpc_agent_event,
@@ -3111,20 +3648,24 @@ class WireClient:
     def _listen(self, frame_type: str, listener: Callable[..., None]) -> Callable[[], None]:
         raise NotImplementedError
 
-    def steer(self, message: str, *, images: Sequence[ImageContent] | None = None) -> None:
+    def steer(self, message: str, *, images: Sequence[ImageContent] | None = None, client_message_id: str | None = None) -> None:
         """Queue a steering message."""
         params: dict[str, object] = {}
         params["message"] = message
         if images is not None:
             params["images"] = list(images)
+        if client_message_id is not None:
+            params["clientMessageId"] = client_message_id
         self._command("steer", params)
 
-    def follow_up(self, message: str, *, images: Sequence[ImageContent] | None = None) -> None:
+    def follow_up(self, message: str, *, images: Sequence[ImageContent] | None = None, client_message_id: str | None = None) -> None:
         """Queue a follow-up message."""
         params: dict[str, object] = {}
         params["message"] = message
         if images is not None:
             params["images"] = list(images)
+        if client_message_id is not None:
+            params["clientMessageId"] = client_message_id
         self._command("follow_up", params)
 
     def remove_queued_message(self, message: str, queue: QueuedMessageQueue) -> RemoveQueuedMessageResult:
@@ -3166,6 +3707,82 @@ class WireClient:
         if model_id is not None:
             params["modelId"] = model_id
         return parse_open_session_result(self._command("open_session", params), "open_session")
+
+    def btw_start(self, btw_id: str, question: str) -> BtwStartResult:
+        """Start an isolated BTW answer."""
+        params: dict[str, object] = {}
+        params["btwId"] = btw_id
+        params["question"] = question
+        return parse_btw_start_result(self._command("btw_start", params), "btw_start")
+
+    def btw_cancel(self, btw_id: str) -> BtwCancelResult:
+        """Cancel an isolated BTW answer."""
+        params: dict[str, object] = {}
+        params["btwId"] = btw_id
+        return parse_btw_cancel_result(self._command("btw_cancel", params), "btw_cancel")
+
+    def btw_release(self, btw_id: str) -> BtwReleaseResult:
+        """Release an isolated BTW answer."""
+        params: dict[str, object] = {}
+        params["btwId"] = btw_id
+        return parse_btw_release_result(self._command("btw_release", params), "btw_release")
+
+    def btw_promote(self, btw_id: str) -> BtwPromoteResult:
+        """Promote a BTW answer to a persisted session."""
+        params: dict[str, object] = {}
+        params["btwId"] = btw_id
+        return parse_btw_promote_result(self._command("btw_promote", params), "btw_promote")
+
+    def get_activity(self, session_id: str) -> SessionActivitySnapshot:
+        """Read authoritative session activity."""
+        params: dict[str, object] = {}
+        params["sessionId"] = session_id
+        return parse_session_activity_snapshot(self._command("get_activity", params), "get_activity")
+
+    def get_activity_detail(self, session_id: str, generation: str, kind: ActivityKind, activity_id: str) -> SessionActivityDetail:
+        """Read an activity item from the specified generation."""
+        params: dict[str, object] = {}
+        params["sessionId"] = session_id
+        params["generation"] = generation
+        params["kind"] = kind
+        params["activityId"] = activity_id
+        return parse_session_activity_detail(self._command("get_activity_detail", params), "get_activity_detail")
+
+    def get_pending_messages(self, session_id: str) -> PendingMessagesSnapshot:
+        """Read removable pending inputs."""
+        params: dict[str, object] = {}
+        params["sessionId"] = session_id
+        return parse_pending_messages_snapshot(self._command("get_pending_messages", params), "get_pending_messages")
+
+    def remove_pending_messages(self, session_id: str, generation: str, ids: Sequence[str]) -> PendingMessagesRemoval:
+        """Remove identified pending inputs from the specified generation."""
+        params: dict[str, object] = {}
+        params["sessionId"] = session_id
+        params["generation"] = generation
+        params["ids"] = list(ids)
+        return parse_pending_messages_removal(self._command("remove_pending_messages", params), "remove_pending_messages")
+
+    def get_session_recap(self, session_id: str) -> SessionRecapSnapshot:
+        """Read the persisted session recap."""
+        params: dict[str, object] = {}
+        params["sessionId"] = session_id
+        return parse_session_recap_snapshot(self._command("get_session_recap", params), "get_session_recap")
+
+    def get_session_skills(self, session_id: str, journal_session_id: str) -> SessionSkillsCatalogResult:
+        """Read session skill selection and catalog."""
+        params: dict[str, object] = {}
+        params["sessionId"] = session_id
+        params["journalSessionId"] = journal_session_id
+        return parse_session_skills_catalog_result(self._command("get_session_skills", params), "get_session_skills")
+
+    def set_session_skills(self, session_id: str, journal_session_id: str, expected_revision: str, skill_ids: Sequence[str]) -> SessionSkillsState:
+        """Apply a revision-guarded session skill selection."""
+        params: dict[str, object] = {}
+        params["sessionId"] = session_id
+        params["journalSessionId"] = journal_session_id
+        params["expectedRevision"] = expected_revision
+        params["skillIds"] = list(skill_ids)
+        return parse_session_skills_state(self._command("set_session_skills", params), "set_session_skills")
 
     def get_state(self) -> SessionState:
         """Snapshot the session state."""
@@ -3216,6 +3833,44 @@ class WireClient:
         """Read the raw session tree."""
         params: dict[str, object] = {}
         return parse_session_tree(self._command("get_tree", params), "get_tree")
+
+    def set_plan_mode(self, *, enabled: bool, plan_file_path: str | None = None, workflow: Literal["parallel", "iterative"] | None = None) -> SetPlanModeResult:
+        """Enable or disable the browser plan workflow."""
+        params: dict[str, object] = {}
+        params["enabled"] = enabled
+        if plan_file_path is not None:
+            params["planFilePath"] = plan_file_path
+        if workflow is not None:
+            params["workflow"] = workflow
+        return parse_set_plan_mode_result(self._command("set_plan_mode", params), "set_plan_mode")
+
+    def approve_plan_mode(self, final_plan_file_path: str, *, plan_file_path: str | None = None, preserve_context: bool | None = None, compact_before_execute: bool | None = None) -> ApprovePlanModeResult:
+        """Approve a plan and dispatch execution with the chosen context policy."""
+        params: dict[str, object] = {}
+        params["finalPlanFilePath"] = final_plan_file_path
+        if plan_file_path is not None:
+            params["planFilePath"] = plan_file_path
+        if preserve_context is not None:
+            params["preserveContext"] = preserve_context
+        if compact_before_execute is not None:
+            params["compactBeforeExecute"] = compact_before_execute
+        return parse_approve_plan_mode_result(self._command("approve_plan_mode", params), "approve_plan_mode")
+
+    def goal_mode(self, op: Literal["create", "pause", "resume", "drop", "set_budget"], *, objective: str | None = None, token_budget: int | None = None) -> GoalModeResult:
+        """Change the browser goal workflow."""
+        params: dict[str, object] = {}
+        params["op"] = op
+        if objective is not None:
+            params["objective"] = objective
+        if token_budget is not None:
+            params["tokenBudget"] = token_budget
+        return parse_goal_mode_result(self._command("goal_mode", params), "goal_mode")
+
+    def set_active_tools(self, tool_names: Sequence[str]) -> tuple[str, ...]:
+        """Restrict the session to the named active tools."""
+        params: dict[str, object] = {}
+        params["toolNames"] = list(tool_names)
+        return required(expect_object(self._command("set_active_tools", params), "set_active_tools"), "toolNames", array(decode_str), "set_active_tools")
 
     def set_subagent_subscription(self, level: SubagentSubscriptionLevel) -> SubagentSubscriptionLevel:
         """Select which subagent frames are forwarded."""
@@ -3657,6 +4312,10 @@ class WireClient:
         """Subscribe to `model_changed` frames."""
         return self._listen("model_changed", listener)
 
+    def on_session_skills_updated(self, listener: Callable[[SessionSkillsUpdatedEvent], None]) -> Callable[[], None]:
+        """Subscribe to `session_skills_updated` frames."""
+        return self._listen("session_skills_updated", listener)
+
     def on_config_warnings_changed(self, listener: Callable[[ConfigWarningsChangedEvent], None]) -> Callable[[], None]:
         """Subscribe to `config_warnings_changed` frames."""
         return self._listen("config_warnings_changed", listener)
@@ -3711,6 +4370,7 @@ __all__ = [
     "AgentSource",
     "AgentStartEvent",
     "AnthropicServerToolContent",
+    "ApprovePlanModeResult",
     "AskAnswer",
     "AskOption",
     "AskQuestion",
@@ -3742,6 +4402,7 @@ __all__ = [
     "AvailableSlashCommand",
     "BashExecutionMessage",
     "BashResult",
+    "BranchImageContent",
     "BranchMessage",
     "BranchResult",
     "BranchSummaryMessage",
@@ -3777,6 +4438,7 @@ __all__ = [
     "FileMentionItem",
     "FileMentionMessage",
     "Goal",
+    "GoalModeResult",
     "GoalModeState",
     "GoalOp",
     "GoalResult",
@@ -3815,6 +4477,12 @@ __all__ = [
     "NotifyUiRequest",
     "OpenSessionResult",
     "OpenUrlUiRequest",
+    "PendingMessage",
+    "PendingMessageRemovalResult",
+    "PendingMessagesRemoval",
+    "PendingMessagesSnapshot",
+    "PlanModeState",
+    "PlanReviewEvent",
     "PromoteQueuedMessageResult",
     "PromptAck",
     "PromptError",
@@ -3836,14 +4504,24 @@ __all__ = [
     "RpcNotification",
     "SelectOptionDetail",
     "SelectUiRequest",
+    "SessionActivityDetail",
+    "SessionActivitySnapshot",
     "SessionCredits",
     "SessionEntries",
     "SessionInfoUpdateEvent",
+    "SessionRecap",
+    "SessionRecapSnapshot",
     "SessionSettledEvent",
+    "SessionSkillCatalogEntry",
+    "SessionSkillDescriptor",
+    "SessionSkillsCatalogResult",
+    "SessionSkillsState",
+    "SessionSkillsUpdatedEvent",
     "SessionState",
     "SessionStats",
     "SessionTree",
     "SetEditorTextUiRequest",
+    "SetPlanModeResult",
     "SetStatusUiRequest",
     "SetTitleUiRequest",
     "SetWidgetUiRequest",
@@ -3902,6 +4580,7 @@ __all__ = [
     "parse_agent_message",
     "parse_agent_start_event",
     "parse_anthropic_server_tool_content",
+    "parse_approve_plan_mode_result",
     "parse_ask_answer",
     "parse_ask_option",
     "parse_ask_question",
@@ -3930,6 +4609,7 @@ __all__ = [
     "parse_available_slash_command",
     "parse_bash_execution_message",
     "parse_bash_result",
+    "parse_branch_image_content",
     "parse_branch_message",
     "parse_branch_result",
     "parse_branch_summary_message",
@@ -3958,6 +4638,7 @@ __all__ = [
     "parse_file_mention_item",
     "parse_file_mention_message",
     "parse_goal",
+    "parse_goal_mode_result",
     "parse_goal_mode_state",
     "parse_goal_result",
     "parse_goal_updated_event",
@@ -3989,6 +4670,12 @@ __all__ = [
     "parse_notify_ui_request",
     "parse_open_session_result",
     "parse_open_url_ui_request",
+    "parse_pending_message",
+    "parse_pending_message_removal_result",
+    "parse_pending_messages_removal",
+    "parse_pending_messages_snapshot",
+    "parse_plan_mode_state",
+    "parse_plan_review_event",
     "parse_promote_queued_message_result",
     "parse_prompt_ack",
     "parse_prompt_error",
@@ -4006,14 +4693,24 @@ __all__ = [
     "parse_rpc_frame_error_event",
     "parse_select_option_detail",
     "parse_select_ui_request",
+    "parse_session_activity_detail",
+    "parse_session_activity_snapshot",
     "parse_session_credits",
     "parse_session_entries",
     "parse_session_info_update_event",
+    "parse_session_recap",
+    "parse_session_recap_snapshot",
     "parse_session_settled_event",
+    "parse_session_skill_catalog_entry",
+    "parse_session_skill_descriptor",
+    "parse_session_skills_catalog_result",
+    "parse_session_skills_state",
+    "parse_session_skills_updated_event",
     "parse_session_state",
     "parse_session_stats",
     "parse_session_tree",
     "parse_set_editor_text_ui_request",
+    "parse_set_plan_mode_result",
     "parse_set_status_ui_request",
     "parse_set_title_ui_request",
     "parse_set_widget_ui_request",

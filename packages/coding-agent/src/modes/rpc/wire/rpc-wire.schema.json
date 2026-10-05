@@ -131,6 +131,127 @@
 				"clientOmit": []
 			},
 			{
+				"name": "btw_start",
+				"doc": "Start an isolated BTW answer.",
+				"params": "BtwStartParams",
+				"result": "BtwStartResult",
+				"nullable": false,
+				"unwrap": null,
+				"timeoutMs": null,
+				"completion": null,
+				"clientOmit": []
+			},
+			{
+				"name": "btw_cancel",
+				"doc": "Cancel an isolated BTW answer.",
+				"params": "BtwCancelParams",
+				"result": "BtwCancelResult",
+				"nullable": false,
+				"unwrap": null,
+				"timeoutMs": null,
+				"completion": null,
+				"clientOmit": []
+			},
+			{
+				"name": "btw_release",
+				"doc": "Release an isolated BTW answer.",
+				"params": "BtwReleaseParams",
+				"result": "BtwReleaseResult",
+				"nullable": false,
+				"unwrap": null,
+				"timeoutMs": null,
+				"completion": null,
+				"clientOmit": []
+			},
+			{
+				"name": "btw_promote",
+				"doc": "Promote a BTW answer to a persisted session.",
+				"params": "BtwPromoteParams",
+				"result": "BtwPromoteResult",
+				"nullable": false,
+				"unwrap": null,
+				"timeoutMs": null,
+				"completion": null,
+				"clientOmit": []
+			},
+			{
+				"name": "get_activity",
+				"doc": "Read authoritative session activity.",
+				"params": "GetActivityParams",
+				"result": "SessionActivitySnapshot",
+				"nullable": false,
+				"unwrap": null,
+				"timeoutMs": null,
+				"completion": null,
+				"clientOmit": []
+			},
+			{
+				"name": "get_activity_detail",
+				"doc": "Read an activity item from the specified generation.",
+				"params": "GetActivityDetailParams",
+				"result": "SessionActivityDetail",
+				"nullable": false,
+				"unwrap": null,
+				"timeoutMs": null,
+				"completion": null,
+				"clientOmit": []
+			},
+			{
+				"name": "get_pending_messages",
+				"doc": "Read removable pending inputs.",
+				"params": "GetPendingMessagesParams",
+				"result": "PendingMessagesSnapshot",
+				"nullable": false,
+				"unwrap": null,
+				"timeoutMs": null,
+				"completion": null,
+				"clientOmit": []
+			},
+			{
+				"name": "remove_pending_messages",
+				"doc": "Remove identified pending inputs from the specified generation.",
+				"params": "RemovePendingMessagesParams",
+				"result": "PendingMessagesRemoval",
+				"nullable": false,
+				"unwrap": null,
+				"timeoutMs": null,
+				"completion": null,
+				"clientOmit": []
+			},
+			{
+				"name": "get_session_recap",
+				"doc": "Read the persisted session recap.",
+				"params": "GetSessionRecapParams",
+				"result": "SessionRecapSnapshot",
+				"nullable": false,
+				"unwrap": null,
+				"timeoutMs": null,
+				"completion": null,
+				"clientOmit": []
+			},
+			{
+				"name": "get_session_skills",
+				"doc": "Read session skill selection and catalog.",
+				"params": "GetSessionSkillsParams",
+				"result": "SessionSkillsCatalogResult",
+				"nullable": false,
+				"unwrap": null,
+				"timeoutMs": null,
+				"completion": null,
+				"clientOmit": []
+			},
+			{
+				"name": "set_session_skills",
+				"doc": "Apply a revision-guarded session skill selection.",
+				"params": "SetSessionSkillsParams",
+				"result": "SessionSkillsState",
+				"nullable": false,
+				"unwrap": null,
+				"timeoutMs": null,
+				"completion": null,
+				"clientOmit": []
+			},
+			{
 				"name": "get_state",
 				"doc": "Snapshot the session state.",
 				"params": null,
@@ -225,6 +346,50 @@
 				"result": "SetTodosResult",
 				"nullable": false,
 				"unwrap": "todoPhases",
+				"timeoutMs": null,
+				"completion": null,
+				"clientOmit": []
+			},
+			{
+				"name": "set_plan_mode",
+				"doc": "Enable or disable the browser plan workflow.",
+				"params": "SetPlanModeParams",
+				"result": "SetPlanModeResult",
+				"nullable": false,
+				"unwrap": null,
+				"timeoutMs": null,
+				"completion": null,
+				"clientOmit": []
+			},
+			{
+				"name": "approve_plan_mode",
+				"doc": "Approve a plan and dispatch execution with the chosen context policy.",
+				"params": "ApprovePlanModeParams",
+				"result": "ApprovePlanModeResult",
+				"nullable": false,
+				"unwrap": null,
+				"timeoutMs": null,
+				"completion": null,
+				"clientOmit": []
+			},
+			{
+				"name": "goal_mode",
+				"doc": "Change the browser goal workflow.",
+				"params": "GoalModeParams",
+				"result": "GoalModeResult",
+				"nullable": false,
+				"unwrap": null,
+				"timeoutMs": null,
+				"completion": null,
+				"clientOmit": []
+			},
+			{
+				"name": "set_active_tools",
+				"doc": "Restrict the session to the named active tools.",
+				"params": "SetActiveToolsParams",
+				"result": "SetActiveToolsResult",
+				"nullable": false,
+				"unwrap": "toolNames",
 				"timeoutMs": null,
 				"completion": null,
 				"clientOmit": []
@@ -827,6 +992,45 @@
 			"x-open": true
 		},
 		"ImageContent": {
+			"type": "object",
+			"properties": {
+				"type": {
+					"const": "image"
+				},
+				"data": {
+					"type": "string",
+					"description": "Base64-encoded image bytes."
+				},
+				"mimeType": {
+					"type": "string"
+				},
+				"detail": {
+					"enum": [
+						"auto",
+						"low",
+						"high",
+						"original"
+					],
+					"type": "string"
+				},
+				"url": {
+					"type": "string"
+				},
+				"providerFile": {
+					"type": "object",
+					"properties": {},
+					"additionalProperties": {}
+				}
+			},
+			"required": [
+				"type",
+				"data",
+				"mimeType"
+			],
+			"description": "Inline image; also the shape hosts send with prompts.",
+			"x-open": true
+		},
+		"BranchImageContent": {
 			"type": "object",
 			"properties": {
 				"type": {
@@ -2256,6 +2460,515 @@
 			],
 			"type": "string"
 		},
+		"PlanModeState": {
+			"type": "object",
+			"properties": {
+				"enabled": {
+					"type": "boolean"
+				},
+				"planFilePath": {
+					"type": "string"
+				},
+				"workflow": {
+					"enum": [
+						"parallel",
+						"iterative"
+					],
+					"type": "string"
+				},
+				"reentry": {
+					"type": "boolean"
+				}
+			},
+			"required": [
+				"enabled",
+				"planFilePath"
+			]
+		},
+		"GoalModeParams": {
+			"type": "object",
+			"properties": {
+				"op": {
+					"enum": [
+						"create",
+						"pause",
+						"resume",
+						"drop",
+						"set_budget"
+					],
+					"type": "string"
+				},
+				"objective": {
+					"type": "string",
+					"description": "Required for create; omitted for lifecycle mutations."
+				},
+				"tokenBudget": {
+					"type": "integer"
+				}
+			},
+			"required": [
+				"op"
+			]
+		},
+		"ActivityKind": {
+			"enum": [
+				"job",
+				"agent",
+				"service"
+			],
+			"type": "string"
+		},
+		"ActivityStatus": {
+			"enum": [
+				"pending",
+				"running",
+				"completed",
+				"failed",
+				"cancelled",
+				"starting",
+				"ready",
+				"restarting",
+				"stopping",
+				"exited",
+				"aborted"
+			],
+			"type": "string"
+		},
+		"ActivityItem": {
+			"type": "object",
+			"properties": {
+				"id": {
+					"type": "string"
+				},
+				"kind": {
+					"$ref": "#/$defs/ActivityKind"
+				},
+				"label": {
+					"type": "string"
+				},
+				"status": {
+					"$ref": "#/$defs/ActivityStatus"
+				},
+				"startedAt": {
+					"type": "number"
+				},
+				"detailAvailable": {
+					"type": "boolean"
+				},
+				"endedAt": {
+					"type": "number"
+				},
+				"toolCallId": {
+					"type": "string"
+				},
+				"exitCode": {
+					"type": "integer"
+				},
+				"queued": {
+					"type": "boolean"
+				}
+			},
+			"required": [
+				"id",
+				"kind",
+				"label",
+				"status",
+				"startedAt",
+				"detailAvailable"
+			]
+		},
+		"ActivitySourceState": {
+			"type": "object",
+			"properties": {
+				"available": {
+					"type": "boolean"
+				},
+				"error": {
+					"type": "string"
+				}
+			},
+			"required": [
+				"available"
+			]
+		},
+		"ActivitySources": {
+			"type": "object",
+			"properties": {
+				"jobs": {
+					"$ref": "#/$defs/ActivitySourceState"
+				},
+				"agents": {
+					"$ref": "#/$defs/ActivitySourceState"
+				},
+				"services": {
+					"$ref": "#/$defs/ActivitySourceState"
+				}
+			},
+			"required": [
+				"jobs",
+				"agents",
+				"services"
+			]
+		},
+		"SessionActivitySnapshot": {
+			"type": "object",
+			"properties": {
+				"sessionId": {
+					"type": "string"
+				},
+				"generation": {
+					"type": "string"
+				},
+				"observedAt": {
+					"type": "number"
+				},
+				"items": {
+					"type": "array",
+					"items": {
+						"$ref": "#/$defs/ActivityItem"
+					}
+				},
+				"sources": {
+					"$ref": "#/$defs/ActivitySources"
+				}
+			},
+			"required": [
+				"sessionId",
+				"generation",
+				"observedAt",
+				"items",
+				"sources"
+			]
+		},
+		"SessionActivityDetail": {
+			"type": "object",
+			"properties": {
+				"sessionId": {
+					"type": "string"
+				},
+				"generation": {
+					"type": "string"
+				},
+				"kind": {
+					"$ref": "#/$defs/ActivityKind"
+				},
+				"activityId": {
+					"type": "string"
+				},
+				"text": {
+					"type": "string"
+				},
+				"truncated": {
+					"type": "boolean"
+				},
+				"observedAt": {
+					"type": "number"
+				}
+			},
+			"required": [
+				"sessionId",
+				"generation",
+				"kind",
+				"activityId",
+				"text",
+				"truncated",
+				"observedAt"
+			]
+		},
+		"PendingMessage": {
+			"type": "object",
+			"properties": {
+				"id": {
+					"type": "string"
+				},
+				"queue": {
+					"$ref": "#/$defs/QueuedMessageQueue"
+				},
+				"state": {
+					"enum": [
+						"queued",
+						"claimed"
+					],
+					"type": "string"
+				},
+				"removable": {
+					"type": "boolean"
+				},
+				"text": {
+					"type": "string"
+				},
+				"images": {
+					"type": "array",
+					"items": {
+						"$ref": "#/$defs/ImageContent"
+					}
+				},
+				"clientMessageId": {
+					"type": "string"
+				}
+			},
+			"required": [
+				"id",
+				"queue",
+				"state",
+				"removable",
+				"text"
+			]
+		},
+		"PendingMessagesSnapshot": {
+			"type": "object",
+			"properties": {
+				"sessionId": {
+					"type": "string"
+				},
+				"generation": {
+					"type": "string"
+				},
+				"items": {
+					"type": "array",
+					"items": {
+						"$ref": "#/$defs/PendingMessage"
+					}
+				}
+			},
+			"required": [
+				"sessionId",
+				"generation",
+				"items"
+			]
+		},
+		"PendingMessageRemovalResult": {
+			"type": "object",
+			"properties": {
+				"id": {
+					"type": "string"
+				},
+				"outcome": {
+					"enum": [
+						"removed",
+						"tooLate",
+						"notFound"
+					],
+					"type": "string"
+				},
+				"clientMessageId": {
+					"type": "string"
+				}
+			},
+			"required": [
+				"id",
+				"outcome"
+			]
+		},
+		"PendingMessagesRemoval": {
+			"type": "object",
+			"properties": {
+				"snapshot": {
+					"$ref": "#/$defs/PendingMessagesSnapshot"
+				},
+				"results": {
+					"type": "array",
+					"items": {
+						"$ref": "#/$defs/PendingMessageRemovalResult"
+					}
+				}
+			},
+			"required": [
+				"snapshot",
+				"results"
+			]
+		},
+		"SessionRecap": {
+			"type": "object",
+			"properties": {
+				"id": {
+					"type": "integer"
+				},
+				"text": {
+					"type": "string"
+				},
+				"createdAt": {
+					"type": "number"
+				},
+				"sourceLeafId": {
+					"anyOf": [
+						{
+							"type": "string"
+						},
+						{
+							"type": "null"
+						}
+					]
+				},
+				"stale": {
+					"anyOf": [
+						{
+							"type": "boolean"
+						},
+						{
+							"type": "null"
+						}
+					]
+				}
+			},
+			"required": [
+				"id",
+				"text",
+				"createdAt",
+				"sourceLeafId",
+				"stale"
+			]
+		},
+		"SessionRecapSnapshot": {
+			"type": "object",
+			"properties": {
+				"sessionId": {
+					"type": "string"
+				},
+				"enabled": {
+					"type": "boolean"
+				},
+				"idleSeconds": {
+					"type": "number"
+				},
+				"generating": {
+					"type": "boolean"
+				},
+				"recap": {
+					"anyOf": [
+						{
+							"$ref": "#/$defs/SessionRecap"
+						},
+						{
+							"type": "null"
+						}
+					]
+				},
+				"error": {
+					"type": "string"
+				}
+			},
+			"required": [
+				"sessionId",
+				"enabled",
+				"idleSeconds",
+				"generating",
+				"recap"
+			]
+		},
+		"SessionSkillDescriptor": {
+			"type": "object",
+			"properties": {
+				"id": {
+					"type": "string"
+				},
+				"name": {
+					"type": "string"
+				},
+				"hash": {
+					"type": "string"
+				}
+			},
+			"required": [
+				"id",
+				"name",
+				"hash"
+			]
+		},
+		"SessionSkillCatalogEntry": {
+			"type": "object",
+			"properties": {
+				"id": {
+					"type": "string"
+				},
+				"name": {
+					"type": "string"
+				},
+				"description": {
+					"type": "string"
+				},
+				"status": {
+					"enum": [
+						"available",
+						"changed",
+						"missing"
+					],
+					"type": "string"
+				}
+			},
+			"required": [
+				"id",
+				"name",
+				"description",
+				"status"
+			]
+		},
+		"SessionSkillsState": {
+			"type": "object",
+			"properties": {
+				"sessionId": {
+					"type": "string"
+				},
+				"journalSessionId": {
+					"type": "string"
+				},
+				"revision": {
+					"type": "string"
+				},
+				"selected": {
+					"type": "array",
+					"items": {
+						"$ref": "#/$defs/SessionSkillDescriptor"
+					}
+				},
+				"activeRevision": {
+					"type": "string"
+				},
+				"active": {
+					"type": "array",
+					"items": {
+						"$ref": "#/$defs/SessionSkillDescriptor"
+					}
+				},
+				"pending": {
+					"type": "boolean"
+				},
+				"applying": {
+					"type": "boolean"
+				},
+				"error": {
+					"type": "string"
+				}
+			},
+			"required": [
+				"sessionId",
+				"journalSessionId",
+				"revision",
+				"selected",
+				"activeRevision",
+				"active",
+				"pending",
+				"applying"
+			]
+		},
+		"SessionSkillsCatalogResult": {
+			"type": "object",
+			"properties": {
+				"state": {
+					"$ref": "#/$defs/SessionSkillsState"
+				},
+				"catalog": {
+					"type": "array",
+					"items": {
+						"$ref": "#/$defs/SessionSkillCatalogEntry"
+					}
+				}
+			},
+			"required": [
+				"state",
+				"catalog"
+			]
+		},
 		"TodoItem": {
 			"type": "object",
 			"properties": {
@@ -2661,6 +3374,31 @@
 					],
 					"description": "Current goal mode; null when the session has no goal.",
 					"default": null
+				},
+				"planMode": {
+					"anyOf": [
+						{
+							"$ref": "#/$defs/PlanModeState"
+						},
+						{
+							"type": "null"
+						}
+					],
+					"default": null
+				},
+				"goalMode": {
+					"anyOf": [
+						{
+							"$ref": "#/$defs/GoalModeState"
+						},
+						{
+							"type": "null"
+						}
+					],
+					"default": null
+				},
+				"sessionSkills": {
+					"$ref": "#/$defs/SessionSkillsState"
 				}
 			},
 			"required": [
@@ -2923,11 +3661,16 @@
 				},
 				"text": {
 					"type": "string"
+				},
+				"imageCount": {
+					"type": "integer",
+					"minimum": 0
 				}
 			},
 			"required": [
 				"entryId",
-				"text"
+				"text",
+				"imageCount"
 			]
 		},
 		"BranchResult": {
@@ -2936,12 +3679,19 @@
 				"text": {
 					"type": "string"
 				},
+				"images": {
+					"type": "array",
+					"items": {
+						"$ref": "#/$defs/BranchImageContent"
+					}
+				},
 				"cancelled": {
 					"type": "boolean"
 				}
 			},
 			"required": [
 				"text",
+				"images",
 				"cancelled"
 			]
 		},
@@ -3222,6 +3972,15 @@
 				},
 				"sessionFile": {
 					"type": "string"
+				},
+				"parentSessionId": {
+					"type": "string"
+				},
+				"sessionId": {
+					"type": "string"
+				},
+				"startedAt": {
+					"type": "integer"
 				},
 				"progress": {
 					"type": "object",
@@ -3964,6 +4723,21 @@
 				"type"
 			]
 		},
+		"SessionSkillsUpdatedEvent": {
+			"type": "object",
+			"properties": {
+				"type": {
+					"const": "session_skills_updated"
+				},
+				"sessionSkills": {
+					"$ref": "#/$defs/SessionSkillsState"
+				}
+			},
+			"required": [
+				"type",
+				"sessionSkills"
+			]
+		},
 		"ConfigWarningsChangedEvent": {
 			"type": "object",
 			"properties": {
@@ -4229,6 +5003,9 @@
 					"$ref": "#/$defs/ModelChangedEvent"
 				},
 				{
+					"$ref": "#/$defs/SessionSkillsUpdatedEvent"
+				},
+				{
 					"$ref": "#/$defs/ConfigWarningsChangedEvent"
 				},
 				{
@@ -4346,6 +5123,21 @@
 				},
 				"error": {
 					"$ref": "#/$defs/PromptError"
+				},
+				"removed": {
+					"type": "boolean"
+				},
+				"sessionId": {
+					"type": "string"
+				},
+				"generation": {
+					"type": "string"
+				},
+				"pendingMessageId": {
+					"type": "string"
+				},
+				"clientMessageId": {
+					"type": "string"
 				}
 			},
 			"required": [
@@ -4389,6 +5181,177 @@
 				"extensionPath",
 				"event",
 				"error"
+			]
+		},
+		"PlanReviewEvent": {
+			"type": "object",
+			"properties": {
+				"type": {
+					"const": "plan_review"
+				},
+				"sessionId": {
+					"anyOf": [
+						{
+							"type": "string"
+						},
+						{
+							"type": "null"
+						}
+					]
+				},
+				"planFilePath": {
+					"type": "string"
+				},
+				"finalPlanFilePath": {
+					"type": "string"
+				},
+				"content": {
+					"type": "string"
+				},
+				"title": {
+					"type": "string"
+				}
+			},
+			"required": [
+				"type",
+				"sessionId",
+				"planFilePath",
+				"finalPlanFilePath",
+				"content"
+			]
+		},
+		"BtwStartedEvent": {
+			"type": "object",
+			"properties": {
+				"type": {
+					"const": "btw_update"
+				},
+				"btwId": {
+					"type": "string"
+				},
+				"state": {
+					"const": "started"
+				},
+				"question": {
+					"type": "string"
+				}
+			},
+			"required": [
+				"type",
+				"btwId",
+				"state",
+				"question"
+			]
+		},
+		"BtwStreamingEvent": {
+			"type": "object",
+			"properties": {
+				"type": {
+					"const": "btw_update"
+				},
+				"btwId": {
+					"type": "string"
+				},
+				"state": {
+					"const": "streaming"
+				},
+				"delta": {
+					"type": "string"
+				}
+			},
+			"required": [
+				"type",
+				"btwId",
+				"state",
+				"delta"
+			]
+		},
+		"BtwCompletedEvent": {
+			"type": "object",
+			"properties": {
+				"type": {
+					"const": "btw_update"
+				},
+				"btwId": {
+					"type": "string"
+				},
+				"state": {
+					"const": "completed"
+				},
+				"answer": {
+					"type": "string"
+				},
+				"canPromote": {
+					"type": "boolean"
+				}
+			},
+			"required": [
+				"type",
+				"btwId",
+				"state",
+				"answer",
+				"canPromote"
+			]
+		},
+		"BtwCancelledEvent": {
+			"type": "object",
+			"properties": {
+				"type": {
+					"const": "btw_update"
+				},
+				"btwId": {
+					"type": "string"
+				},
+				"state": {
+					"const": "cancelled"
+				}
+			},
+			"required": [
+				"type",
+				"btwId",
+				"state"
+			]
+		},
+		"BtwErrorEvent": {
+			"type": "object",
+			"properties": {
+				"type": {
+					"const": "btw_update"
+				},
+				"btwId": {
+					"type": "string"
+				},
+				"state": {
+					"const": "error"
+				},
+				"error": {
+					"type": "string"
+				}
+			},
+			"required": [
+				"type",
+				"btwId",
+				"state",
+				"error"
+			]
+		},
+		"BtwUpdateEvent": {
+			"anyOf": [
+				{
+					"$ref": "#/$defs/BtwStartedEvent"
+				},
+				{
+					"$ref": "#/$defs/BtwStreamingEvent"
+				},
+				{
+					"$ref": "#/$defs/BtwCompletedEvent"
+				},
+				{
+					"$ref": "#/$defs/BtwCancelledEvent"
+				},
+				{
+					"$ref": "#/$defs/BtwErrorEvent"
+				}
 			]
 		},
 		"AvailableCommandsUpdateEvent": {
@@ -4444,6 +5407,12 @@
 					"type": "string"
 				},
 				"parentToolCallId": {
+					"type": "string"
+				},
+				"parentSessionId": {
+					"type": "string"
+				},
+				"sessionId": {
 					"type": "string"
 				},
 				"detached": {
@@ -5801,6 +6770,9 @@
 					},
 					"description": "Images attached to the message."
 				},
+				"clientMessageId": {
+					"type": "string"
+				},
 				"streamingBehavior": {
 					"$ref": "#/$defs/StreamingBehavior"
 				}
@@ -5821,6 +6793,9 @@
 						"$ref": "#/$defs/ImageContent"
 					},
 					"description": "Images attached to the message."
+				},
+				"clientMessageId": {
+					"type": "string"
 				}
 			},
 			"required": [
@@ -5839,6 +6814,9 @@
 						"$ref": "#/$defs/ImageContent"
 					},
 					"description": "Images attached to the message."
+				},
+				"clientMessageId": {
+					"type": "string"
 				}
 			},
 			"required": [
@@ -5912,6 +6890,225 @@
 			},
 			"required": [
 				"sessionDir"
+			]
+		},
+		"BtwStartParams": {
+			"type": "object",
+			"properties": {
+				"btwId": {
+					"type": "string"
+				},
+				"question": {
+					"type": "string"
+				}
+			},
+			"required": [
+				"btwId",
+				"question"
+			]
+		},
+		"BtwStartResult": {
+			"type": "object",
+			"properties": {
+				"btwId": {
+					"type": "string"
+				}
+			},
+			"required": [
+				"btwId"
+			]
+		},
+		"BtwCancelParams": {
+			"type": "object",
+			"properties": {
+				"btwId": {
+					"type": "string"
+				}
+			},
+			"required": [
+				"btwId"
+			]
+		},
+		"BtwCancelResult": {
+			"type": "object",
+			"properties": {
+				"btwId": {
+					"type": "string"
+				}
+			},
+			"required": [
+				"btwId"
+			]
+		},
+		"BtwReleaseParams": {
+			"type": "object",
+			"properties": {
+				"btwId": {
+					"type": "string"
+				}
+			},
+			"required": [
+				"btwId"
+			]
+		},
+		"BtwReleaseResult": {
+			"type": "object",
+			"properties": {
+				"btwId": {
+					"type": "string"
+				}
+			},
+			"required": [
+				"btwId"
+			]
+		},
+		"BtwPromoteParams": {
+			"type": "object",
+			"properties": {
+				"btwId": {
+					"type": "string"
+				}
+			},
+			"required": [
+				"btwId"
+			]
+		},
+		"BtwPromoteResult": {
+			"type": "object",
+			"properties": {
+				"btwId": {
+					"type": "string"
+				},
+				"sessionId": {
+					"type": "string"
+				},
+				"sessionFile": {
+					"type": "string"
+				}
+			},
+			"required": [
+				"btwId",
+				"sessionId",
+				"sessionFile"
+			]
+		},
+		"GetActivityParams": {
+			"type": "object",
+			"properties": {
+				"sessionId": {
+					"type": "string"
+				}
+			},
+			"required": [
+				"sessionId"
+			]
+		},
+		"GetActivityDetailParams": {
+			"type": "object",
+			"properties": {
+				"sessionId": {
+					"type": "string"
+				},
+				"generation": {
+					"type": "string"
+				},
+				"kind": {
+					"$ref": "#/$defs/ActivityKind"
+				},
+				"activityId": {
+					"type": "string"
+				}
+			},
+			"required": [
+				"sessionId",
+				"generation",
+				"kind",
+				"activityId"
+			]
+		},
+		"GetPendingMessagesParams": {
+			"type": "object",
+			"properties": {
+				"sessionId": {
+					"type": "string"
+				}
+			},
+			"required": [
+				"sessionId"
+			]
+		},
+		"RemovePendingMessagesParams": {
+			"type": "object",
+			"properties": {
+				"sessionId": {
+					"type": "string"
+				},
+				"generation": {
+					"type": "string"
+				},
+				"ids": {
+					"type": "array",
+					"items": {
+						"type": "string"
+					}
+				}
+			},
+			"required": [
+				"sessionId",
+				"generation",
+				"ids"
+			]
+		},
+		"GetSessionRecapParams": {
+			"type": "object",
+			"properties": {
+				"sessionId": {
+					"type": "string"
+				}
+			},
+			"required": [
+				"sessionId"
+			]
+		},
+		"GetSessionSkillsParams": {
+			"type": "object",
+			"properties": {
+				"sessionId": {
+					"type": "string"
+				},
+				"journalSessionId": {
+					"type": "string"
+				}
+			},
+			"required": [
+				"sessionId",
+				"journalSessionId"
+			]
+		},
+		"SetSessionSkillsParams": {
+			"type": "object",
+			"properties": {
+				"sessionId": {
+					"type": "string"
+				},
+				"journalSessionId": {
+					"type": "string"
+				},
+				"expectedRevision": {
+					"type": "string"
+				},
+				"skillIds": {
+					"type": "array",
+					"items": {
+						"type": "string"
+					}
+				}
+			},
+			"required": [
+				"sessionId",
+				"journalSessionId",
+				"expectedRevision",
+				"skillIds"
 			]
 		},
 		"SetFastModeParams": {
@@ -6034,6 +7231,138 @@
 			},
 			"required": [
 				"todoPhases"
+			]
+		},
+		"SetPlanModeParams": {
+			"type": "object",
+			"properties": {
+				"enabled": {
+					"type": "boolean"
+				},
+				"planFilePath": {
+					"type": "string"
+				},
+				"workflow": {
+					"enum": [
+						"parallel",
+						"iterative"
+					],
+					"type": "string"
+				}
+			},
+			"required": [
+				"enabled"
+			]
+		},
+		"SetPlanModeResult": {
+			"type": "object",
+			"properties": {
+				"planMode": {
+					"anyOf": [
+						{
+							"$ref": "#/$defs/PlanModeState"
+						},
+						{
+							"type": "null"
+						}
+					]
+				}
+			},
+			"required": [
+				"planMode"
+			]
+		},
+		"ApprovePlanModeParams": {
+			"type": "object",
+			"properties": {
+				"finalPlanFilePath": {
+					"type": "string"
+				},
+				"planFilePath": {
+					"type": "string"
+				},
+				"preserveContext": {
+					"type": "boolean"
+				},
+				"compactBeforeExecute": {
+					"type": "boolean"
+				}
+			},
+			"required": [
+				"finalPlanFilePath"
+			]
+		},
+		"ApprovePlanModeResult": {
+			"type": "object",
+			"properties": {
+				"finalPlanFilePath": {
+					"type": "string"
+				},
+				"contextPreserved": {
+					"type": "boolean"
+				},
+				"executionDispatched": {
+					"type": "boolean"
+				},
+				"compactionOutcome": {
+					"enum": [
+						"ok",
+						"cancelled",
+						"failed"
+					],
+					"type": "string"
+				}
+			},
+			"required": [
+				"finalPlanFilePath",
+				"contextPreserved",
+				"executionDispatched"
+			]
+		},
+		"GoalModeResult": {
+			"type": "object",
+			"properties": {
+				"goalMode": {
+					"anyOf": [
+						{
+							"$ref": "#/$defs/GoalModeState"
+						},
+						{
+							"type": "null"
+						}
+					]
+				}
+			},
+			"required": [
+				"goalMode"
+			]
+		},
+		"SetActiveToolsParams": {
+			"type": "object",
+			"properties": {
+				"toolNames": {
+					"type": "array",
+					"items": {
+						"type": "string"
+					}
+				}
+			},
+			"required": [
+				"toolNames"
+			]
+		},
+		"SetActiveToolsResult": {
+			"type": "object",
+			"properties": {
+				"toolNames": {
+					"type": "array",
+					"items": {
+						"type": "string"
+					}
+				}
+			},
+			"required": [
+				"toolNames"
 			]
 		},
 		"SetHostToolsParams": {

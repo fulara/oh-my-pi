@@ -332,6 +332,75 @@ impl<'de> Deserialize<'de> for ImageContent {
 	}
 }
 
+/// Inline image; also the shape hosts send with prompts.
+///
+/// Open record: declared fields are decoded leniently (a value that does not fit stays
+/// in `extra`) and every other key is kept in `extra`.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct BranchImageContent {
+	pub r#type: Option<LitImage>,
+	/// Base64-encoded image bytes.
+	pub data: Option<String>,
+	pub mime_type: Option<String>,
+	pub detail: Option<BranchImageContentDetail>,
+	pub url: Option<String>,
+	pub provider_file: Option<Map<String, Value>>,
+	/// Every key not decoded into a declared field.
+	pub extra: Map<String, Value>,
+}
+
+impl Serialize for BranchImageContent {
+	fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+		let mut map = serializer.serialize_map(None)?;
+		if let Some(value) = &self.r#type {
+			map.serialize_entry("type", value)?;
+		}
+		if let Some(value) = &self.data {
+			map.serialize_entry("data", value)?;
+		}
+		if let Some(value) = &self.mime_type {
+			map.serialize_entry("mimeType", value)?;
+		}
+		if let Some(value) = &self.detail {
+			map.serialize_entry("detail", value)?;
+		}
+		if let Some(value) = &self.url {
+			map.serialize_entry("url", value)?;
+		}
+		if let Some(value) = &self.provider_file {
+			map.serialize_entry("providerFile", value)?;
+		}
+		for (key, value) in &self.extra {
+			match key.as_str() {
+				"type" if self.r#type.is_some() => continue,
+				"data" if self.data.is_some() => continue,
+				"mimeType" if self.mime_type.is_some() => continue,
+				"detail" if self.detail.is_some() => continue,
+				"url" if self.url.is_some() => continue,
+				"providerFile" if self.provider_file.is_some() => continue,
+				_ => {}
+			}
+			map.serialize_entry(key, value)?;
+		}
+		map.end()
+	}
+}
+
+impl<'de> Deserialize<'de> for BranchImageContent {
+	fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+		let mut extra = Map::<String, Value>::deserialize(deserializer)?;
+		Ok(Self {
+			r#type: take(&mut extra, "type"),
+			data: take(&mut extra, "data"),
+			mime_type: take(&mut extra, "mimeType"),
+			detail: take(&mut extra, "detail"),
+			url: take(&mut extra, "url"),
+			provider_file: take(&mut extra, "providerFile"),
+			extra,
+		})
+	}
+}
+
 ///
 /// Open record: declared fields are decoded leniently (a value that does not fit stays
 /// in `extra`) and every other key is kept in `extra`.
@@ -2874,6 +2943,251 @@ impl SubagentStatus {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PlanModeState {
+	pub enabled: bool,
+	#[serde(rename = "planFilePath")]
+	pub plan_file_path: String,
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub workflow: Option<PlanModeStateWorkflow>,
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub reentry: Option<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GoalModeParams {
+	pub op: GoalModeParamsOp,
+	/// Required for create; omitted for lifecycle mutations.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub objective: Option<String>,
+	#[serde(rename = "tokenBudget", default, skip_serializing_if = "Option::is_none")]
+	pub token_budget: Option<i64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ActivityKind {
+	#[serde(rename = "job")]
+	Job,
+	#[serde(rename = "agent")]
+	Agent,
+	#[serde(rename = "service")]
+	Service,
+}
+
+impl ActivityKind {
+	/// Wire value.
+	pub fn as_str(self) -> &'static str {
+		match self {
+			Self::Job => "job",
+			Self::Agent => "agent",
+			Self::Service => "service",
+		}
+	}
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ActivityStatus {
+	#[serde(rename = "pending")]
+	Pending,
+	#[serde(rename = "running")]
+	Running,
+	#[serde(rename = "completed")]
+	Completed,
+	#[serde(rename = "failed")]
+	Failed,
+	#[serde(rename = "cancelled")]
+	Cancelled,
+	#[serde(rename = "starting")]
+	Starting,
+	#[serde(rename = "ready")]
+	Ready,
+	#[serde(rename = "restarting")]
+	Restarting,
+	#[serde(rename = "stopping")]
+	Stopping,
+	#[serde(rename = "exited")]
+	Exited,
+	#[serde(rename = "aborted")]
+	Aborted,
+}
+
+impl ActivityStatus {
+	/// Wire value.
+	pub fn as_str(self) -> &'static str {
+		match self {
+			Self::Pending => "pending",
+			Self::Running => "running",
+			Self::Completed => "completed",
+			Self::Failed => "failed",
+			Self::Cancelled => "cancelled",
+			Self::Starting => "starting",
+			Self::Ready => "ready",
+			Self::Restarting => "restarting",
+			Self::Stopping => "stopping",
+			Self::Exited => "exited",
+			Self::Aborted => "aborted",
+		}
+	}
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ActivityItem {
+	pub id: String,
+	pub kind: ActivityKind,
+	pub label: String,
+	pub status: ActivityStatus,
+	#[serde(rename = "startedAt")]
+	pub started_at: f64,
+	#[serde(rename = "detailAvailable")]
+	pub detail_available: bool,
+	#[serde(rename = "endedAt", default, skip_serializing_if = "Option::is_none")]
+	pub ended_at: Option<f64>,
+	#[serde(rename = "toolCallId", default, skip_serializing_if = "Option::is_none")]
+	pub tool_call_id: Option<String>,
+	#[serde(rename = "exitCode", default, skip_serializing_if = "Option::is_none")]
+	pub exit_code: Option<i64>,
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub queued: Option<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ActivitySourceState {
+	pub available: bool,
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ActivitySources {
+	pub jobs: ActivitySourceState,
+	pub agents: ActivitySourceState,
+	pub services: ActivitySourceState,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SessionActivitySnapshot {
+	#[serde(rename = "sessionId")]
+	pub session_id: String,
+	pub generation: String,
+	#[serde(rename = "observedAt")]
+	pub observed_at: f64,
+	pub items: Vec<ActivityItem>,
+	pub sources: ActivitySources,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SessionActivityDetail {
+	#[serde(rename = "sessionId")]
+	pub session_id: String,
+	pub generation: String,
+	pub kind: ActivityKind,
+	#[serde(rename = "activityId")]
+	pub activity_id: String,
+	pub text: String,
+	pub truncated: bool,
+	#[serde(rename = "observedAt")]
+	pub observed_at: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PendingMessage {
+	pub id: String,
+	pub queue: QueuedMessageQueue,
+	pub state: PendingMessageState,
+	pub removable: bool,
+	pub text: String,
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub images: Option<Vec<ImageContent>>,
+	#[serde(rename = "clientMessageId", default, skip_serializing_if = "Option::is_none")]
+	pub client_message_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PendingMessagesSnapshot {
+	#[serde(rename = "sessionId")]
+	pub session_id: String,
+	pub generation: String,
+	pub items: Vec<PendingMessage>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PendingMessageRemovalResult {
+	pub id: String,
+	pub outcome: PendingMessageRemovalResultOutcome,
+	#[serde(rename = "clientMessageId", default, skip_serializing_if = "Option::is_none")]
+	pub client_message_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PendingMessagesRemoval {
+	pub snapshot: PendingMessagesSnapshot,
+	pub results: Vec<PendingMessageRemovalResult>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SessionRecap {
+	pub id: i64,
+	pub text: String,
+	#[serde(rename = "createdAt")]
+	pub created_at: f64,
+	#[serde(rename = "sourceLeafId", deserialize_with = "Deserialize::deserialize")]
+	pub source_leaf_id: Option<String>,
+	#[serde(deserialize_with = "Deserialize::deserialize")]
+	pub stale: Option<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SessionRecapSnapshot {
+	#[serde(rename = "sessionId")]
+	pub session_id: String,
+	pub enabled: bool,
+	#[serde(rename = "idleSeconds")]
+	pub idle_seconds: f64,
+	pub generating: bool,
+	#[serde(deserialize_with = "Deserialize::deserialize")]
+	pub recap: Option<SessionRecap>,
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SessionSkillDescriptor {
+	pub id: String,
+	pub name: String,
+	pub hash: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SessionSkillCatalogEntry {
+	pub id: String,
+	pub name: String,
+	pub description: String,
+	pub status: SessionSkillCatalogEntryStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SessionSkillsState {
+	#[serde(rename = "sessionId")]
+	pub session_id: String,
+	#[serde(rename = "journalSessionId")]
+	pub journal_session_id: String,
+	pub revision: String,
+	pub selected: Vec<SessionSkillDescriptor>,
+	#[serde(rename = "activeRevision")]
+	pub active_revision: String,
+	pub active: Vec<SessionSkillDescriptor>,
+	pub pending: bool,
+	pub applying: bool,
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SessionSkillsCatalogResult {
+	pub state: SessionSkillsState,
+	pub catalog: Vec<SessionSkillCatalogEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TodoItem {
 	pub content: String,
 	pub status: TodoStatus,
@@ -3100,6 +3414,12 @@ pub struct SessionState {
 	/// Current goal mode; null when the session has no goal.
 	#[serde(default = "default_session_state_goal")]
 	pub goal: Option<GoalModeState>,
+	#[serde(rename = "planMode", default = "default_session_state_plan_mode")]
+	pub plan_mode: Option<PlanModeState>,
+	#[serde(rename = "goalMode", default = "default_session_state_goal_mode")]
+	pub goal_mode: Option<GoalModeState>,
+	#[serde(rename = "sessionSkills", default, skip_serializing_if = "Option::is_none")]
+	pub session_skills: Option<SessionSkillsState>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -3225,11 +3545,14 @@ pub struct BranchMessage {
 	#[serde(rename = "entryId")]
 	pub entry_id: String,
 	pub text: String,
+	#[serde(rename = "imageCount")]
+	pub image_count: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BranchResult {
 	pub text: String,
+	pub images: Vec<BranchImageContent>,
 	pub cancelled: bool,
 }
 
@@ -3356,6 +3679,12 @@ pub struct SubagentSnapshot {
 	pub assignment: Option<String>,
 	#[serde(rename = "sessionFile", default, skip_serializing_if = "Option::is_none")]
 	pub session_file: Option<String>,
+	#[serde(rename = "parentSessionId", default, skip_serializing_if = "Option::is_none")]
+	pub parent_session_id: Option<String>,
+	#[serde(rename = "sessionId", default, skip_serializing_if = "Option::is_none")]
+	pub session_id: Option<String>,
+	#[serde(rename = "startedAt", default, skip_serializing_if = "Option::is_none")]
+	pub started_at: Option<i64>,
 	/// Raw `AgentProgress` record.
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub progress: Option<Map<String, Value>>,
@@ -3781,6 +4110,12 @@ pub struct RetryFallbackSucceededEvent {
 pub struct ModelChangedEvent {}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SessionSkillsUpdatedEvent {
+	#[serde(rename = "sessionSkills")]
+	pub session_skills: SessionSkillsState,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ConfigWarningsChangedEvent {}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -3873,6 +4208,7 @@ pub enum RpcAgentEvent {
 	RetryFallbackApplied(RetryFallbackAppliedEvent),
 	RetryFallbackSucceeded(RetryFallbackSucceededEvent),
 	ModelChanged(ModelChangedEvent),
+	SessionSkillsUpdated(SessionSkillsUpdatedEvent),
 	ConfigWarningsChanged(ConfigWarningsChangedEvent),
 	AdvisorCostChanged(AdvisorCostChangedEvent),
 	AdvisorYielded(AdvisorYieldedEvent),
@@ -3913,6 +4249,7 @@ impl RpcAgentEvent {
 			Some("retry_fallback_applied") => |value| serde_json::from_value(value).map(Self::RetryFallbackApplied),
 			Some("retry_fallback_succeeded") => |value| serde_json::from_value(value).map(Self::RetryFallbackSucceeded),
 			Some("model_changed") => |value| serde_json::from_value(value).map(Self::ModelChanged),
+			Some("session_skills_updated") => |value| serde_json::from_value(value).map(Self::SessionSkillsUpdated),
 			Some("config_warnings_changed") => |value| serde_json::from_value(value).map(Self::ConfigWarningsChanged),
 			Some("advisor_cost_changed") => |value| serde_json::from_value(value).map(Self::AdvisorCostChanged),
 			Some("advisor_yielded") => |value| serde_json::from_value(value).map(Self::AdvisorYielded),
@@ -3955,6 +4292,7 @@ impl Serialize for RpcAgentEvent {
 			Self::RetryFallbackApplied(member) => serialize_tagged(member, &[("type", "retry_fallback_applied")], serializer),
 			Self::RetryFallbackSucceeded(member) => serialize_tagged(member, &[("type", "retry_fallback_succeeded")], serializer),
 			Self::ModelChanged(member) => serialize_tagged(member, &[("type", "model_changed")], serializer),
+			Self::SessionSkillsUpdated(member) => serialize_tagged(member, &[("type", "session_skills_updated")], serializer),
 			Self::ConfigWarningsChanged(member) => serialize_tagged(member, &[("type", "config_warnings_changed")], serializer),
 			Self::AdvisorCostChanged(member) => serialize_tagged(member, &[("type", "advisor_cost_changed")], serializer),
 			Self::AdvisorYielded(member) => serialize_tagged(member, &[("type", "advisor_yielded")], serializer),
@@ -4037,6 +4375,16 @@ pub struct PromptResultEvent {
 	pub id: Option<String>,
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub error: Option<PromptError>,
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub removed: Option<bool>,
+	#[serde(rename = "sessionId", default, skip_serializing_if = "Option::is_none")]
+	pub session_id: Option<String>,
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub generation: Option<String>,
+	#[serde(rename = "pendingMessageId", default, skip_serializing_if = "Option::is_none")]
+	pub pending_message_id: Option<String>,
+	#[serde(rename = "clientMessageId", default, skip_serializing_if = "Option::is_none")]
+	pub client_message_id: Option<String>,
 }
 
 /// The session went quiet: the last run yielded and no background work can wake it.
@@ -4049,6 +4397,99 @@ pub struct ExtensionError {
 	pub extension_path: String,
 	pub event: String,
 	pub error: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PlanReviewEvent {
+	#[serde(rename = "sessionId", deserialize_with = "Deserialize::deserialize")]
+	pub session_id: Option<String>,
+	#[serde(rename = "planFilePath")]
+	pub plan_file_path: String,
+	#[serde(rename = "finalPlanFilePath")]
+	pub final_plan_file_path: String,
+	pub content: String,
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub title: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BtwStartedEvent {
+	#[serde(rename = "btwId")]
+	pub btw_id: String,
+	pub question: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BtwStreamingEvent {
+	#[serde(rename = "btwId")]
+	pub btw_id: String,
+	pub delta: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BtwCompletedEvent {
+	#[serde(rename = "btwId")]
+	pub btw_id: String,
+	pub answer: String,
+	#[serde(rename = "canPromote")]
+	pub can_promote: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BtwCancelledEvent {
+	#[serde(rename = "btwId")]
+	pub btw_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BtwErrorEvent {
+	#[serde(rename = "btwId")]
+	pub btw_id: String,
+	pub error: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum BtwUpdateEvent {
+	Started(BtwStartedEvent),
+	Streaming(BtwStreamingEvent),
+	Completed(BtwCompletedEvent),
+	Cancelled(BtwCancelledEvent),
+	Error(BtwErrorEvent),
+}
+
+impl BtwUpdateEvent {
+	/// Decodes from JSON, dispatching on `state`.
+	pub fn from_value(value: Value) -> Result<Self, serde_json::Error> {
+		let decode: fn(Value) -> Result<Self, serde_json::Error> = match value.get("state").and_then(Value::as_str) {
+			Some("started") => |value| serde_json::from_value(value).map(Self::Started),
+			Some("streaming") => |value| serde_json::from_value(value).map(Self::Streaming),
+			Some("completed") => |value| serde_json::from_value(value).map(Self::Completed),
+			Some("cancelled") => |value| serde_json::from_value(value).map(Self::Cancelled),
+			Some("error") => |value| serde_json::from_value(value).map(Self::Error),
+			other => {
+				return Err(serde_json::Error::custom(format!("unknown BtwUpdateEvent state {other:?}")));
+			}
+		};
+		decode(value)
+	}
+}
+
+impl Serialize for BtwUpdateEvent {
+	fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+		match self {
+			Self::Started(member) => serialize_tagged(member, &[("type", "btw_update"), ("state", "started")], serializer),
+			Self::Streaming(member) => serialize_tagged(member, &[("type", "btw_update"), ("state", "streaming")], serializer),
+			Self::Completed(member) => serialize_tagged(member, &[("type", "btw_update"), ("state", "completed")], serializer),
+			Self::Cancelled(member) => serialize_tagged(member, &[("type", "btw_update"), ("state", "cancelled")], serializer),
+			Self::Error(member) => serialize_tagged(member, &[("type", "btw_update"), ("state", "error")], serializer),
+		}
+	}
+}
+
+impl<'de> Deserialize<'de> for BtwUpdateEvent {
+	fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+		Self::from_value(Value::deserialize(deserializer)?).map_err(D::Error::custom)
+	}
 }
 
 /// Slash-command catalog, pushed at startup and whenever command metadata changes.
@@ -4095,6 +4536,10 @@ pub struct SubagentLifecyclePayload {
 	pub session_file: Option<String>,
 	#[serde(rename = "parentToolCallId", default, skip_serializing_if = "Option::is_none")]
 	pub parent_tool_call_id: Option<String>,
+	#[serde(rename = "parentSessionId", default, skip_serializing_if = "Option::is_none")]
+	pub parent_session_id: Option<String>,
+	#[serde(rename = "sessionId", default, skip_serializing_if = "Option::is_none")]
+	pub session_id: Option<String>,
 	/// The subagent runs as a detached background job.
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub detached: Option<bool>,
@@ -4931,7 +5376,7 @@ impl RpcNotification {
 			Some("session_info_update") => |value| serde_json::from_value(value).map(Self::SessionInfoUpdate),
 			Some("config_update") => |value| serde_json::from_value(value).map(Self::ConfigUpdate),
 			Some("rpc_frame_error") => |value| serde_json::from_value(value).map(Self::RpcFrameError),
-			Some("agent_start" | "agent_end" | "turn_start" | "turn_end" | "message_start" | "message_update" | "message_end" | "tool_execution_start" | "tool_execution_update" | "tool_stream_update" | "tool_execution_end" | "auto_compaction_start" | "auto_compaction_end" | "auto_retry_start" | "auto_retry_end" | "cache_warming_start" | "cache_warming_end" | "retry_fallback_applied" | "retry_fallback_succeeded" | "model_changed" | "config_warnings_changed" | "advisor_cost_changed" | "advisor_yielded" | "ttsr_triggered" | "todo_reminder" | "todo_auto_clear" | "irc_message" | "notice" | "thinking_level_changed" | "goal_updated" | "queue_update") => |value| serde_json::from_value(value).map(Self::RpcAgentEvent),
+			Some("agent_start" | "agent_end" | "turn_start" | "turn_end" | "message_start" | "message_update" | "message_end" | "tool_execution_start" | "tool_execution_update" | "tool_stream_update" | "tool_execution_end" | "auto_compaction_start" | "auto_compaction_end" | "auto_retry_start" | "auto_retry_end" | "cache_warming_start" | "cache_warming_end" | "retry_fallback_applied" | "retry_fallback_succeeded" | "model_changed" | "session_skills_updated" | "config_warnings_changed" | "advisor_cost_changed" | "advisor_yielded" | "ttsr_triggered" | "todo_reminder" | "todo_auto_clear" | "irc_message" | "notice" | "thinking_level_changed" | "goal_updated" | "queue_update") => |value| serde_json::from_value(value).map(Self::RpcAgentEvent),
 			_ => |value| Ok(Self::Unknown(value)),
 		};
 		decode(value)
@@ -5033,6 +5478,8 @@ pub struct PromptParams {
 	/// Images attached to the message.
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub images: Option<Vec<ImageContent>>,
+	#[serde(rename = "clientMessageId", default, skip_serializing_if = "Option::is_none")]
+	pub client_message_id: Option<String>,
 	#[serde(rename = "streamingBehavior", default, skip_serializing_if = "Option::is_none")]
 	pub streaming_behavior: Option<StreamingBehavior>,
 }
@@ -5043,6 +5490,8 @@ pub struct SteerParams {
 	/// Images attached to the message.
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub images: Option<Vec<ImageContent>>,
+	#[serde(rename = "clientMessageId", default, skip_serializing_if = "Option::is_none")]
+	pub client_message_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -5051,6 +5500,8 @@ pub struct FollowUpParams {
 	/// Images attached to the message.
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub images: Option<Vec<ImageContent>>,
+	#[serde(rename = "clientMessageId", default, skip_serializing_if = "Option::is_none")]
+	pub client_message_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -5086,6 +5537,115 @@ pub struct OpenSessionParams {
 	pub provider: Option<String>,
 	#[serde(rename = "modelId", default, skip_serializing_if = "Option::is_none")]
 	pub model_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BtwStartParams {
+	#[serde(rename = "btwId")]
+	pub btw_id: String,
+	pub question: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BtwStartResult {
+	#[serde(rename = "btwId")]
+	pub btw_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BtwCancelParams {
+	#[serde(rename = "btwId")]
+	pub btw_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BtwCancelResult {
+	#[serde(rename = "btwId")]
+	pub btw_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BtwReleaseParams {
+	#[serde(rename = "btwId")]
+	pub btw_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BtwReleaseResult {
+	#[serde(rename = "btwId")]
+	pub btw_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BtwPromoteParams {
+	#[serde(rename = "btwId")]
+	pub btw_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BtwPromoteResult {
+	#[serde(rename = "btwId")]
+	pub btw_id: String,
+	#[serde(rename = "sessionId")]
+	pub session_id: String,
+	#[serde(rename = "sessionFile")]
+	pub session_file: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GetActivityParams {
+	#[serde(rename = "sessionId")]
+	pub session_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GetActivityDetailParams {
+	#[serde(rename = "sessionId")]
+	pub session_id: String,
+	pub generation: String,
+	pub kind: ActivityKind,
+	#[serde(rename = "activityId")]
+	pub activity_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GetPendingMessagesParams {
+	#[serde(rename = "sessionId")]
+	pub session_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RemovePendingMessagesParams {
+	#[serde(rename = "sessionId")]
+	pub session_id: String,
+	pub generation: String,
+	pub ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GetSessionRecapParams {
+	#[serde(rename = "sessionId")]
+	pub session_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GetSessionSkillsParams {
+	#[serde(rename = "sessionId")]
+	pub session_id: String,
+	#[serde(rename = "journalSessionId")]
+	pub journal_session_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SetSessionSkillsParams {
+	#[serde(rename = "sessionId")]
+	pub session_id: String,
+	#[serde(rename = "journalSessionId")]
+	pub journal_session_id: String,
+	#[serde(rename = "expectedRevision")]
+	pub expected_revision: String,
+	#[serde(rename = "skillIds")]
+	pub skill_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -5142,6 +5702,63 @@ pub struct SetTodosParams {
 pub struct SetTodosResult {
 	#[serde(rename = "todoPhases")]
 	pub todo_phases: Vec<TodoPhase>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SetPlanModeParams {
+	pub enabled: bool,
+	#[serde(rename = "planFilePath", default, skip_serializing_if = "Option::is_none")]
+	pub plan_file_path: Option<String>,
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub workflow: Option<SetPlanModeParamsWorkflow>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SetPlanModeResult {
+	#[serde(rename = "planMode", deserialize_with = "Deserialize::deserialize")]
+	pub plan_mode: Option<PlanModeState>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ApprovePlanModeParams {
+	#[serde(rename = "finalPlanFilePath")]
+	pub final_plan_file_path: String,
+	#[serde(rename = "planFilePath", default, skip_serializing_if = "Option::is_none")]
+	pub plan_file_path: Option<String>,
+	#[serde(rename = "preserveContext", default, skip_serializing_if = "Option::is_none")]
+	pub preserve_context: Option<bool>,
+	#[serde(rename = "compactBeforeExecute", default, skip_serializing_if = "Option::is_none")]
+	pub compact_before_execute: Option<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ApprovePlanModeResult {
+	#[serde(rename = "finalPlanFilePath")]
+	pub final_plan_file_path: String,
+	#[serde(rename = "contextPreserved")]
+	pub context_preserved: bool,
+	#[serde(rename = "executionDispatched")]
+	pub execution_dispatched: bool,
+	#[serde(rename = "compactionOutcome", default, skip_serializing_if = "Option::is_none")]
+	pub compaction_outcome: Option<ApprovePlanModeResultCompactionOutcome>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GoalModeResult {
+	#[serde(rename = "goalMode", deserialize_with = "Deserialize::deserialize")]
+	pub goal_mode: Option<GoalModeState>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SetActiveToolsParams {
+	#[serde(rename = "toolNames")]
+	pub tool_names: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SetActiveToolsResult {
+	#[serde(rename = "toolNames")]
+	pub tool_names: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -5519,6 +6136,30 @@ impl ImageContentDetail {
 	}
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum BranchImageContentDetail {
+	#[serde(rename = "auto")]
+	Auto,
+	#[serde(rename = "low")]
+	Low,
+	#[serde(rename = "high")]
+	High,
+	#[serde(rename = "original")]
+	Original,
+}
+
+impl BranchImageContentDetail {
+	/// Wire value.
+	pub fn as_str(self) -> &'static str {
+		match self {
+			Self::Auto => "auto",
+			Self::Low => "low",
+			Self::High => "high",
+			Self::Original => "original",
+		}
+	}
+}
+
 /// The constant `"toolCall"`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct LitToolCall;
@@ -5661,6 +6302,111 @@ impl AssistantErrorEventReason {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum PlanModeStateWorkflow {
+	#[serde(rename = "parallel")]
+	Parallel,
+	#[serde(rename = "iterative")]
+	Iterative,
+}
+
+impl PlanModeStateWorkflow {
+	/// Wire value.
+	pub fn as_str(self) -> &'static str {
+		match self {
+			Self::Parallel => "parallel",
+			Self::Iterative => "iterative",
+		}
+	}
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum GoalModeParamsOp {
+	#[serde(rename = "create")]
+	Create,
+	#[serde(rename = "pause")]
+	Pause,
+	#[serde(rename = "resume")]
+	Resume,
+	#[serde(rename = "drop")]
+	Drop,
+	#[serde(rename = "set_budget")]
+	SetBudget,
+}
+
+impl GoalModeParamsOp {
+	/// Wire value.
+	pub fn as_str(self) -> &'static str {
+		match self {
+			Self::Create => "create",
+			Self::Pause => "pause",
+			Self::Resume => "resume",
+			Self::Drop => "drop",
+			Self::SetBudget => "set_budget",
+		}
+	}
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum PendingMessageState {
+	#[serde(rename = "queued")]
+	Queued,
+	#[serde(rename = "claimed")]
+	Claimed,
+}
+
+impl PendingMessageState {
+	/// Wire value.
+	pub fn as_str(self) -> &'static str {
+		match self {
+			Self::Queued => "queued",
+			Self::Claimed => "claimed",
+		}
+	}
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum PendingMessageRemovalResultOutcome {
+	#[serde(rename = "removed")]
+	Removed,
+	#[serde(rename = "tooLate")]
+	TooLate,
+	#[serde(rename = "notFound")]
+	NotFound,
+}
+
+impl PendingMessageRemovalResultOutcome {
+	/// Wire value.
+	pub fn as_str(self) -> &'static str {
+		match self {
+			Self::Removed => "removed",
+			Self::TooLate => "tooLate",
+			Self::NotFound => "notFound",
+		}
+	}
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum SessionSkillCatalogEntryStatus {
+	#[serde(rename = "available")]
+	Available,
+	#[serde(rename = "changed")]
+	Changed,
+	#[serde(rename = "missing")]
+	Missing,
+}
+
+impl SessionSkillCatalogEntryStatus {
+	/// Wire value.
+	pub fn as_str(self) -> &'static str {
+		match self {
+			Self::Available => "available",
+			Self::Changed => "changed",
+			Self::Missing => "missing",
+		}
+	}
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum GoalModeStateMode {
 	#[serde(rename = "active")]
 	Active,
@@ -5759,6 +6505,45 @@ impl HostUriResultContentType {
 	}
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum SetPlanModeParamsWorkflow {
+	#[serde(rename = "parallel")]
+	Parallel,
+	#[serde(rename = "iterative")]
+	Iterative,
+}
+
+impl SetPlanModeParamsWorkflow {
+	/// Wire value.
+	pub fn as_str(self) -> &'static str {
+		match self {
+			Self::Parallel => "parallel",
+			Self::Iterative => "iterative",
+		}
+	}
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ApprovePlanModeResultCompactionOutcome {
+	#[serde(rename = "ok")]
+	Ok,
+	#[serde(rename = "cancelled")]
+	Cancelled,
+	#[serde(rename = "failed")]
+	Failed,
+}
+
+impl ApprovePlanModeResultCompactionOutcome {
+	/// Wire value.
+	pub fn as_str(self) -> &'static str {
+		match self {
+			Self::Ok => "ok",
+			Self::Cancelled => "cancelled",
+			Self::Failed => "failed",
+		}
+	}
+}
+
 fn default_session_state_is_streaming() -> bool {
 	serde_json::from_str("false").expect("valid wire default")
 }
@@ -5839,6 +6624,14 @@ fn default_session_state_goal() -> Option<GoalModeState> {
 	serde_json::from_str("null").expect("valid wire default")
 }
 
+fn default_session_state_plan_mode() -> Option<PlanModeState> {
+	serde_json::from_str("null").expect("valid wire default")
+}
+
+fn default_session_state_goal_mode() -> Option<GoalModeState> {
+	serde_json::from_str("null").expect("valid wire default")
+}
+
 fn default_token_usage_reasoning() -> i64 {
 	serde_json::from_str("0").expect("valid wire default")
 }
@@ -5878,6 +6671,8 @@ pub struct PromptCommand {
 	/// Images attached to the message.
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub images: Option<Vec<ImageContent>>,
+	#[serde(rename = "clientMessageId", default, skip_serializing_if = "Option::is_none")]
+	pub client_message_id: Option<String>,
 	#[serde(rename = "streamingBehavior", default, skip_serializing_if = "Option::is_none")]
 	pub streaming_behavior: Option<StreamingBehavior>,
 }
@@ -5899,6 +6694,8 @@ pub struct SteerCommand {
 	/// Images attached to the message.
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub images: Option<Vec<ImageContent>>,
+	#[serde(rename = "clientMessageId", default, skip_serializing_if = "Option::is_none")]
+	pub client_message_id: Option<String>,
 }
 
 impl Command for SteerCommand {
@@ -5919,6 +6716,8 @@ pub struct FollowUpCommand {
 	/// Images attached to the message.
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub images: Option<Vec<ImageContent>>,
+	#[serde(rename = "clientMessageId", default, skip_serializing_if = "Option::is_none")]
+	pub client_message_id: Option<String>,
 }
 
 impl Command for FollowUpCommand {
@@ -6052,6 +6851,208 @@ impl Command for OpenSessionCommand {
 
 	fn decode(data: Option<Value>) -> Result<Self::Output, serde_json::Error> {
 		serde_json::from_value::<OpenSessionResult>(data.unwrap_or_else(|| Value::Object(Map::new())))
+	}
+}
+
+/// Start an isolated BTW answer.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BtwStartCommand {
+	#[serde(rename = "btwId")]
+	pub btw_id: String,
+	pub question: String,
+}
+
+impl Command for BtwStartCommand {
+	const NAME: &'static str = "btw_start";
+	const TIMEOUT_MS: Option<u64> = None;
+	type Output = BtwStartResult;
+
+	fn decode(data: Option<Value>) -> Result<Self::Output, serde_json::Error> {
+		serde_json::from_value::<BtwStartResult>(data.unwrap_or_else(|| Value::Object(Map::new())))
+	}
+}
+
+/// Cancel an isolated BTW answer.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BtwCancelCommand {
+	#[serde(rename = "btwId")]
+	pub btw_id: String,
+}
+
+impl Command for BtwCancelCommand {
+	const NAME: &'static str = "btw_cancel";
+	const TIMEOUT_MS: Option<u64> = None;
+	type Output = BtwCancelResult;
+
+	fn decode(data: Option<Value>) -> Result<Self::Output, serde_json::Error> {
+		serde_json::from_value::<BtwCancelResult>(data.unwrap_or_else(|| Value::Object(Map::new())))
+	}
+}
+
+/// Release an isolated BTW answer.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BtwReleaseCommand {
+	#[serde(rename = "btwId")]
+	pub btw_id: String,
+}
+
+impl Command for BtwReleaseCommand {
+	const NAME: &'static str = "btw_release";
+	const TIMEOUT_MS: Option<u64> = None;
+	type Output = BtwReleaseResult;
+
+	fn decode(data: Option<Value>) -> Result<Self::Output, serde_json::Error> {
+		serde_json::from_value::<BtwReleaseResult>(data.unwrap_or_else(|| Value::Object(Map::new())))
+	}
+}
+
+/// Promote a BTW answer to a persisted session.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BtwPromoteCommand {
+	#[serde(rename = "btwId")]
+	pub btw_id: String,
+}
+
+impl Command for BtwPromoteCommand {
+	const NAME: &'static str = "btw_promote";
+	const TIMEOUT_MS: Option<u64> = None;
+	type Output = BtwPromoteResult;
+
+	fn decode(data: Option<Value>) -> Result<Self::Output, serde_json::Error> {
+		serde_json::from_value::<BtwPromoteResult>(data.unwrap_or_else(|| Value::Object(Map::new())))
+	}
+}
+
+/// Read authoritative session activity.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GetActivityCommand {
+	#[serde(rename = "sessionId")]
+	pub session_id: String,
+}
+
+impl Command for GetActivityCommand {
+	const NAME: &'static str = "get_activity";
+	const TIMEOUT_MS: Option<u64> = None;
+	type Output = SessionActivitySnapshot;
+
+	fn decode(data: Option<Value>) -> Result<Self::Output, serde_json::Error> {
+		serde_json::from_value::<SessionActivitySnapshot>(data.unwrap_or_else(|| Value::Object(Map::new())))
+	}
+}
+
+/// Read an activity item from the specified generation.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GetActivityDetailCommand {
+	#[serde(rename = "sessionId")]
+	pub session_id: String,
+	pub generation: String,
+	pub kind: ActivityKind,
+	#[serde(rename = "activityId")]
+	pub activity_id: String,
+}
+
+impl Command for GetActivityDetailCommand {
+	const NAME: &'static str = "get_activity_detail";
+	const TIMEOUT_MS: Option<u64> = None;
+	type Output = SessionActivityDetail;
+
+	fn decode(data: Option<Value>) -> Result<Self::Output, serde_json::Error> {
+		serde_json::from_value::<SessionActivityDetail>(data.unwrap_or_else(|| Value::Object(Map::new())))
+	}
+}
+
+/// Read removable pending inputs.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GetPendingMessagesCommand {
+	#[serde(rename = "sessionId")]
+	pub session_id: String,
+}
+
+impl Command for GetPendingMessagesCommand {
+	const NAME: &'static str = "get_pending_messages";
+	const TIMEOUT_MS: Option<u64> = None;
+	type Output = PendingMessagesSnapshot;
+
+	fn decode(data: Option<Value>) -> Result<Self::Output, serde_json::Error> {
+		serde_json::from_value::<PendingMessagesSnapshot>(data.unwrap_or_else(|| Value::Object(Map::new())))
+	}
+}
+
+/// Remove identified pending inputs from the specified generation.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RemovePendingMessagesCommand {
+	#[serde(rename = "sessionId")]
+	pub session_id: String,
+	pub generation: String,
+	pub ids: Vec<String>,
+}
+
+impl Command for RemovePendingMessagesCommand {
+	const NAME: &'static str = "remove_pending_messages";
+	const TIMEOUT_MS: Option<u64> = None;
+	type Output = PendingMessagesRemoval;
+
+	fn decode(data: Option<Value>) -> Result<Self::Output, serde_json::Error> {
+		serde_json::from_value::<PendingMessagesRemoval>(data.unwrap_or_else(|| Value::Object(Map::new())))
+	}
+}
+
+/// Read the persisted session recap.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GetSessionRecapCommand {
+	#[serde(rename = "sessionId")]
+	pub session_id: String,
+}
+
+impl Command for GetSessionRecapCommand {
+	const NAME: &'static str = "get_session_recap";
+	const TIMEOUT_MS: Option<u64> = None;
+	type Output = SessionRecapSnapshot;
+
+	fn decode(data: Option<Value>) -> Result<Self::Output, serde_json::Error> {
+		serde_json::from_value::<SessionRecapSnapshot>(data.unwrap_or_else(|| Value::Object(Map::new())))
+	}
+}
+
+/// Read session skill selection and catalog.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GetSessionSkillsCommand {
+	#[serde(rename = "sessionId")]
+	pub session_id: String,
+	#[serde(rename = "journalSessionId")]
+	pub journal_session_id: String,
+}
+
+impl Command for GetSessionSkillsCommand {
+	const NAME: &'static str = "get_session_skills";
+	const TIMEOUT_MS: Option<u64> = None;
+	type Output = SessionSkillsCatalogResult;
+
+	fn decode(data: Option<Value>) -> Result<Self::Output, serde_json::Error> {
+		serde_json::from_value::<SessionSkillsCatalogResult>(data.unwrap_or_else(|| Value::Object(Map::new())))
+	}
+}
+
+/// Apply a revision-guarded session skill selection.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SetSessionSkillsCommand {
+	#[serde(rename = "sessionId")]
+	pub session_id: String,
+	#[serde(rename = "journalSessionId")]
+	pub journal_session_id: String,
+	#[serde(rename = "expectedRevision")]
+	pub expected_revision: String,
+	#[serde(rename = "skillIds")]
+	pub skill_ids: Vec<String>,
+}
+
+impl Command for SetSessionSkillsCommand {
+	const NAME: &'static str = "set_session_skills";
+	const TIMEOUT_MS: Option<u64> = None;
+	type Output = SessionSkillsState;
+
+	fn decode(data: Option<Value>) -> Result<Self::Output, serde_json::Error> {
+		serde_json::from_value::<SessionSkillsState>(data.unwrap_or_else(|| Value::Object(Map::new())))
 	}
 }
 
@@ -6195,6 +7196,87 @@ impl Command for SetTodosCommand {
 
 	fn decode(data: Option<Value>) -> Result<Self::Output, serde_json::Error> {
 		serde_json::from_value::<SetTodosResult>(data.unwrap_or_else(|| Value::Object(Map::new()))).map(|result| result.todo_phases)
+	}
+}
+
+/// Enable or disable the browser plan workflow.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SetPlanModeCommand {
+	pub enabled: bool,
+	#[serde(rename = "planFilePath", default, skip_serializing_if = "Option::is_none")]
+	pub plan_file_path: Option<String>,
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub workflow: Option<SetPlanModeParamsWorkflow>,
+}
+
+impl Command for SetPlanModeCommand {
+	const NAME: &'static str = "set_plan_mode";
+	const TIMEOUT_MS: Option<u64> = None;
+	type Output = SetPlanModeResult;
+
+	fn decode(data: Option<Value>) -> Result<Self::Output, serde_json::Error> {
+		serde_json::from_value::<SetPlanModeResult>(data.unwrap_or_else(|| Value::Object(Map::new())))
+	}
+}
+
+/// Approve a plan and dispatch execution with the chosen context policy.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ApprovePlanModeCommand {
+	#[serde(rename = "finalPlanFilePath")]
+	pub final_plan_file_path: String,
+	#[serde(rename = "planFilePath", default, skip_serializing_if = "Option::is_none")]
+	pub plan_file_path: Option<String>,
+	#[serde(rename = "preserveContext", default, skip_serializing_if = "Option::is_none")]
+	pub preserve_context: Option<bool>,
+	#[serde(rename = "compactBeforeExecute", default, skip_serializing_if = "Option::is_none")]
+	pub compact_before_execute: Option<bool>,
+}
+
+impl Command for ApprovePlanModeCommand {
+	const NAME: &'static str = "approve_plan_mode";
+	const TIMEOUT_MS: Option<u64> = None;
+	type Output = ApprovePlanModeResult;
+
+	fn decode(data: Option<Value>) -> Result<Self::Output, serde_json::Error> {
+		serde_json::from_value::<ApprovePlanModeResult>(data.unwrap_or_else(|| Value::Object(Map::new())))
+	}
+}
+
+/// Change the browser goal workflow.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GoalModeCommand {
+	pub op: GoalModeParamsOp,
+	/// Required for create; omitted for lifecycle mutations.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub objective: Option<String>,
+	#[serde(rename = "tokenBudget", default, skip_serializing_if = "Option::is_none")]
+	pub token_budget: Option<i64>,
+}
+
+impl Command for GoalModeCommand {
+	const NAME: &'static str = "goal_mode";
+	const TIMEOUT_MS: Option<u64> = None;
+	type Output = GoalModeResult;
+
+	fn decode(data: Option<Value>) -> Result<Self::Output, serde_json::Error> {
+		serde_json::from_value::<GoalModeResult>(data.unwrap_or_else(|| Value::Object(Map::new())))
+	}
+}
+
+/// Restrict the session to the named active tools.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SetActiveToolsCommand {
+	#[serde(rename = "toolNames")]
+	pub tool_names: Vec<String>,
+}
+
+impl Command for SetActiveToolsCommand {
+	const NAME: &'static str = "set_active_tools";
+	const TIMEOUT_MS: Option<u64> = None;
+	type Output = Vec<String>;
+
+	fn decode(data: Option<Value>) -> Result<Self::Output, serde_json::Error> {
+		serde_json::from_value::<SetActiveToolsResult>(data.unwrap_or_else(|| Value::Object(Map::new()))).map(|result| result.tool_names)
 	}
 }
 

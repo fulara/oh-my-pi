@@ -15,7 +15,12 @@ import { expandPath } from "../path-utils";
 import { CELL_BUDGET_SLACK_MS } from "../run-scope";
 import { ToolAbortError, toWorkerErrorPayload } from "../tool-errors";
 import { ToolError } from "@oh-my-pi/pi-tui/tools/tool-errors";
-import { gracefulKillTreeOnce, pickElectronTarget, shouldPreserveConnectedBrowserFocus } from "./attach";
+import {
+	gracefulKillTreeOnce,
+	pickElectronTarget,
+	shouldPreserveConnectedBrowserFocus,
+	waitForBrowserProcessExit,
+} from "./attach";
 import { CmuxTab } from "./cmux/cmux-tab";
 import { mapWaitUntil } from "./cmux/rpc";
 import { runInProcessTab } from "./in-process-run";
@@ -311,7 +316,7 @@ export function acquireTab(name: string, browser: BrowserHandle, opts: AcquireTa
 			return value;
 		},
 		async error => {
-			await releaseBrowser(browser, { kill: false }).catch(() => undefined);
+			await releaseBrowser(browser, { kill: false });
 			throw error;
 		},
 	);
@@ -506,7 +511,7 @@ async function acquireTabImpl(
 	if (opts.signal?.aborted) {
 		await worker.terminate().catch(() => undefined);
 		closeAbandonedWorkerPage(browser, worker);
-		if (tempHold || browser.refCount === 0) await releaseBrowser(browser, { kill: false }).catch(() => undefined);
+		if (tempHold || browser.refCount === 0) await releaseBrowser(browser, { kill: false });
 		throw new ToolAbortError("Browser tab open aborted");
 	}
 
@@ -963,12 +968,13 @@ export async function releaseTab(name: string, opts: ReleaseTabOptions = {}): Pr
 		// as the first release has not finished. (Not directly testable
 		// in-process: observing it needs a real spawned application.)
 		ongoing.opts.kill = ongoing.opts.kill || opts.kill;
-		const joined = await ongoing.promise;
-		// The upgrade above lands too late when the first release already
-		// passed `releaseBrowser`: verify a still-running spawned app is
-		// terminated rather than trusting the joined outcome.
-		if (opts.kill) await ensureSpawnedKilled(tab.browser);
-		return joined;
+		try {
+			return await ongoing.promise;
+		} finally {
+			// A late upgrade must use the retained birth identity even when the
+			// first teardown already passed releaseBrowser or failed afterwards.
+			if (opts.kill) await ensureSpawnedKilled(tab.browser);
+		}
 	}
 	const entry = { promise: releaseTabInner(tab, name, opts), opts };
 	releaseInflight.set(tab, entry);
@@ -980,18 +986,23 @@ export async function releaseTab(name: string, opts: ReleaseTabOptions = {}): Pr
 }
 
 /**
- * Best-effort termination of a spawned app that outlived a joined teardown.
- * Fires only behind a live subprocess handle (kernel-tracked, so no
- * pid-reuse hazard): anything else already died or was never ours to kill.
+ * Terminate an owned spawned app that outlived a joined teardown. The
+ * subprocess proves liveness; only the retained birth identity authorizes kill.
  */
 async function ensureSpawnedKilled(browser: BrowserHandle): Promise<void> {
 	if (browser.kind.kind !== "spawned" || !("subprocess" in browser)) return;
-	const { pid, subprocess } = browser;
-	if (pid === undefined || !subprocess || subprocess.exitCode !== null) return;
-	await gracefulKillTreeOnce(pid).catch(() => undefined);
+	const { subprocess, ownedProcess } = browser;
+	if (!subprocess || subprocess.exitCode !== null || subprocess.signalCode !== null) return;
+	if (!ownedProcess || ownedProcess.pid !== subprocess.pid) {
+		throw new ToolError(
+			`Spawned browser cleanup refused (PID ${subprocess.pid}): missing or mismatched birth-pinned process identity; the resource may still be running.`,
+		);
+	}
+	await gracefulKillTreeOnce(ownedProcess);
+	await waitForBrowserProcessExit(ownedProcess, subprocess.exited);
 }
 
-/** Test hook for the kill guards without a live application. */
+/** Test hook for retained-identity cleanup using disposable application processes. */
 export function ensureSpawnedKilledForTest(browser: BrowserHandle): Promise<void> {
 	return ensureSpawnedKilled(browser);
 }
@@ -1118,7 +1129,11 @@ async function releaseTabInner(tab: TabSession, name: string, opts: ReleaseTabOp
 			resource: `tab ${JSON.stringify(name)}`,
 		});
 	} catch (error) {
-		cleanupError ??= error;
+		cleanupError = cleanupError
+			? new ToolError(
+					`${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}; browser cleanup also failed: ${error instanceof Error ? error.message : String(error)}`,
+				)
+			: error;
 	} finally {
 		tabs.delete(name);
 		const scope = sharedScopeOf(tab.browser);

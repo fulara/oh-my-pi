@@ -34,6 +34,17 @@ export interface ImageContent {
 	providerFile?: Record<string, unknown>;
 }
 
+/** Inline image; also the shape hosts send with prompts. */
+export interface BranchImageContent {
+	type: "image";
+	/** Base64-encoded image bytes. */
+	data: string;
+	mimeType: string;
+	detail?: "auto" | "low" | "high" | "original";
+	url?: string;
+	providerFile?: Record<string, unknown>;
+}
+
 export interface ToolCall {
 	type: "toolCall";
 	id: string;
@@ -394,6 +405,140 @@ export type AgentSource = "bundled" | "user" | "project";
 
 export type SubagentStatus = "pending" | "running" | "completed" | "failed" | "aborted";
 
+export interface PlanModeState {
+	enabled: boolean;
+	planFilePath: string;
+	workflow?: "parallel" | "iterative";
+	reentry?: boolean;
+}
+
+export interface GoalModeParams {
+	op: "create" | "pause" | "resume" | "drop" | "set_budget";
+	/** Required for create; omitted for lifecycle mutations. */
+	objective?: string;
+	tokenBudget?: number;
+}
+
+export type ActivityKind = "job" | "agent" | "service";
+
+export type ActivityStatus = "pending" | "running" | "completed" | "failed" | "cancelled" | "starting" | "ready" | "restarting" | "stopping" | "exited" | "aborted";
+
+export interface ActivityItem {
+	id: string;
+	kind: ActivityKind;
+	label: string;
+	status: ActivityStatus;
+	startedAt: number;
+	detailAvailable: boolean;
+	endedAt?: number;
+	toolCallId?: string;
+	exitCode?: number;
+	queued?: boolean;
+}
+
+export interface ActivitySourceState {
+	available: boolean;
+	error?: string;
+}
+
+export interface ActivitySources {
+	jobs: ActivitySourceState;
+	agents: ActivitySourceState;
+	services: ActivitySourceState;
+}
+
+export interface SessionActivitySnapshot {
+	sessionId: string;
+	generation: string;
+	observedAt: number;
+	items: ActivityItem[];
+	sources: ActivitySources;
+}
+
+export interface SessionActivityDetail {
+	sessionId: string;
+	generation: string;
+	kind: ActivityKind;
+	activityId: string;
+	text: string;
+	truncated: boolean;
+	observedAt: number;
+}
+
+export interface PendingMessage {
+	id: string;
+	queue: QueuedMessageQueue;
+	state: "queued" | "claimed";
+	removable: boolean;
+	text: string;
+	images?: ImageContent[];
+	clientMessageId?: string;
+}
+
+export interface PendingMessagesSnapshot {
+	sessionId: string;
+	generation: string;
+	items: PendingMessage[];
+}
+
+export interface PendingMessageRemovalResult {
+	id: string;
+	outcome: "removed" | "tooLate" | "notFound";
+	clientMessageId?: string;
+}
+
+export interface PendingMessagesRemoval {
+	snapshot: PendingMessagesSnapshot;
+	results: PendingMessageRemovalResult[];
+}
+
+export interface SessionRecap {
+	id: number;
+	text: string;
+	createdAt: number;
+	sourceLeafId: string | null;
+	stale: boolean | null;
+}
+
+export interface SessionRecapSnapshot {
+	sessionId: string;
+	enabled: boolean;
+	idleSeconds: number;
+	generating: boolean;
+	recap: SessionRecap | null;
+	error?: string;
+}
+
+export interface SessionSkillDescriptor {
+	id: string;
+	name: string;
+	hash: string;
+}
+
+export interface SessionSkillCatalogEntry {
+	id: string;
+	name: string;
+	description: string;
+	status: "available" | "changed" | "missing";
+}
+
+export interface SessionSkillsState {
+	sessionId: string;
+	journalSessionId: string;
+	revision: string;
+	selected: SessionSkillDescriptor[];
+	activeRevision: string;
+	active: SessionSkillDescriptor[];
+	pending: boolean;
+	applying: boolean;
+	error?: string;
+}
+
+export interface SessionSkillsCatalogResult {
+	state: SessionSkillsState;
+	catalog: SessionSkillCatalogEntry[];
+}
+
 export interface TodoItem {
 	content: string;
 	status: TodoStatus;
@@ -514,6 +659,9 @@ export interface SessionState {
 	contextUsage?: ContextUsage;
 	/** Current goal mode; null when the session has no goal. */
 	goal?: GoalModeState | null;
+	planMode?: PlanModeState | null;
+	goalMode?: GoalModeState | null;
+	sessionSkills?: SessionSkillsState;
 }
 
 export interface BashResult {
@@ -600,10 +748,12 @@ export interface AbortAndRestoreQueueResult {
 export interface BranchMessage {
 	entryId: string;
 	text: string;
+	imageCount: number;
 }
 
 export interface BranchResult {
 	text: string;
+	images: BranchImageContent[];
 	cancelled: boolean;
 }
 
@@ -687,6 +837,9 @@ export interface SubagentSnapshot {
 	task?: string;
 	assignment?: string;
 	sessionFile?: string;
+	parentSessionId?: string;
+	sessionId?: string;
+	startedAt?: number;
 	/** Raw `AgentProgress` record. */
 	progress?: Record<string, unknown>;
 	parentToolCallId?: string;
@@ -923,6 +1076,11 @@ export interface ModelChangedEvent {
 	type: "model_changed";
 }
 
+export interface SessionSkillsUpdatedEvent {
+	type: "session_skills_updated";
+	sessionSkills: SessionSkillsState;
+}
+
 export interface ConfigWarningsChangedEvent {
 	type: "config_warnings_changed";
 }
@@ -988,7 +1146,7 @@ export interface QueueUpdateEvent {
 }
 
 /** A session event, discriminated by `type`; `set_event_filter` selects which are sent. */
-export type RpcAgentEvent = AgentStartEvent | AgentEndEvent | TurnStartEvent | TurnEndEvent | MessageStartEvent | MessageUpdateEvent | MessageEndEvent | ToolExecutionStartEvent | ToolExecutionUpdateEvent | ToolStreamUpdateEvent | ToolExecutionEndEvent | AutoCompactionStartEvent | AutoCompactionEndEvent | AutoRetryStartEvent | AutoRetryEndEvent | CacheWarmingStartEvent | CacheWarmingEndEvent | RetryFallbackAppliedEvent | RetryFallbackSucceededEvent | ModelChangedEvent | ConfigWarningsChangedEvent | AdvisorCostChangedEvent | AdvisorYieldedEvent | TtsrTriggeredEvent | TodoReminderEvent | TodoAutoClearEvent | IrcMessageEvent | NoticeEvent | ThinkingLevelChangedEvent | GoalUpdatedEvent | QueueUpdateEvent;
+export type RpcAgentEvent = AgentStartEvent | AgentEndEvent | TurnStartEvent | TurnEndEvent | MessageStartEvent | MessageUpdateEvent | MessageEndEvent | ToolExecutionStartEvent | ToolExecutionUpdateEvent | ToolStreamUpdateEvent | ToolExecutionEndEvent | AutoCompactionStartEvent | AutoCompactionEndEvent | AutoRetryStartEvent | AutoRetryEndEvent | CacheWarmingStartEvent | CacheWarmingEndEvent | RetryFallbackAppliedEvent | RetryFallbackSucceededEvent | ModelChangedEvent | SessionSkillsUpdatedEvent | ConfigWarningsChangedEvent | AdvisorCostChangedEvent | AdvisorYieldedEvent | TtsrTriggeredEvent | TodoReminderEvent | TodoAutoClearEvent | IrcMessageEvent | NoticeEvent | ThinkingLevelChangedEvent | GoalUpdatedEvent | QueueUpdateEvent;
 
 /** First frame after startup; transport fields are absent on servers without protocol v2. */
 export interface ReadyEvent {
@@ -1020,6 +1178,11 @@ export interface PromptResultEvent {
 	sessionSettled: boolean;
 	id?: string;
 	error?: PromptError;
+	removed?: boolean;
+	sessionId?: string;
+	generation?: string;
+	pendingMessageId?: string;
+	clientMessageId?: string;
 }
 
 /** The session went quiet: the last run yielded and no background work can wake it. */
@@ -1033,6 +1196,52 @@ export interface ExtensionError {
 	event: string;
 	error: string;
 }
+
+export interface PlanReviewEvent {
+	type: "plan_review";
+	sessionId: string | null;
+	planFilePath: string;
+	finalPlanFilePath: string;
+	content: string;
+	title?: string;
+}
+
+export interface BtwStartedEvent {
+	type: "btw_update";
+	btwId: string;
+	state: "started";
+	question: string;
+}
+
+export interface BtwStreamingEvent {
+	type: "btw_update";
+	btwId: string;
+	state: "streaming";
+	delta: string;
+}
+
+export interface BtwCompletedEvent {
+	type: "btw_update";
+	btwId: string;
+	state: "completed";
+	answer: string;
+	canPromote: boolean;
+}
+
+export interface BtwCancelledEvent {
+	type: "btw_update";
+	btwId: string;
+	state: "cancelled";
+}
+
+export interface BtwErrorEvent {
+	type: "btw_update";
+	btwId: string;
+	state: "error";
+	error: string;
+}
+
+export type BtwUpdateEvent = BtwStartedEvent | BtwStreamingEvent | BtwCompletedEvent | BtwCancelledEvent | BtwErrorEvent;
 
 /** Slash-command catalog, pushed at startup and whenever command metadata changes. */
 export interface AvailableCommandsUpdateEvent {
@@ -1051,6 +1260,8 @@ export interface SubagentLifecyclePayload {
 	description?: string;
 	sessionFile?: string;
 	parentToolCallId?: string;
+	parentSessionId?: string;
+	sessionId?: string;
 	/** The subagent runs as a detached background job. */
 	detached?: boolean;
 }
@@ -1457,6 +1668,7 @@ export interface PromptParams {
 	message: string;
 	/** Images attached to the message. */
 	images?: ImageContent[];
+	clientMessageId?: string;
 	streamingBehavior?: StreamingBehavior;
 }
 
@@ -1464,12 +1676,14 @@ export interface SteerParams {
 	message: string;
 	/** Images attached to the message. */
 	images?: ImageContent[];
+	clientMessageId?: string;
 }
 
 export interface FollowUpParams {
 	message: string;
 	/** Images attached to the message. */
 	images?: ImageContent[];
+	clientMessageId?: string;
 }
 
 export interface RemoveQueuedMessageParams {
@@ -1495,6 +1709,78 @@ export interface OpenSessionParams {
 	sessionDir: string;
 	provider?: string;
 	modelId?: string;
+}
+
+export interface BtwStartParams {
+	btwId: string;
+	question: string;
+}
+
+export interface BtwStartResult {
+	btwId: string;
+}
+
+export interface BtwCancelParams {
+	btwId: string;
+}
+
+export interface BtwCancelResult {
+	btwId: string;
+}
+
+export interface BtwReleaseParams {
+	btwId: string;
+}
+
+export interface BtwReleaseResult {
+	btwId: string;
+}
+
+export interface BtwPromoteParams {
+	btwId: string;
+}
+
+export interface BtwPromoteResult {
+	btwId: string;
+	sessionId: string;
+	sessionFile: string;
+}
+
+export interface GetActivityParams {
+	sessionId: string;
+}
+
+export interface GetActivityDetailParams {
+	sessionId: string;
+	generation: string;
+	kind: ActivityKind;
+	activityId: string;
+}
+
+export interface GetPendingMessagesParams {
+	sessionId: string;
+}
+
+export interface RemovePendingMessagesParams {
+	sessionId: string;
+	generation: string;
+	ids: string[];
+}
+
+export interface GetSessionRecapParams {
+	sessionId: string;
+}
+
+export interface GetSessionSkillsParams {
+	sessionId: string;
+	journalSessionId: string;
+}
+
+export interface SetSessionSkillsParams {
+	sessionId: string;
+	journalSessionId: string;
+	expectedRevision: string;
+	skillIds: string[];
 }
 
 export interface SetFastModeParams {
@@ -1537,6 +1823,42 @@ export interface SetTodosParams {
 
 export interface SetTodosResult {
 	todoPhases: TodoPhase[];
+}
+
+export interface SetPlanModeParams {
+	enabled: boolean;
+	planFilePath?: string;
+	workflow?: "parallel" | "iterative";
+}
+
+export interface SetPlanModeResult {
+	planMode: PlanModeState | null;
+}
+
+export interface ApprovePlanModeParams {
+	finalPlanFilePath: string;
+	planFilePath?: string;
+	preserveContext?: boolean;
+	compactBeforeExecute?: boolean;
+}
+
+export interface ApprovePlanModeResult {
+	finalPlanFilePath: string;
+	contextPreserved: boolean;
+	executionDispatched: boolean;
+	compactionOutcome?: "ok" | "cancelled" | "failed";
+}
+
+export interface GoalModeResult {
+	goalMode: GoalModeState | null;
+}
+
+export interface SetActiveToolsParams {
+	toolNames: string[];
+}
+
+export interface SetActiveToolsResult {
+	toolNames: string[];
 }
 
 export interface SetHostToolsParams {
@@ -1792,6 +2114,17 @@ export interface RpcWireCommands {
 	abort_and_restore_queue: { params: undefined; result: AbortAndRestoreQueueResult };
 	new_session: { params: NewSessionParams; result: CancellationResult };
 	open_session: { params: OpenSessionParams; result: OpenSessionResult };
+	btw_start: { params: BtwStartParams; result: BtwStartResult };
+	btw_cancel: { params: BtwCancelParams; result: BtwCancelResult };
+	btw_release: { params: BtwReleaseParams; result: BtwReleaseResult };
+	btw_promote: { params: BtwPromoteParams; result: BtwPromoteResult };
+	get_activity: { params: GetActivityParams; result: SessionActivitySnapshot };
+	get_activity_detail: { params: GetActivityDetailParams; result: SessionActivityDetail };
+	get_pending_messages: { params: GetPendingMessagesParams; result: PendingMessagesSnapshot };
+	remove_pending_messages: { params: RemovePendingMessagesParams; result: PendingMessagesRemoval };
+	get_session_recap: { params: GetSessionRecapParams; result: SessionRecapSnapshot };
+	get_session_skills: { params: GetSessionSkillsParams; result: SessionSkillsCatalogResult };
+	set_session_skills: { params: SetSessionSkillsParams; result: SessionSkillsState };
 	get_state: { params: undefined; result: SessionState };
 	set_fast_mode: { params: SetFastModeParams; result: FastModeResult };
 	set_slow_mode: { params: SetSlowModeParams; result: SetSlowModeResult };
@@ -1801,6 +2134,10 @@ export interface RpcWireCommands {
 	get_entries: { params: GetEntriesParams; result: SessionEntries };
 	get_tree: { params: undefined; result: SessionTree };
 	set_todos: { params: SetTodosParams; result: SetTodosResult };
+	set_plan_mode: { params: SetPlanModeParams; result: SetPlanModeResult };
+	approve_plan_mode: { params: ApprovePlanModeParams; result: ApprovePlanModeResult };
+	goal_mode: { params: GoalModeParams; result: GoalModeResult };
+	set_active_tools: { params: SetActiveToolsParams; result: SetActiveToolsResult };
 	set_host_tools: { params: SetHostToolsParams; result: SetHostToolsResult };
 	set_host_uri_schemes: { params: SetHostUriSchemesParams; result: SetHostUriSchemesResult };
 	set_subagent_subscription: { params: SetSubagentSubscriptionParams; result: SetSubagentSubscriptionResult };

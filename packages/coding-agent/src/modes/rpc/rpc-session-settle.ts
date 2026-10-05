@@ -122,7 +122,8 @@ export class RpcSessionSettleWatcher {
 					await this.#session.settleAsyncWork();
 				}
 			} while (this.#recheck);
-			if (epoch !== this.#runEpoch || !this.#active || !isRpcSessionSettled(this.#session, this.#scheduledTurn)) return;
+			if (epoch !== this.#runEpoch || !this.#active || !isRpcSessionSettled(this.#session, this.#scheduledTurn))
+				return;
 			this.#active = false;
 			this.#output({ type: "session_settled" });
 		} catch (error) {

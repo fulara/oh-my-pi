@@ -12,7 +12,6 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn, vi } from "bun:test";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import { createBrowserPrelude } from "@oh-my-pi/pi-coding-agent/tools/browser";
-import * as attach from "@oh-my-pi/pi-coding-agent/tools/browser/attach";
 import { CmuxSocketClient } from "@oh-my-pi/pi-coding-agent/tools/browser/cmux/socket-client";
 import * as registry from "@oh-my-pi/pi-coding-agent/tools/browser/registry";
 import { getTabsMapForTest, releaseTab } from "@oh-my-pi/pi-coding-agent/tools/browser/tab-supervisor";
@@ -161,48 +160,6 @@ describe("browser open — caller cancellation rolls back the fresh browser (#63
 		// Let the orphaned acquisition unwind so it does not leak past the test.
 		openSplitGate.resolve();
 		await Promise.resolve();
-	});
-});
-
-describe("browser open — failed spawned-app acquisition reaps its owned process (#9537)", () => {
-	it("kills the OMP-spawned process when no page target can be published", async () => {
-		const disconnectSpy = vi.fn();
-		const browser = {
-			key: "spawned:/tmp/chrome-headless-shell",
-			kind: { kind: "spawned", path: "/tmp/chrome-headless-shell" },
-			refCount: 0,
-			browser: {
-				connected: true,
-				disconnect: disconnectSpy,
-				wsEndpoint: () => "ws://127.0.0.1/devtools/browser/test",
-				targets: () => [],
-				pages: async () => [],
-				waitForTarget: async () => {
-					throw new TimeoutError("No page target appeared");
-				},
-			},
-			pid: 4242,
-			subprocess: { pid: 4242, exitCode: null },
-			stealth: { browserSession: null, override: null },
-		} as unknown as registry.BrowserHandle;
-		spyOn(registry, "acquireBrowser").mockResolvedValue(browser);
-		const killSpy = spyOn(attach, "gracefulKillTreeOnce").mockResolvedValue(undefined);
-
-		const invokeBrowser = createBrowserHost();
-		await expect(
-			invokeBrowser({
-				action: "open",
-				name: "failed-open",
-				app: { path: "/tmp/chrome-headless-shell" },
-				timeout: 1,
-			}),
-		).rejects.toBeInstanceOf(ToolError);
-
-		expect(disconnectSpy).toHaveBeenCalledTimes(1);
-		expect(killSpy).toHaveBeenCalledTimes(1);
-		expect(killSpy.mock.calls[0]?.[0]).toBe(4242);
-		expect(registry.getBrowsersMapForTest().size).toBe(0);
-		expect(getTabsMapForTest().has("failed-open")).toBe(false);
 	});
 });
 

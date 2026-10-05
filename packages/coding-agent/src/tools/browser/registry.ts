@@ -1,10 +1,19 @@
 import * as path from "node:path";
+import { Process } from "@oh-my-pi/pi-natives";
 import { isCompiledBinary, logger, withTimeout, workerHostEntry } from "@oh-my-pi/pi-utils";
 import type { Subprocess } from "bun";
 import type { Browser, CDPSession } from "puppeteer-core";
 import { ToolAbortError } from "../tool-errors";
 import { ToolError } from "@oh-my-pi/pi-tui/tools/tool-errors";
-import { findFreeCdpPort, findReusableCdp, gracefulKillTreeOnce, resolveSpawnArgs, waitForCdp } from "./attach";
+import {
+	findFreeCdpPort,
+	findReusableCdp,
+	gracefulKillTreeOnce,
+	resolveSpawnArgs,
+	spawnBrowserApplication,
+	waitForCdp,
+	waitForBrowserProcessExit,
+} from "./attach";
 import type { CmuxKind } from "./cmux/rpc";
 import { CmuxSocketClient } from "./cmux/socket-client";
 import {
@@ -64,6 +73,10 @@ export interface PuppeteerBrowserHandle extends BrowserHandleCommon {
 	/** Broker daemon backing this handle; dispose disconnects instead of closing, kill routes to the broker. */
 	sharedDaemon?: { name: string; projectDir: string };
 	subprocess?: Subprocess;
+	/** Birth-pinned identity for a process this host actually launched; absent for borrowed/broker browsers. */
+	ownedProcess?: Process;
+	/** Exit notification from the original runtime child, captured with the birth identity. */
+	ownedProcessExited?: Promise<number | void>;
 	stealth: { browserSession: CDPSession | null; override: UserAgentOverride | null };
 }
 
@@ -139,7 +152,7 @@ export async function acquireBrowser(kind: BrowserKind, opts: AcquireBrowserOpti
 		// leaking the rest as unreferenced process trees.
 		const pending = pendingOpens.get(key);
 		if (pending) {
-			await pending.catch(() => undefined);
+			await pending;
 			continue;
 		}
 		const open = openBrowserHandle(kind, opts).finally(() => pendingOpens.delete(key));
@@ -154,11 +167,7 @@ export async function acquireBrowser(kind: BrowserKind, opts: AcquireBrowserOpti
 		// orphaned Chromium/app process / puppeteer handle survives to process
 		// exit. (Issue #3963.)
 		if (opts.signal?.aborted) {
-			await disposeBrowserHandle(handle, { kill: kind.kind === "spawned" }).catch(err => {
-				logger.debug("Failed to dispose orphan browser after abort", {
-					error: err instanceof Error ? err.message : String(err),
-				});
-			});
+			await disposeBrowserHandle(handle, { kill: kind.kind === "spawned" });
 			throw new ToolAbortError("Browser open aborted");
 		}
 		browsers.set(key, handle);
@@ -208,10 +217,27 @@ async function openBrowserHandle(kind: BrowserKind, opts: AcquireBrowserOptions)
 			ignoreHttpsErrors: kind.ignoreHttpsErrors,
 			allowFileAccess: kind.allowFileAccess,
 		});
+		const child = browser.process();
+		let ownedProcess: Process | null;
+		try {
+			ownedProcess = child?.pid === undefined ? null : Process.fromPid(child.pid);
+		} catch (error) {
+			const message = `Cannot pin locally launched browser (PID ${child?.pid ?? "unavailable"}); cleanup refused and the resource may still be running. Profile retained at ${userDataDir ?? "(caller-owned)"}: ${error instanceof Error ? error.message : String(error)}`;
+			logger.warn(message, { pid: child?.pid, userDataDir });
+			throw new ToolError(message);
+		}
+		if (!ownedProcess || ownedProcess.ppid !== process.pid || child?.exitCode !== null || child.signalCode !== null) {
+			const message = `Cannot establish ownership of locally launched browser (PID ${child?.pid ?? "unavailable"}); cleanup refused and the resource may still be running. Profile retained at ${userDataDir ?? "(caller-owned)"}.`;
+			logger.warn(message, { pid: child?.pid, userDataDir });
+			throw new ToolError(message);
+		}
 		return {
 			key: browserKey(kind),
 			kind,
 			browser,
+			pid: child.pid,
+			ownedProcess,
+			ownedProcessExited: new Promise<void>(resolve => child.once("exit", () => resolve())),
 			userDataDir,
 			refCount: 0,
 			stealth: { browserSession: null, override: null },
@@ -306,6 +332,7 @@ async function openBrowserHandle(kind: BrowserKind, opts: AcquireBrowserOptions)
 	let cdpUrl: string;
 	let pid: number;
 	let subprocess: Subprocess | undefined;
+	let ownedProcess: Process | undefined;
 	if (reused) {
 		logger.debug("Reusing existing CDP endpoint for attach", { exe, pid: reused.pid, cdpUrl: reused.cdpUrl });
 		cdpUrl = reused.cdpUrl;
@@ -313,27 +340,28 @@ async function openBrowserHandle(kind: BrowserKind, opts: AcquireBrowserOptions)
 	} else {
 		const port = await findFreeCdpPort();
 		const launchArgs = [...appArgs, `--remote-debugging-port=${port}`];
-		const child = Bun.spawn([exe, ...launchArgs], {
-			cwd: opts.cwd,
-			stdout: "ignore",
-			stderr: "ignore",
-			stdin: "ignore",
-		});
-		child.unref();
-		subprocess = child;
-		pid = child.pid;
+		const owned = spawnBrowserApplication([exe, ...launchArgs], opts.cwd);
+		subprocess = owned.subprocess;
+		ownedProcess = owned.ownedProcess;
+		pid = subprocess.pid;
 		cdpUrl = `http://127.0.0.1:${port}`;
 		try {
 			await waitForCdp(cdpUrl, 30_000, opts.signal);
 		} catch (err) {
-			await gracefulKillTreeOnce(child.pid).catch(() => undefined);
+			try {
+				await gracefulKillTreeOnce(ownedProcess);
+				await waitForBrowserProcessExit(ownedProcess, subprocess.exited);
+			} catch (cleanupError) {
+				throw new ToolError(
+					`Failed to attach to ${path.basename(exe)} on ${cdpUrl}: ${err instanceof Error ? err.message : String(err)}; ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`,
+				);
+			}
 			if (err instanceof ToolAbortError) throw err;
 			if (err instanceof Error && err.name === "AbortError") throw err;
 			throw new ToolError(`Failed to attach to ${path.basename(exe)} on ${cdpUrl}: ${(err as Error).message}`);
 		}
 	}
 
-	const puppeteer = await loadPuppeteer();
 	let browser: Browser;
 	try {
 		browser = await connectPuppeteer(puppeteer, {
@@ -342,7 +370,16 @@ async function openBrowserHandle(kind: BrowserKind, opts: AcquireBrowserOptions)
 			protocolTimeout: BROWSER_PROTOCOL_TIMEOUT_MS,
 		});
 	} catch (err) {
-		if (subprocess) await gracefulKillTreeOnce(subprocess.pid);
+		if (ownedProcess && subprocess) {
+			try {
+				await gracefulKillTreeOnce(ownedProcess);
+				await waitForBrowserProcessExit(ownedProcess, subprocess.exited);
+			} catch (cleanupError) {
+				throw new ToolError(
+					`Connected to ${cdpUrl} but puppeteer.connect failed: ${err instanceof Error ? err.message : String(err)}; ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`,
+				);
+			}
+		}
 		throw new ToolError(`Connected to ${cdpUrl} but puppeteer.connect failed: ${(err as Error).message}`);
 	}
 	return {
@@ -352,6 +389,8 @@ async function openBrowserHandle(kind: BrowserKind, opts: AcquireBrowserOptions)
 		cdpUrl,
 		pid,
 		subprocess,
+		ownedProcess,
+		ownedProcessExited: subprocess?.exited,
 		refCount: 0,
 		stealth: { browserSession: null, override: null },
 	};
@@ -399,20 +438,24 @@ async function disposeBrowserHandle(handle: BrowserHandle, opts: ReleaseBrowserO
 			}
 			return;
 		}
+		const { ownedProcess, ownedProcessExited } = handle;
+		if (!ownedProcess || !ownedProcessExited) {
+			throw new ToolError(
+				`Headless browser cleanup refused (PID ${handle.pid ?? "unavailable"}): missing birth-pinned identity or original child exit notification; the resource may still be running. Profile retained at ${handle.userDataDir ?? "(caller-owned)"}.`,
+			);
+		}
 		if (handle.browser.connected) {
-			// Puppeteer's `browser.close()` resolves only once the Chromium
-			// process fully exits. A wedged Chromium (a known Windows failure
-			// mode) leaves this await pending forever, freezing `releaseTab` in
-			// the "Closing tab" phase (issue #5260). Bound it, then SIGKILL the
-			// process tree so cleanup always completes.
-			const proc = handle.browser.process();
+			// Bound Puppeteer's close, then use only the identity retained at acquisition.
 			try {
 				await withTimeout(handle.browser.close(), HEADLESS_CLOSE_TIMEOUT_MS, "Timed out closing headless browser");
 			} catch (err) {
-				logger.debug("Failed to close headless browser; force-killing", { error: (err as Error).message });
-				if (proc?.pid !== undefined) await gracefulKillTreeOnce(proc.pid).catch(() => undefined);
+				logger.debug("Failed to close headless browser; terminating owned tree", { error: (err as Error).message });
+				await gracefulKillTreeOnce(ownedProcess);
 			}
+		} else {
+			await gracefulKillTreeOnce(ownedProcess);
 		}
+		await waitForBrowserProcessExit(ownedProcess, ownedProcessExited);
 		// OMP owns the profile directory (puppeteer's temp cleanup is disabled by
 		// our explicit --user-data-dir), so remove it now the process tree has
 		// exited. Tolerant of the Windows lock-held window (issue #7058).
@@ -438,8 +481,14 @@ async function disposeBrowserHandle(handle: BrowserHandle, opts: ReleaseBrowserO
 		}
 	}
 	// A discovered CDP PID is borrowed, not ours to kill on close or abort.
-	if (opts.kill && handle.subprocess && handle.subprocess.exitCode === null) {
-		await gracefulKillTreeOnce(handle.subprocess.pid);
+	if (opts.kill && handle.subprocess && handle.subprocess.exitCode === null && handle.subprocess.signalCode === null) {
+		if (!handle.ownedProcess || handle.ownedProcess.pid !== handle.subprocess.pid) {
+			throw new ToolError(
+				`Spawned browser cleanup refused (PID ${handle.subprocess.pid}): missing or mismatched birth-pinned process identity; the resource may still be running.`,
+			);
+		}
+		await gracefulKillTreeOnce(handle.ownedProcess);
+		await waitForBrowserProcessExit(handle.ownedProcess, handle.subprocess.exited);
 	}
 }
 

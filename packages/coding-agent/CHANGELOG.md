@@ -368,6 +368,12 @@
 - Fixed `omp worktree add` and other git operations failing with `git open: … does not appear to be a git repository` when the checkout directory name ends in `.git` ([#14553](https://github.com/can1357/oh-my-pi/issues/14553))
 - Fixed Mnemopi embedding workers (and other local-model workers) staying alive and holding gigabytes of RAM after the omp process that started them exited mid-embedding ([#14340](https://github.com/can1357/oh-my-pi/issues/14340))
 - Fixed a supervised PTY service on Windows hanging when it asks the terminal for the cursor position; the launch broker now answers the query as it does on Linux and macOS
+### Fixed
+
+- Preserved Fura's RPC extensions in the generated wire schema and Python/Rust/Go clients, including lossless branch images and guarded pending-input removal.
+- Preserved pinned process ownership during broken-pipe retirement; kernel regressions now exercise disposable real children without PID/group cleanup fallbacks.
+- Isolated explicitly launched browser applications from the caller's process group; browser and sign-in cleanup now retain startup native ownership and original child exit proof, refuse missing ownership, and never recapture a PID or terminate a borrowed browser.
+- Replaced obsolete snapcompact height expectations with decoded PNG coverage of upstream's minimum vision-frame geometry, preserving natural glyph padding.
 
 ## [18.6.2] - 2026-10-04
 

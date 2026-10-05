@@ -206,6 +206,67 @@ func (v *ImageContentDetail) UnmarshalJSON(data []byte) error {
 	return unknownValue("ImageContentDetail", s)
 }
 
+// Inline image; also the shape hosts send with prompts.
+type BranchImageContent struct {
+	// Base64-encoded image bytes.
+	Data         string                     `json:"data"`
+	MimeType     string                     `json:"mimeType"`
+	Detail       *BranchImageContentDetail  `json:"detail,omitempty"`
+	URL          *string                    `json:"url,omitempty"`
+	ProviderFile map[string]json.RawMessage `json:"providerFile,omitempty"`
+	// Extra holds undeclared keys and declared keys whose value did not decode (that field stays zero).
+	// Encoding writes them back, over a declared field with the same key.
+	Extra map[string]json.RawMessage `json:"-"`
+}
+
+func (v *BranchImageContent) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "BranchImageContent", v.decodeFrom)
+}
+
+func (v *BranchImageContent) decodeFrom(raw map[string]json.RawMessage) error {
+	var out BranchImageContent
+	d := fieldDecoder{raw: raw, owner: "BranchImageContent", open: true}
+	d.constant("type", "image")
+	d.required("data", &out.Data)
+	d.required("mimeType", &out.MimeType)
+	d.optional("detail", &out.Detail)
+	d.optional("url", &out.URL)
+	d.optional("providerFile", &out.ProviderFile)
+	out.Extra = d.rest()
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
+func (v BranchImageContent) MarshalJSON() ([]byte, error) {
+	type plain BranchImageContent
+	return encodeObject(plain(v), `"type":"image"`, v.Extra)
+}
+
+type BranchImageContentDetail string
+
+const (
+	BranchImageContentDetailAuto     BranchImageContentDetail = "auto"
+	BranchImageContentDetailLow      BranchImageContentDetail = "low"
+	BranchImageContentDetailHigh     BranchImageContentDetail = "high"
+	BranchImageContentDetailOriginal BranchImageContentDetail = "original"
+)
+
+func (v *BranchImageContentDetail) UnmarshalJSON(data []byte) error {
+	s, err := decodeString(data, "BranchImageContentDetail")
+	if err != nil {
+		return err
+	}
+	switch value := BranchImageContentDetail(s); value {
+	case BranchImageContentDetailAuto, BranchImageContentDetailLow, BranchImageContentDetailHigh, BranchImageContentDetailOriginal:
+		*v = value
+		return nil
+	}
+	return unknownValue("BranchImageContentDetail", s)
+}
+
 type ToolCall struct {
 	ID               string                     `json:"id"`
 	Name             string                     `json:"name"`
@@ -2129,6 +2190,560 @@ func (v *SubagentStatus) UnmarshalJSON(data []byte) error {
 	return unknownValue("SubagentStatus", s)
 }
 
+type PlanModeState struct {
+	Enabled      bool                   `json:"enabled"`
+	PlanFilePath string                 `json:"planFilePath"`
+	Workflow     *PlanModeStateWorkflow `json:"workflow,omitempty"`
+	Reentry      *bool                  `json:"reentry,omitempty"`
+}
+
+func (v *PlanModeState) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "PlanModeState", v.decodeFrom)
+}
+
+func (v *PlanModeState) decodeFrom(raw map[string]json.RawMessage) error {
+	var out PlanModeState
+	d := fieldDecoder{raw: raw, owner: "PlanModeState"}
+	d.required("enabled", &out.Enabled)
+	d.required("planFilePath", &out.PlanFilePath)
+	d.optional("workflow", &out.Workflow)
+	d.optional("reentry", &out.Reentry)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
+type PlanModeStateWorkflow string
+
+const (
+	PlanModeStateWorkflowParallel  PlanModeStateWorkflow = "parallel"
+	PlanModeStateWorkflowIterative PlanModeStateWorkflow = "iterative"
+)
+
+func (v *PlanModeStateWorkflow) UnmarshalJSON(data []byte) error {
+	s, err := decodeString(data, "PlanModeStateWorkflow")
+	if err != nil {
+		return err
+	}
+	switch value := PlanModeStateWorkflow(s); value {
+	case PlanModeStateWorkflowParallel, PlanModeStateWorkflowIterative:
+		*v = value
+		return nil
+	}
+	return unknownValue("PlanModeStateWorkflow", s)
+}
+
+type ActivityKind string
+
+const (
+	ActivityKindJob     ActivityKind = "job"
+	ActivityKindAgent   ActivityKind = "agent"
+	ActivityKindService ActivityKind = "service"
+)
+
+func (v *ActivityKind) UnmarshalJSON(data []byte) error {
+	s, err := decodeString(data, "ActivityKind")
+	if err != nil {
+		return err
+	}
+	switch value := ActivityKind(s); value {
+	case ActivityKindJob, ActivityKindAgent, ActivityKindService:
+		*v = value
+		return nil
+	}
+	return unknownValue("ActivityKind", s)
+}
+
+type ActivityStatus string
+
+const (
+	ActivityStatusPending    ActivityStatus = "pending"
+	ActivityStatusRunning    ActivityStatus = "running"
+	ActivityStatusCompleted  ActivityStatus = "completed"
+	ActivityStatusFailed     ActivityStatus = "failed"
+	ActivityStatusCancelled  ActivityStatus = "cancelled"
+	ActivityStatusStarting   ActivityStatus = "starting"
+	ActivityStatusReady      ActivityStatus = "ready"
+	ActivityStatusRestarting ActivityStatus = "restarting"
+	ActivityStatusStopping   ActivityStatus = "stopping"
+	ActivityStatusExited     ActivityStatus = "exited"
+	ActivityStatusAborted    ActivityStatus = "aborted"
+)
+
+func (v *ActivityStatus) UnmarshalJSON(data []byte) error {
+	s, err := decodeString(data, "ActivityStatus")
+	if err != nil {
+		return err
+	}
+	switch value := ActivityStatus(s); value {
+	case ActivityStatusPending, ActivityStatusRunning, ActivityStatusCompleted, ActivityStatusFailed, ActivityStatusCancelled, ActivityStatusStarting, ActivityStatusReady, ActivityStatusRestarting, ActivityStatusStopping, ActivityStatusExited, ActivityStatusAborted:
+		*v = value
+		return nil
+	}
+	return unknownValue("ActivityStatus", s)
+}
+
+type ActivityItem struct {
+	ID              string         `json:"id"`
+	Kind            ActivityKind   `json:"kind"`
+	Label           string         `json:"label"`
+	Status          ActivityStatus `json:"status"`
+	StartedAt       float64        `json:"startedAt"`
+	DetailAvailable bool           `json:"detailAvailable"`
+	EndedAt         *float64       `json:"endedAt,omitempty"`
+	ToolCallID      *string        `json:"toolCallId,omitempty"`
+	ExitCode        *int64         `json:"exitCode,omitempty"`
+	Queued          *bool          `json:"queued,omitempty"`
+}
+
+func (v *ActivityItem) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "ActivityItem", v.decodeFrom)
+}
+
+func (v *ActivityItem) decodeFrom(raw map[string]json.RawMessage) error {
+	var out ActivityItem
+	d := fieldDecoder{raw: raw, owner: "ActivityItem"}
+	d.required("id", &out.ID)
+	d.required("kind", &out.Kind)
+	d.required("label", &out.Label)
+	d.required("status", &out.Status)
+	d.required("startedAt", &out.StartedAt)
+	d.required("detailAvailable", &out.DetailAvailable)
+	d.optional("endedAt", &out.EndedAt)
+	d.optional("toolCallId", &out.ToolCallID)
+	d.optional("exitCode", &out.ExitCode)
+	d.optional("queued", &out.Queued)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
+type ActivitySourceState struct {
+	Available bool    `json:"available"`
+	Error     *string `json:"error,omitempty"`
+}
+
+func (v *ActivitySourceState) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "ActivitySourceState", v.decodeFrom)
+}
+
+func (v *ActivitySourceState) decodeFrom(raw map[string]json.RawMessage) error {
+	var out ActivitySourceState
+	d := fieldDecoder{raw: raw, owner: "ActivitySourceState"}
+	d.required("available", &out.Available)
+	d.optional("error", &out.Error)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
+type ActivitySources struct {
+	Jobs     ActivitySourceState `json:"jobs"`
+	Agents   ActivitySourceState `json:"agents"`
+	Services ActivitySourceState `json:"services"`
+}
+
+func (v *ActivitySources) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "ActivitySources", v.decodeFrom)
+}
+
+func (v *ActivitySources) decodeFrom(raw map[string]json.RawMessage) error {
+	var out ActivitySources
+	d := fieldDecoder{raw: raw, owner: "ActivitySources"}
+	d.required("jobs", &out.Jobs)
+	d.required("agents", &out.Agents)
+	d.required("services", &out.Services)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
+type SessionActivitySnapshot struct {
+	SessionID  string          `json:"sessionId"`
+	Generation string          `json:"generation"`
+	ObservedAt float64         `json:"observedAt"`
+	Items      []ActivityItem  `json:"items"`
+	Sources    ActivitySources `json:"sources"`
+}
+
+func (v *SessionActivitySnapshot) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "SessionActivitySnapshot", v.decodeFrom)
+}
+
+func (v *SessionActivitySnapshot) decodeFrom(raw map[string]json.RawMessage) error {
+	var out SessionActivitySnapshot
+	d := fieldDecoder{raw: raw, owner: "SessionActivitySnapshot"}
+	d.required("sessionId", &out.SessionID)
+	d.required("generation", &out.Generation)
+	d.required("observedAt", &out.ObservedAt)
+	d.required("items", &out.Items)
+	d.required("sources", &out.Sources)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
+type SessionActivityDetail struct {
+	SessionID  string       `json:"sessionId"`
+	Generation string       `json:"generation"`
+	Kind       ActivityKind `json:"kind"`
+	ActivityID string       `json:"activityId"`
+	Text       string       `json:"text"`
+	Truncated  bool         `json:"truncated"`
+	ObservedAt float64      `json:"observedAt"`
+}
+
+func (v *SessionActivityDetail) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "SessionActivityDetail", v.decodeFrom)
+}
+
+func (v *SessionActivityDetail) decodeFrom(raw map[string]json.RawMessage) error {
+	var out SessionActivityDetail
+	d := fieldDecoder{raw: raw, owner: "SessionActivityDetail"}
+	d.required("sessionId", &out.SessionID)
+	d.required("generation", &out.Generation)
+	d.required("kind", &out.Kind)
+	d.required("activityId", &out.ActivityID)
+	d.required("text", &out.Text)
+	d.required("truncated", &out.Truncated)
+	d.required("observedAt", &out.ObservedAt)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
+type PendingMessage struct {
+	ID              string              `json:"id"`
+	Queue           QueuedMessageQueue  `json:"queue"`
+	State           PendingMessageState `json:"state"`
+	Removable       bool                `json:"removable"`
+	Text            string              `json:"text"`
+	Images          []ImageContent      `json:"images,omitempty"`
+	ClientMessageID *string             `json:"clientMessageId,omitempty"`
+}
+
+func (v *PendingMessage) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "PendingMessage", v.decodeFrom)
+}
+
+func (v *PendingMessage) decodeFrom(raw map[string]json.RawMessage) error {
+	var out PendingMessage
+	d := fieldDecoder{raw: raw, owner: "PendingMessage"}
+	d.required("id", &out.ID)
+	d.required("queue", &out.Queue)
+	d.required("state", &out.State)
+	d.required("removable", &out.Removable)
+	d.required("text", &out.Text)
+	d.optional("images", &out.Images)
+	d.optional("clientMessageId", &out.ClientMessageID)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
+type PendingMessageState string
+
+const (
+	PendingMessageStateQueued  PendingMessageState = "queued"
+	PendingMessageStateClaimed PendingMessageState = "claimed"
+)
+
+func (v *PendingMessageState) UnmarshalJSON(data []byte) error {
+	s, err := decodeString(data, "PendingMessageState")
+	if err != nil {
+		return err
+	}
+	switch value := PendingMessageState(s); value {
+	case PendingMessageStateQueued, PendingMessageStateClaimed:
+		*v = value
+		return nil
+	}
+	return unknownValue("PendingMessageState", s)
+}
+
+type PendingMessagesSnapshot struct {
+	SessionID  string           `json:"sessionId"`
+	Generation string           `json:"generation"`
+	Items      []PendingMessage `json:"items"`
+}
+
+func (v *PendingMessagesSnapshot) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "PendingMessagesSnapshot", v.decodeFrom)
+}
+
+func (v *PendingMessagesSnapshot) decodeFrom(raw map[string]json.RawMessage) error {
+	var out PendingMessagesSnapshot
+	d := fieldDecoder{raw: raw, owner: "PendingMessagesSnapshot"}
+	d.required("sessionId", &out.SessionID)
+	d.required("generation", &out.Generation)
+	d.required("items", &out.Items)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
+type PendingMessageRemovalResult struct {
+	ID              string                             `json:"id"`
+	Outcome         PendingMessageRemovalResultOutcome `json:"outcome"`
+	ClientMessageID *string                            `json:"clientMessageId,omitempty"`
+}
+
+func (v *PendingMessageRemovalResult) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "PendingMessageRemovalResult", v.decodeFrom)
+}
+
+func (v *PendingMessageRemovalResult) decodeFrom(raw map[string]json.RawMessage) error {
+	var out PendingMessageRemovalResult
+	d := fieldDecoder{raw: raw, owner: "PendingMessageRemovalResult"}
+	d.required("id", &out.ID)
+	d.required("outcome", &out.Outcome)
+	d.optional("clientMessageId", &out.ClientMessageID)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
+type PendingMessageRemovalResultOutcome string
+
+const (
+	PendingMessageRemovalResultOutcomeRemoved  PendingMessageRemovalResultOutcome = "removed"
+	PendingMessageRemovalResultOutcomeTooLate  PendingMessageRemovalResultOutcome = "tooLate"
+	PendingMessageRemovalResultOutcomeNotFound PendingMessageRemovalResultOutcome = "notFound"
+)
+
+func (v *PendingMessageRemovalResultOutcome) UnmarshalJSON(data []byte) error {
+	s, err := decodeString(data, "PendingMessageRemovalResultOutcome")
+	if err != nil {
+		return err
+	}
+	switch value := PendingMessageRemovalResultOutcome(s); value {
+	case PendingMessageRemovalResultOutcomeRemoved, PendingMessageRemovalResultOutcomeTooLate, PendingMessageRemovalResultOutcomeNotFound:
+		*v = value
+		return nil
+	}
+	return unknownValue("PendingMessageRemovalResultOutcome", s)
+}
+
+type PendingMessagesRemoval struct {
+	Snapshot PendingMessagesSnapshot       `json:"snapshot"`
+	Results  []PendingMessageRemovalResult `json:"results"`
+}
+
+func (v *PendingMessagesRemoval) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "PendingMessagesRemoval", v.decodeFrom)
+}
+
+func (v *PendingMessagesRemoval) decodeFrom(raw map[string]json.RawMessage) error {
+	var out PendingMessagesRemoval
+	d := fieldDecoder{raw: raw, owner: "PendingMessagesRemoval"}
+	d.required("snapshot", &out.Snapshot)
+	d.required("results", &out.Results)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
+type SessionRecap struct {
+	ID           int64   `json:"id"`
+	Text         string  `json:"text"`
+	CreatedAt    float64 `json:"createdAt"`
+	SourceLeafID *string `json:"sourceLeafId"`
+	Stale        *bool   `json:"stale"`
+}
+
+func (v *SessionRecap) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "SessionRecap", v.decodeFrom)
+}
+
+func (v *SessionRecap) decodeFrom(raw map[string]json.RawMessage) error {
+	var out SessionRecap
+	d := fieldDecoder{raw: raw, owner: "SessionRecap"}
+	d.required("id", &out.ID)
+	d.required("text", &out.Text)
+	d.required("createdAt", &out.CreatedAt)
+	d.nullable("sourceLeafId", &out.SourceLeafID)
+	d.nullable("stale", &out.Stale)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
+type SessionRecapSnapshot struct {
+	SessionID   string        `json:"sessionId"`
+	Enabled     bool          `json:"enabled"`
+	IdleSeconds float64       `json:"idleSeconds"`
+	Generating  bool          `json:"generating"`
+	Recap       *SessionRecap `json:"recap"`
+	Error       *string       `json:"error,omitempty"`
+}
+
+func (v *SessionRecapSnapshot) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "SessionRecapSnapshot", v.decodeFrom)
+}
+
+func (v *SessionRecapSnapshot) decodeFrom(raw map[string]json.RawMessage) error {
+	var out SessionRecapSnapshot
+	d := fieldDecoder{raw: raw, owner: "SessionRecapSnapshot"}
+	d.required("sessionId", &out.SessionID)
+	d.required("enabled", &out.Enabled)
+	d.required("idleSeconds", &out.IdleSeconds)
+	d.required("generating", &out.Generating)
+	d.nullable("recap", &out.Recap)
+	d.optional("error", &out.Error)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
+type SessionSkillDescriptor struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Hash string `json:"hash"`
+}
+
+func (v *SessionSkillDescriptor) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "SessionSkillDescriptor", v.decodeFrom)
+}
+
+func (v *SessionSkillDescriptor) decodeFrom(raw map[string]json.RawMessage) error {
+	var out SessionSkillDescriptor
+	d := fieldDecoder{raw: raw, owner: "SessionSkillDescriptor"}
+	d.required("id", &out.ID)
+	d.required("name", &out.Name)
+	d.required("hash", &out.Hash)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
+type SessionSkillCatalogEntry struct {
+	ID          string                         `json:"id"`
+	Name        string                         `json:"name"`
+	Description string                         `json:"description"`
+	Status      SessionSkillCatalogEntryStatus `json:"status"`
+}
+
+func (v *SessionSkillCatalogEntry) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "SessionSkillCatalogEntry", v.decodeFrom)
+}
+
+func (v *SessionSkillCatalogEntry) decodeFrom(raw map[string]json.RawMessage) error {
+	var out SessionSkillCatalogEntry
+	d := fieldDecoder{raw: raw, owner: "SessionSkillCatalogEntry"}
+	d.required("id", &out.ID)
+	d.required("name", &out.Name)
+	d.required("description", &out.Description)
+	d.required("status", &out.Status)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
+type SessionSkillCatalogEntryStatus string
+
+const (
+	SessionSkillCatalogEntryStatusAvailable SessionSkillCatalogEntryStatus = "available"
+	SessionSkillCatalogEntryStatusChanged   SessionSkillCatalogEntryStatus = "changed"
+	SessionSkillCatalogEntryStatusMissing   SessionSkillCatalogEntryStatus = "missing"
+)
+
+func (v *SessionSkillCatalogEntryStatus) UnmarshalJSON(data []byte) error {
+	s, err := decodeString(data, "SessionSkillCatalogEntryStatus")
+	if err != nil {
+		return err
+	}
+	switch value := SessionSkillCatalogEntryStatus(s); value {
+	case SessionSkillCatalogEntryStatusAvailable, SessionSkillCatalogEntryStatusChanged, SessionSkillCatalogEntryStatusMissing:
+		*v = value
+		return nil
+	}
+	return unknownValue("SessionSkillCatalogEntryStatus", s)
+}
+
+type SessionSkillsState struct {
+	SessionID        string                   `json:"sessionId"`
+	JournalSessionID string                   `json:"journalSessionId"`
+	Revision         string                   `json:"revision"`
+	Selected         []SessionSkillDescriptor `json:"selected"`
+	ActiveRevision   string                   `json:"activeRevision"`
+	Active           []SessionSkillDescriptor `json:"active"`
+	Pending          bool                     `json:"pending"`
+	Applying         bool                     `json:"applying"`
+	Error            *string                  `json:"error,omitempty"`
+}
+
+func (v *SessionSkillsState) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "SessionSkillsState", v.decodeFrom)
+}
+
+func (v *SessionSkillsState) decodeFrom(raw map[string]json.RawMessage) error {
+	var out SessionSkillsState
+	d := fieldDecoder{raw: raw, owner: "SessionSkillsState"}
+	d.required("sessionId", &out.SessionID)
+	d.required("journalSessionId", &out.JournalSessionID)
+	d.required("revision", &out.Revision)
+	d.required("selected", &out.Selected)
+	d.required("activeRevision", &out.ActiveRevision)
+	d.required("active", &out.Active)
+	d.required("pending", &out.Pending)
+	d.required("applying", &out.Applying)
+	d.optional("error", &out.Error)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
+type SessionSkillsCatalogResult struct {
+	State   SessionSkillsState         `json:"state"`
+	Catalog []SessionSkillCatalogEntry `json:"catalog"`
+}
+
+func (v *SessionSkillsCatalogResult) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "SessionSkillsCatalogResult", v.decodeFrom)
+}
+
+func (v *SessionSkillsCatalogResult) decodeFrom(raw map[string]json.RawMessage) error {
+	var out SessionSkillsCatalogResult
+	d := fieldDecoder{raw: raw, owner: "SessionSkillsCatalogResult"}
+	d.required("state", &out.State)
+	d.required("catalog", &out.Catalog)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
 type TodoItem struct {
 	Content string     `json:"content"`
 	Status  TodoStatus `json:"status"`
@@ -2529,7 +3144,10 @@ type SessionState struct {
 	DumpTools    []ToolDescriptor `json:"dumpTools"`
 	ContextUsage *ContextUsage    `json:"contextUsage,omitempty"`
 	// Current goal mode; null when the session has no goal.
-	Goal *GoalModeState `json:"goal"`
+	Goal          *GoalModeState      `json:"goal"`
+	PlanMode      *PlanModeState      `json:"planMode"`
+	GoalMode      *GoalModeState      `json:"goalMode"`
+	SessionSkills *SessionSkillsState `json:"sessionSkills,omitempty"`
 }
 
 func (v *SessionState) UnmarshalJSON(data []byte) error {
@@ -2568,6 +3186,9 @@ func (v *SessionState) decodeFrom(raw map[string]json.RawMessage) error {
 	d.defaulted("dumpTools", &out.DumpTools, `[]`)
 	d.optional("contextUsage", &out.ContextUsage)
 	d.defaulted("goal", &out.Goal, `null`)
+	d.defaulted("planMode", &out.PlanMode, `null`)
+	d.defaulted("goalMode", &out.GoalMode, `null`)
+	d.optional("sessionSkills", &out.SessionSkills)
 	if d.err != nil {
 		return d.err
 	}
@@ -2852,8 +3473,9 @@ func (v *AbortAndRestoreQueueResult) decodeFrom(raw map[string]json.RawMessage) 
 }
 
 type BranchMessage struct {
-	EntryID string `json:"entryId"`
-	Text    string `json:"text"`
+	EntryID    string `json:"entryId"`
+	Text       string `json:"text"`
+	ImageCount int64  `json:"imageCount"`
 }
 
 func (v *BranchMessage) UnmarshalJSON(data []byte) error {
@@ -2865,6 +3487,7 @@ func (v *BranchMessage) decodeFrom(raw map[string]json.RawMessage) error {
 	d := fieldDecoder{raw: raw, owner: "BranchMessage"}
 	d.required("entryId", &out.EntryID)
 	d.required("text", &out.Text)
+	d.required("imageCount", &out.ImageCount)
 	if d.err != nil {
 		return d.err
 	}
@@ -2873,8 +3496,9 @@ func (v *BranchMessage) decodeFrom(raw map[string]json.RawMessage) error {
 }
 
 type BranchResult struct {
-	Text      string `json:"text"`
-	Cancelled bool   `json:"cancelled"`
+	Text      string               `json:"text"`
+	Images    []BranchImageContent `json:"images"`
+	Cancelled bool                 `json:"cancelled"`
 }
 
 func (v *BranchResult) UnmarshalJSON(data []byte) error {
@@ -2885,6 +3509,7 @@ func (v *BranchResult) decodeFrom(raw map[string]json.RawMessage) error {
 	var out BranchResult
 	d := fieldDecoder{raw: raw, owner: "BranchResult"}
 	d.required("text", &out.Text)
+	d.required("images", &out.Images)
 	d.required("cancelled", &out.Cancelled)
 	if d.err != nil {
 		return d.err
@@ -3128,16 +3753,19 @@ func (v *SessionTree) decodeFrom(raw map[string]json.RawMessage) error {
 }
 
 type SubagentSnapshot struct {
-	ID          string         `json:"id"`
-	Index       int64          `json:"index"`
-	Agent       string         `json:"agent"`
-	AgentSource AgentSource    `json:"agentSource"`
-	Status      SubagentStatus `json:"status"`
-	LastUpdate  int64          `json:"lastUpdate"`
-	Description *string        `json:"description,omitempty"`
-	Task        *string        `json:"task,omitempty"`
-	Assignment  *string        `json:"assignment,omitempty"`
-	SessionFile *string        `json:"sessionFile,omitempty"`
+	ID              string         `json:"id"`
+	Index           int64          `json:"index"`
+	Agent           string         `json:"agent"`
+	AgentSource     AgentSource    `json:"agentSource"`
+	Status          SubagentStatus `json:"status"`
+	LastUpdate      int64          `json:"lastUpdate"`
+	Description     *string        `json:"description,omitempty"`
+	Task            *string        `json:"task,omitempty"`
+	Assignment      *string        `json:"assignment,omitempty"`
+	SessionFile     *string        `json:"sessionFile,omitempty"`
+	ParentSessionID *string        `json:"parentSessionId,omitempty"`
+	SessionID       *string        `json:"sessionId,omitempty"`
+	StartedAt       *int64         `json:"startedAt,omitempty"`
 	// Raw `AgentProgress` record.
 	Progress         map[string]json.RawMessage `json:"progress,omitempty"`
 	ParentToolCallID *string                    `json:"parentToolCallId,omitempty"`
@@ -3160,6 +3788,9 @@ func (v *SubagentSnapshot) decodeFrom(raw map[string]json.RawMessage) error {
 	d.optional("task", &out.Task)
 	d.optional("assignment", &out.Assignment)
 	d.optional("sessionFile", &out.SessionFile)
+	d.optional("parentSessionId", &out.ParentSessionID)
+	d.optional("sessionId", &out.SessionID)
+	d.optional("startedAt", &out.StartedAt)
 	d.optional("progress", &out.Progress)
 	d.optional("parentToolCallId", &out.ParentToolCallID)
 	if d.err != nil {
@@ -4110,6 +4741,31 @@ func (v ModelChangedEvent) MarshalJSON() ([]byte, error) {
 	return encodeObject(plain(v), `"type":"model_changed"`, nil)
 }
 
+type SessionSkillsUpdatedEvent struct {
+	SessionSkills SessionSkillsState `json:"sessionSkills"`
+}
+
+func (v *SessionSkillsUpdatedEvent) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "SessionSkillsUpdatedEvent", v.decodeFrom)
+}
+
+func (v *SessionSkillsUpdatedEvent) decodeFrom(raw map[string]json.RawMessage) error {
+	var out SessionSkillsUpdatedEvent
+	d := fieldDecoder{raw: raw, owner: "SessionSkillsUpdatedEvent"}
+	d.constant("type", "session_skills_updated")
+	d.required("sessionSkills", &out.SessionSkills)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
+func (v SessionSkillsUpdatedEvent) MarshalJSON() ([]byte, error) {
+	type plain SessionSkillsUpdatedEvent
+	return encodeObject(plain(v), `"type":"session_skills_updated"`, nil)
+}
+
 type ConfigWarningsChangedEvent struct{}
 
 func (v *ConfigWarningsChangedEvent) UnmarshalJSON(data []byte) error {
@@ -4426,6 +5082,7 @@ func (CacheWarmingEndEvent) isRpcAgentEvent()        {}
 func (RetryFallbackAppliedEvent) isRpcAgentEvent()   {}
 func (RetryFallbackSucceededEvent) isRpcAgentEvent() {}
 func (ModelChangedEvent) isRpcAgentEvent()           {}
+func (SessionSkillsUpdatedEvent) isRpcAgentEvent()   {}
 func (ConfigWarningsChangedEvent) isRpcAgentEvent()  {}
 func (AdvisorCostChangedEvent) isRpcAgentEvent()     {}
 func (AdvisorYieldedEvent) isRpcAgentEvent()         {}
@@ -4498,6 +5155,8 @@ func (v *RpcAgentEvent) decodeFrom(raw map[string]json.RawMessage) error {
 		value, err = decodeVariant[RetryFallbackSucceededEvent](raw)
 	case "model_changed":
 		value, err = decodeVariant[ModelChangedEvent](raw)
+	case "session_skills_updated":
+		value, err = decodeVariant[SessionSkillsUpdatedEvent](raw)
 	case "config_warnings_changed":
 		value, err = decodeVariant[ConfigWarningsChangedEvent](raw)
 	case "advisor_cost_changed":
@@ -4617,9 +5276,14 @@ type PromptResultEvent struct {
 	AgentInvoked bool         `json:"agentInvoked"`
 	Status       PromptStatus `json:"status"`
 	// Nothing will wake the session again; when false a `session_settled` follows once background work drains.
-	SessionSettled bool         `json:"sessionSettled"`
-	ID             *string      `json:"id,omitempty"`
-	Error          *PromptError `json:"error,omitempty"`
+	SessionSettled   bool         `json:"sessionSettled"`
+	ID               *string      `json:"id,omitempty"`
+	Error            *PromptError `json:"error,omitempty"`
+	Removed          *bool        `json:"removed,omitempty"`
+	SessionID        *string      `json:"sessionId,omitempty"`
+	Generation       *string      `json:"generation,omitempty"`
+	PendingMessageID *string      `json:"pendingMessageId,omitempty"`
+	ClientMessageID  *string      `json:"clientMessageId,omitempty"`
 }
 
 func (v *PromptResultEvent) UnmarshalJSON(data []byte) error {
@@ -4635,6 +5299,11 @@ func (v *PromptResultEvent) decodeFrom(raw map[string]json.RawMessage) error {
 	d.required("sessionSettled", &out.SessionSettled)
 	d.optional("id", &out.ID)
 	d.optional("error", &out.Error)
+	d.optional("removed", &out.Removed)
+	d.optional("sessionId", &out.SessionID)
+	d.optional("generation", &out.Generation)
+	d.optional("pendingMessageId", &out.PendingMessageID)
+	d.optional("clientMessageId", &out.ClientMessageID)
 	if d.err != nil {
 		return d.err
 	}
@@ -4699,6 +5368,230 @@ func (v ExtensionError) MarshalJSON() ([]byte, error) {
 	return encodeObject(plain(v), `"type":"extension_error"`, nil)
 }
 
+type PlanReviewEvent struct {
+	SessionID         *string `json:"sessionId"`
+	PlanFilePath      string  `json:"planFilePath"`
+	FinalPlanFilePath string  `json:"finalPlanFilePath"`
+	Content           string  `json:"content"`
+	Title             *string `json:"title,omitempty"`
+}
+
+func (v *PlanReviewEvent) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "PlanReviewEvent", v.decodeFrom)
+}
+
+func (v *PlanReviewEvent) decodeFrom(raw map[string]json.RawMessage) error {
+	var out PlanReviewEvent
+	d := fieldDecoder{raw: raw, owner: "PlanReviewEvent"}
+	d.constant("type", "plan_review")
+	d.nullable("sessionId", &out.SessionID)
+	d.required("planFilePath", &out.PlanFilePath)
+	d.required("finalPlanFilePath", &out.FinalPlanFilePath)
+	d.required("content", &out.Content)
+	d.optional("title", &out.Title)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
+func (v PlanReviewEvent) MarshalJSON() ([]byte, error) {
+	type plain PlanReviewEvent
+	return encodeObject(plain(v), `"type":"plan_review"`, nil)
+}
+
+type BtwStartedEvent struct {
+	BtwID    string `json:"btwId"`
+	Question string `json:"question"`
+}
+
+func (v *BtwStartedEvent) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "BtwStartedEvent", v.decodeFrom)
+}
+
+func (v *BtwStartedEvent) decodeFrom(raw map[string]json.RawMessage) error {
+	var out BtwStartedEvent
+	d := fieldDecoder{raw: raw, owner: "BtwStartedEvent"}
+	d.constant("type", "btw_update")
+	d.required("btwId", &out.BtwID)
+	d.constant("state", "started")
+	d.required("question", &out.Question)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
+func (v BtwStartedEvent) MarshalJSON() ([]byte, error) {
+	type plain BtwStartedEvent
+	return encodeObject(plain(v), `"type":"btw_update","state":"started"`, nil)
+}
+
+type BtwStreamingEvent struct {
+	BtwID string `json:"btwId"`
+	Delta string `json:"delta"`
+}
+
+func (v *BtwStreamingEvent) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "BtwStreamingEvent", v.decodeFrom)
+}
+
+func (v *BtwStreamingEvent) decodeFrom(raw map[string]json.RawMessage) error {
+	var out BtwStreamingEvent
+	d := fieldDecoder{raw: raw, owner: "BtwStreamingEvent"}
+	d.constant("type", "btw_update")
+	d.required("btwId", &out.BtwID)
+	d.constant("state", "streaming")
+	d.required("delta", &out.Delta)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
+func (v BtwStreamingEvent) MarshalJSON() ([]byte, error) {
+	type plain BtwStreamingEvent
+	return encodeObject(plain(v), `"type":"btw_update","state":"streaming"`, nil)
+}
+
+type BtwCompletedEvent struct {
+	BtwID      string `json:"btwId"`
+	Answer     string `json:"answer"`
+	CanPromote bool   `json:"canPromote"`
+}
+
+func (v *BtwCompletedEvent) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "BtwCompletedEvent", v.decodeFrom)
+}
+
+func (v *BtwCompletedEvent) decodeFrom(raw map[string]json.RawMessage) error {
+	var out BtwCompletedEvent
+	d := fieldDecoder{raw: raw, owner: "BtwCompletedEvent"}
+	d.constant("type", "btw_update")
+	d.required("btwId", &out.BtwID)
+	d.constant("state", "completed")
+	d.required("answer", &out.Answer)
+	d.required("canPromote", &out.CanPromote)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
+func (v BtwCompletedEvent) MarshalJSON() ([]byte, error) {
+	type plain BtwCompletedEvent
+	return encodeObject(plain(v), `"type":"btw_update","state":"completed"`, nil)
+}
+
+type BtwCancelledEvent struct {
+	BtwID string `json:"btwId"`
+}
+
+func (v *BtwCancelledEvent) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "BtwCancelledEvent", v.decodeFrom)
+}
+
+func (v *BtwCancelledEvent) decodeFrom(raw map[string]json.RawMessage) error {
+	var out BtwCancelledEvent
+	d := fieldDecoder{raw: raw, owner: "BtwCancelledEvent"}
+	d.constant("type", "btw_update")
+	d.required("btwId", &out.BtwID)
+	d.constant("state", "cancelled")
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
+func (v BtwCancelledEvent) MarshalJSON() ([]byte, error) {
+	type plain BtwCancelledEvent
+	return encodeObject(plain(v), `"type":"btw_update","state":"cancelled"`, nil)
+}
+
+type BtwErrorEvent struct {
+	BtwID string `json:"btwId"`
+	Error string `json:"error"`
+}
+
+func (v *BtwErrorEvent) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "BtwErrorEvent", v.decodeFrom)
+}
+
+func (v *BtwErrorEvent) decodeFrom(raw map[string]json.RawMessage) error {
+	var out BtwErrorEvent
+	d := fieldDecoder{raw: raw, owner: "BtwErrorEvent"}
+	d.constant("type", "btw_update")
+	d.required("btwId", &out.BtwID)
+	d.constant("state", "error")
+	d.required("error", &out.Error)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
+func (v BtwErrorEvent) MarshalJSON() ([]byte, error) {
+	type plain BtwErrorEvent
+	return encodeObject(plain(v), `"type":"btw_update","state":"error"`, nil)
+}
+
+type BtwUpdateEvent struct {
+	// Value holds one variant, chosen by "state" on decode.
+	Value BtwUpdateEventVariant
+}
+
+// BtwUpdateEventVariant is implemented by the types BtwUpdateEvent can hold.
+type BtwUpdateEventVariant interface {
+	isBtwUpdateEvent()
+}
+
+func (BtwStartedEvent) isBtwUpdateEvent()   {}
+func (BtwStreamingEvent) isBtwUpdateEvent() {}
+func (BtwCompletedEvent) isBtwUpdateEvent() {}
+func (BtwCancelledEvent) isBtwUpdateEvent() {}
+func (BtwErrorEvent) isBtwUpdateEvent()     {}
+
+func (v BtwUpdateEvent) MarshalJSON() ([]byte, error) {
+	return encodeVariant("BtwUpdateEvent", v.Value)
+}
+
+func (v *BtwUpdateEvent) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "BtwUpdateEvent", v.decodeFrom)
+}
+
+func (v *BtwUpdateEvent) decodeFrom(raw map[string]json.RawMessage) error {
+	tag, err := unionTag(raw, "BtwUpdateEvent", "state")
+	if err != nil {
+		return err
+	}
+	var value BtwUpdateEventVariant
+	switch tag {
+	case "started":
+		value, err = decodeVariant[BtwStartedEvent](raw)
+	case "streaming":
+		value, err = decodeVariant[BtwStreamingEvent](raw)
+	case "completed":
+		value, err = decodeVariant[BtwCompletedEvent](raw)
+	case "cancelled":
+		value, err = decodeVariant[BtwCancelledEvent](raw)
+	case "error":
+		value, err = decodeVariant[BtwErrorEvent](raw)
+	default:
+		return unknownValue("BtwUpdateEvent.state", tag)
+	}
+	if err != nil {
+		return err
+	}
+	v.Value = value
+	return nil
+}
+
 // Slash-command catalog, pushed at startup and whenever command metadata changes.
 type AvailableCommandsUpdateEvent struct {
 	Commands []AvailableSlashCommand `json:"commands"`
@@ -4756,6 +5649,8 @@ type SubagentLifecyclePayload struct {
 	Description      *string                 `json:"description,omitempty"`
 	SessionFile      *string                 `json:"sessionFile,omitempty"`
 	ParentToolCallID *string                 `json:"parentToolCallId,omitempty"`
+	ParentSessionID  *string                 `json:"parentSessionId,omitempty"`
+	SessionID        *string                 `json:"sessionId,omitempty"`
 	// The subagent runs as a detached background job.
 	Detached *bool `json:"detached,omitempty"`
 }
@@ -4775,6 +5670,8 @@ func (v *SubagentLifecyclePayload) decodeFrom(raw map[string]json.RawMessage) er
 	d.optional("description", &out.Description)
 	d.optional("sessionFile", &out.SessionFile)
 	d.optional("parentToolCallId", &out.ParentToolCallID)
+	d.optional("parentSessionId", &out.ParentSessionID)
+	d.optional("sessionId", &out.SessionID)
 	d.optional("detached", &out.Detached)
 	if d.err != nil {
 		return d.err
@@ -6462,6 +7359,7 @@ func (CacheWarmingEndEvent) isRpcNotification()         {}
 func (RetryFallbackAppliedEvent) isRpcNotification()    {}
 func (RetryFallbackSucceededEvent) isRpcNotification()  {}
 func (ModelChangedEvent) isRpcNotification()            {}
+func (SessionSkillsUpdatedEvent) isRpcNotification()    {}
 func (ConfigWarningsChangedEvent) isRpcNotification()   {}
 func (AdvisorCostChangedEvent) isRpcNotification()      {}
 func (AdvisorYieldedEvent) isRpcNotification()          {}
@@ -6565,6 +7463,8 @@ func (v *RpcNotification) UnmarshalJSON(data []byte) error {
 		value, err = decodeVariant[RetryFallbackSucceededEvent](raw)
 	case "model_changed":
 		value, err = decodeVariant[ModelChangedEvent](raw)
+	case "session_skills_updated":
+		value, err = decodeVariant[SessionSkillsUpdatedEvent](raw)
 	case "config_warnings_changed":
 		value, err = decodeVariant[ConfigWarningsChangedEvent](raw)
 	case "advisor_cost_changed":
@@ -6652,6 +7552,7 @@ func (CacheWarmingEndEvent) isRpcServerFrame()         {}
 func (RetryFallbackAppliedEvent) isRpcServerFrame()    {}
 func (RetryFallbackSucceededEvent) isRpcServerFrame()  {}
 func (ModelChangedEvent) isRpcServerFrame()            {}
+func (SessionSkillsUpdatedEvent) isRpcServerFrame()    {}
 func (ConfigWarningsChangedEvent) isRpcServerFrame()   {}
 func (AdvisorCostChangedEvent) isRpcServerFrame()      {}
 func (AdvisorYieldedEvent) isRpcServerFrame()          {}
@@ -6765,6 +7666,8 @@ func (v *RpcServerFrame) UnmarshalJSON(data []byte) error {
 		value, err = decodeVariant[RetryFallbackSucceededEvent](raw)
 	case "model_changed":
 		value, err = decodeVariant[ModelChangedEvent](raw)
+	case "session_skills_updated":
+		value, err = decodeVariant[SessionSkillsUpdatedEvent](raw)
 	case "config_warnings_changed":
 		value, err = decodeVariant[ConfigWarningsChangedEvent](raw)
 	case "advisor_cost_changed":
@@ -6885,6 +7788,109 @@ func (v *SetTodosResult) decodeFrom(raw map[string]json.RawMessage) error {
 	var out SetTodosResult
 	d := fieldDecoder{raw: raw, owner: "SetTodosResult"}
 	d.required("todoPhases", &out.TodoPhases)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
+type SetPlanModeResult struct {
+	PlanMode *PlanModeState `json:"planMode"`
+}
+
+func (v *SetPlanModeResult) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "SetPlanModeResult", v.decodeFrom)
+}
+
+func (v *SetPlanModeResult) decodeFrom(raw map[string]json.RawMessage) error {
+	var out SetPlanModeResult
+	d := fieldDecoder{raw: raw, owner: "SetPlanModeResult"}
+	d.nullable("planMode", &out.PlanMode)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
+type ApprovePlanModeResult struct {
+	FinalPlanFilePath   string                                  `json:"finalPlanFilePath"`
+	ContextPreserved    bool                                    `json:"contextPreserved"`
+	ExecutionDispatched bool                                    `json:"executionDispatched"`
+	CompactionOutcome   *ApprovePlanModeResultCompactionOutcome `json:"compactionOutcome,omitempty"`
+}
+
+func (v *ApprovePlanModeResult) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "ApprovePlanModeResult", v.decodeFrom)
+}
+
+func (v *ApprovePlanModeResult) decodeFrom(raw map[string]json.RawMessage) error {
+	var out ApprovePlanModeResult
+	d := fieldDecoder{raw: raw, owner: "ApprovePlanModeResult"}
+	d.required("finalPlanFilePath", &out.FinalPlanFilePath)
+	d.required("contextPreserved", &out.ContextPreserved)
+	d.required("executionDispatched", &out.ExecutionDispatched)
+	d.optional("compactionOutcome", &out.CompactionOutcome)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
+type ApprovePlanModeResultCompactionOutcome string
+
+const (
+	ApprovePlanModeResultCompactionOutcomeOk        ApprovePlanModeResultCompactionOutcome = "ok"
+	ApprovePlanModeResultCompactionOutcomeCancelled ApprovePlanModeResultCompactionOutcome = "cancelled"
+	ApprovePlanModeResultCompactionOutcomeFailed    ApprovePlanModeResultCompactionOutcome = "failed"
+)
+
+func (v *ApprovePlanModeResultCompactionOutcome) UnmarshalJSON(data []byte) error {
+	s, err := decodeString(data, "ApprovePlanModeResultCompactionOutcome")
+	if err != nil {
+		return err
+	}
+	switch value := ApprovePlanModeResultCompactionOutcome(s); value {
+	case ApprovePlanModeResultCompactionOutcomeOk, ApprovePlanModeResultCompactionOutcomeCancelled, ApprovePlanModeResultCompactionOutcomeFailed:
+		*v = value
+		return nil
+	}
+	return unknownValue("ApprovePlanModeResultCompactionOutcome", s)
+}
+
+type GoalModeResult struct {
+	GoalMode *GoalModeState `json:"goalMode"`
+}
+
+func (v *GoalModeResult) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "GoalModeResult", v.decodeFrom)
+}
+
+func (v *GoalModeResult) decodeFrom(raw map[string]json.RawMessage) error {
+	var out GoalModeResult
+	d := fieldDecoder{raw: raw, owner: "GoalModeResult"}
+	d.nullable("goalMode", &out.GoalMode)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
+type SetActiveToolsResult struct {
+	ToolNames []string `json:"toolNames"`
+}
+
+func (v *SetActiveToolsResult) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "SetActiveToolsResult", v.decodeFrom)
+}
+
+func (v *SetActiveToolsResult) decodeFrom(raw map[string]json.RawMessage) error {
+	var out SetActiveToolsResult
+	d := fieldDecoder{raw: raw, owner: "SetActiveToolsResult"}
+	d.required("toolNames", &out.ToolNames)
 	if d.err != nil {
 		return d.err
 	}
@@ -7348,6 +8354,7 @@ type PromptCommand struct {
 	Message string `json:"message"`
 	// Images attached to the message.
 	Images            []ImageContent     `json:"images,omitempty"`
+	ClientMessageID   *string            `json:"clientMessageId,omitempty"`
 	StreamingBehavior *StreamingBehavior `json:"streamingBehavior,omitempty"`
 }
 
@@ -7363,7 +8370,8 @@ func (c Commands) Prompt(ctx context.Context, p PromptCommand) (PromptAck, error
 type SteerCommand struct {
 	Message string `json:"message"`
 	// Images attached to the message.
-	Images []ImageContent `json:"images,omitempty"`
+	Images          []ImageContent `json:"images,omitempty"`
+	ClientMessageID *string        `json:"clientMessageId,omitempty"`
 }
 
 // Steer sends "steer": Queue a steering message.
@@ -7375,7 +8383,8 @@ func (c Commands) Steer(ctx context.Context, p SteerCommand) error {
 type FollowUpCommand struct {
 	Message string `json:"message"`
 	// Images attached to the message.
-	Images []ImageContent `json:"images,omitempty"`
+	Images          []ImageContent `json:"images,omitempty"`
+	ClientMessageID *string        `json:"clientMessageId,omitempty"`
 }
 
 // FollowUp sends "follow_up": Queue a follow-up message.
@@ -7456,6 +8465,148 @@ type OpenSessionCommand struct {
 func (c Commands) OpenSession(ctx context.Context, p OpenSessionCommand) (OpenSessionResult, error) {
 	var out OpenSessionResult
 	err := c.call(ctx, "open_session", p, 0, &out)
+	return out, err
+}
+
+// BtwStartCommand holds the parameters of "btw_start".
+type BtwStartCommand struct {
+	BtwID    string `json:"btwId"`
+	Question string `json:"question"`
+}
+
+// BtwStart sends "btw_start": Start an isolated BTW answer.
+func (c Commands) BtwStart(ctx context.Context, p BtwStartCommand) (BtwStartResult, error) {
+	var out BtwStartResult
+	err := c.call(ctx, "btw_start", p, 0, &out)
+	return out, err
+}
+
+// BtwCancelCommand holds the parameters of "btw_cancel".
+type BtwCancelCommand struct {
+	BtwID string `json:"btwId"`
+}
+
+// BtwCancel sends "btw_cancel": Cancel an isolated BTW answer.
+func (c Commands) BtwCancel(ctx context.Context, p BtwCancelCommand) (BtwCancelResult, error) {
+	var out BtwCancelResult
+	err := c.call(ctx, "btw_cancel", p, 0, &out)
+	return out, err
+}
+
+// BtwReleaseCommand holds the parameters of "btw_release".
+type BtwReleaseCommand struct {
+	BtwID string `json:"btwId"`
+}
+
+// BtwRelease sends "btw_release": Release an isolated BTW answer.
+func (c Commands) BtwRelease(ctx context.Context, p BtwReleaseCommand) (BtwReleaseResult, error) {
+	var out BtwReleaseResult
+	err := c.call(ctx, "btw_release", p, 0, &out)
+	return out, err
+}
+
+// BtwPromoteCommand holds the parameters of "btw_promote".
+type BtwPromoteCommand struct {
+	BtwID string `json:"btwId"`
+}
+
+// BtwPromote sends "btw_promote": Promote a BTW answer to a persisted session.
+func (c Commands) BtwPromote(ctx context.Context, p BtwPromoteCommand) (BtwPromoteResult, error) {
+	var out BtwPromoteResult
+	err := c.call(ctx, "btw_promote", p, 0, &out)
+	return out, err
+}
+
+// GetActivityCommand holds the parameters of "get_activity".
+type GetActivityCommand struct {
+	SessionID string `json:"sessionId"`
+}
+
+// GetActivity sends "get_activity": Read authoritative session activity.
+func (c Commands) GetActivity(ctx context.Context, p GetActivityCommand) (SessionActivitySnapshot, error) {
+	var out SessionActivitySnapshot
+	err := c.call(ctx, "get_activity", p, 0, &out)
+	return out, err
+}
+
+// GetActivityDetailCommand holds the parameters of "get_activity_detail".
+type GetActivityDetailCommand struct {
+	SessionID  string       `json:"sessionId"`
+	Generation string       `json:"generation"`
+	Kind       ActivityKind `json:"kind"`
+	ActivityID string       `json:"activityId"`
+}
+
+// GetActivityDetail sends "get_activity_detail": Read an activity item from the specified generation.
+func (c Commands) GetActivityDetail(ctx context.Context, p GetActivityDetailCommand) (SessionActivityDetail, error) {
+	var out SessionActivityDetail
+	err := c.call(ctx, "get_activity_detail", p, 0, &out)
+	return out, err
+}
+
+// GetPendingMessagesCommand holds the parameters of "get_pending_messages".
+type GetPendingMessagesCommand struct {
+	SessionID string `json:"sessionId"`
+}
+
+// GetPendingMessages sends "get_pending_messages": Read removable pending inputs.
+func (c Commands) GetPendingMessages(ctx context.Context, p GetPendingMessagesCommand) (PendingMessagesSnapshot, error) {
+	var out PendingMessagesSnapshot
+	err := c.call(ctx, "get_pending_messages", p, 0, &out)
+	return out, err
+}
+
+// RemovePendingMessagesCommand holds the parameters of "remove_pending_messages".
+type RemovePendingMessagesCommand struct {
+	SessionID  string   `json:"sessionId"`
+	Generation string   `json:"generation"`
+	Ids        []string `json:"ids"`
+}
+
+// RemovePendingMessages sends "remove_pending_messages": Remove identified pending inputs from the specified generation.
+func (c Commands) RemovePendingMessages(ctx context.Context, p RemovePendingMessagesCommand) (PendingMessagesRemoval, error) {
+	var out PendingMessagesRemoval
+	err := c.call(ctx, "remove_pending_messages", p, 0, &out)
+	return out, err
+}
+
+// GetSessionRecapCommand holds the parameters of "get_session_recap".
+type GetSessionRecapCommand struct {
+	SessionID string `json:"sessionId"`
+}
+
+// GetSessionRecap sends "get_session_recap": Read the persisted session recap.
+func (c Commands) GetSessionRecap(ctx context.Context, p GetSessionRecapCommand) (SessionRecapSnapshot, error) {
+	var out SessionRecapSnapshot
+	err := c.call(ctx, "get_session_recap", p, 0, &out)
+	return out, err
+}
+
+// GetSessionSkillsCommand holds the parameters of "get_session_skills".
+type GetSessionSkillsCommand struct {
+	SessionID        string `json:"sessionId"`
+	JournalSessionID string `json:"journalSessionId"`
+}
+
+// GetSessionSkills sends "get_session_skills": Read session skill selection and catalog.
+func (c Commands) GetSessionSkills(ctx context.Context, p GetSessionSkillsCommand) (SessionSkillsCatalogResult, error) {
+	var out SessionSkillsCatalogResult
+	err := c.call(ctx, "get_session_skills", p, 0, &out)
+	return out, err
+}
+
+// SetSessionSkillsCommand holds the parameters of "set_session_skills".
+type SetSessionSkillsCommand struct {
+	SessionID        string   `json:"sessionId"`
+	JournalSessionID string   `json:"journalSessionId"`
+	ExpectedRevision string   `json:"expectedRevision"`
+	SkillIds         []string `json:"skillIds"`
+}
+
+// SetSessionSkills sends "set_session_skills": Apply a revision-guarded session skill selection.
+func (c Commands) SetSessionSkills(ctx context.Context, p SetSessionSkillsCommand) (SessionSkillsState, error) {
+	var out SessionSkillsState
+	err := c.call(ctx, "set_session_skills", p, 0, &out)
 	return out, err
 }
 
@@ -7552,6 +8703,105 @@ func (c Commands) SetTodos(ctx context.Context, p SetTodosCommand) ([]TodoPhase,
 	var out SetTodosResult
 	err := c.call(ctx, "set_todos", p, 0, &out)
 	return out.TodoPhases, err
+}
+
+// SetPlanModeCommand holds the parameters of "set_plan_mode".
+type SetPlanModeCommand struct {
+	Enabled      bool                        `json:"enabled"`
+	PlanFilePath *string                     `json:"planFilePath,omitempty"`
+	Workflow     *SetPlanModeCommandWorkflow `json:"workflow,omitempty"`
+}
+
+// SetPlanMode sends "set_plan_mode": Enable or disable the browser plan workflow.
+func (c Commands) SetPlanMode(ctx context.Context, p SetPlanModeCommand) (SetPlanModeResult, error) {
+	var out SetPlanModeResult
+	err := c.call(ctx, "set_plan_mode", p, 0, &out)
+	return out, err
+}
+
+type SetPlanModeCommandWorkflow string
+
+const (
+	SetPlanModeCommandWorkflowParallel  SetPlanModeCommandWorkflow = "parallel"
+	SetPlanModeCommandWorkflowIterative SetPlanModeCommandWorkflow = "iterative"
+)
+
+func (v *SetPlanModeCommandWorkflow) UnmarshalJSON(data []byte) error {
+	s, err := decodeString(data, "SetPlanModeCommandWorkflow")
+	if err != nil {
+		return err
+	}
+	switch value := SetPlanModeCommandWorkflow(s); value {
+	case SetPlanModeCommandWorkflowParallel, SetPlanModeCommandWorkflowIterative:
+		*v = value
+		return nil
+	}
+	return unknownValue("SetPlanModeCommandWorkflow", s)
+}
+
+// ApprovePlanModeCommand holds the parameters of "approve_plan_mode".
+type ApprovePlanModeCommand struct {
+	FinalPlanFilePath    string  `json:"finalPlanFilePath"`
+	PlanFilePath         *string `json:"planFilePath,omitempty"`
+	PreserveContext      *bool   `json:"preserveContext,omitempty"`
+	CompactBeforeExecute *bool   `json:"compactBeforeExecute,omitempty"`
+}
+
+// ApprovePlanMode sends "approve_plan_mode": Approve a plan and dispatch execution with the chosen context policy.
+func (c Commands) ApprovePlanMode(ctx context.Context, p ApprovePlanModeCommand) (ApprovePlanModeResult, error) {
+	var out ApprovePlanModeResult
+	err := c.call(ctx, "approve_plan_mode", p, 0, &out)
+	return out, err
+}
+
+// GoalModeCommand holds the parameters of "goal_mode".
+type GoalModeCommand struct {
+	Op GoalModeCommandOp `json:"op"`
+	// Required for create; omitted for lifecycle mutations.
+	Objective   *string `json:"objective,omitempty"`
+	TokenBudget *int64  `json:"tokenBudget,omitempty"`
+}
+
+// GoalMode sends "goal_mode": Change the browser goal workflow.
+func (c Commands) GoalMode(ctx context.Context, p GoalModeCommand) (GoalModeResult, error) {
+	var out GoalModeResult
+	err := c.call(ctx, "goal_mode", p, 0, &out)
+	return out, err
+}
+
+type GoalModeCommandOp string
+
+const (
+	GoalModeCommandOpCreate    GoalModeCommandOp = "create"
+	GoalModeCommandOpPause     GoalModeCommandOp = "pause"
+	GoalModeCommandOpResume    GoalModeCommandOp = "resume"
+	GoalModeCommandOpDrop      GoalModeCommandOp = "drop"
+	GoalModeCommandOpSetBudget GoalModeCommandOp = "set_budget"
+)
+
+func (v *GoalModeCommandOp) UnmarshalJSON(data []byte) error {
+	s, err := decodeString(data, "GoalModeCommandOp")
+	if err != nil {
+		return err
+	}
+	switch value := GoalModeCommandOp(s); value {
+	case GoalModeCommandOpCreate, GoalModeCommandOpPause, GoalModeCommandOpResume, GoalModeCommandOpDrop, GoalModeCommandOpSetBudget:
+		*v = value
+		return nil
+	}
+	return unknownValue("GoalModeCommandOp", s)
+}
+
+// SetActiveToolsCommand holds the parameters of "set_active_tools".
+type SetActiveToolsCommand struct {
+	ToolNames []string `json:"toolNames"`
+}
+
+// SetActiveTools sends "set_active_tools": Restrict the session to the named active tools.
+func (c Commands) SetActiveTools(ctx context.Context, p SetActiveToolsCommand) ([]string, error) {
+	var out SetActiveToolsResult
+	err := c.call(ctx, "set_active_tools", p, 0, &out)
+	return out.ToolNames, err
 }
 
 // SetHostToolsCommand holds the parameters of "set_host_tools".

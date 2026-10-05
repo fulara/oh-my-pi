@@ -5,6 +5,8 @@ import unittest
 from omp_rpc import (
     AgentEndEvent,
     AskOption,
+    BtwCompletedEvent,
+    BtwErrorEvent,
     AutoCompactionEndEvent,
     AutoCompactionStartEvent,
     CacheWarmingEndEvent,
@@ -30,7 +32,7 @@ from omp_rpc import (
     parse_notification,
     parse_session_state,
 )
-from omp_rpc.protocol import parse_branch_messages, parse_branch_result
+from omp_rpc import parse_branch_message, parse_branch_result
 
 
 GOAL = {
@@ -46,6 +48,24 @@ GOAL = {
 
 
 class ProtocolParsingTests(unittest.TestCase):
+    def test_btw_notifications_dispatch_by_state_and_reject_incomplete_completion(self) -> None:
+        completed = parse_notification({
+            "type": "btw_update", "btwId": "side-1", "state": "completed",
+            "answer": "Side answer", "canPromote": True,
+        })
+        self.assertIsInstance(completed, BtwCompletedEvent)
+        self.assertEqual((completed.btw_id, completed.answer, completed.can_promote),
+                         ("side-1", "Side answer", True))
+        failed = parse_notification({
+            "type": "btw_update", "btwId": "side-1", "state": "error", "error": "cancelled upstream",
+        })
+        self.assertIsInstance(failed, BtwErrorEvent)
+        self.assertEqual(failed.error, "cancelled upstream")
+        with self.assertRaises(ValueError):
+            parse_notification({
+                "type": "btw_update", "btwId": "side-1", "state": "completed", "canPromote": True,
+            })
+
     def test_parse_session_state_goal(self) -> None:
         base = {"sessionId": "s", "goal": None}
         self.assertIsNone(parse_session_state(base).goal)
@@ -806,14 +826,10 @@ class ProtocolParsingTests(unittest.TestCase):
         self.assertEqual(notification.messages[0]["content"][0]["text"], "hello")
 
     def test_parse_branch_messages_requires_and_preserves_image_counts(self) -> None:
-        messages = parse_branch_messages(
-            {
-                "messages": [
-                    {"entryId": "text", "text": "hello", "imageCount": 0},
-                    {"entryId": "image", "text": "", "imageCount": 2},
-                ]
-            }
-        )
+        messages = tuple(parse_branch_message(item) for item in (
+            {"entryId": "text", "text": "hello", "imageCount": 0},
+            {"entryId": "image", "text": "", "imageCount": 2},
+        ))
 
         self.assertEqual(
             [(item.entry_id, item.text, item.image_count) for item in messages],
@@ -823,14 +839,13 @@ class ProtocolParsingTests(unittest.TestCase):
         invalid_payloads = [
             None,
             {},
-            {"messages": "not-a-list"},
-            {"messages": [{"entryId": "missing-count", "text": ""}]},
-            {"messages": [{"entryId": "boolean-count", "text": "", "imageCount": True}]},
-            {"messages": [{"entryId": "negative-count", "text": "", "imageCount": -1}]},
+            {"entryId": "missing-count", "text": ""},
+            {"entryId": "boolean-count", "text": "", "imageCount": True},
+            {"entryId": "negative-count", "text": "", "imageCount": -1},
         ]
         for payload in invalid_payloads:
             with self.subTest(payload=payload), self.assertRaises(ValueError):
-                parse_branch_messages(payload)
+                parse_branch_message(payload)
 
     def test_parse_branch_result_is_strict_and_preserves_image_metadata(self) -> None:
         payload = {
