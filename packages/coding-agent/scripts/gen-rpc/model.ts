@@ -9,7 +9,7 @@ import type { RpcWireBundle, RpcWireCommand } from "../../src/modes/rpc/wire";
 
 /** A wire type reference or inline shape. */
 export type WireType =
-	| { kind: "string" | "integer" | "number" | "boolean" | "null" | "unknown" }
+	| { kind: "string" | "integer" | "number" | "boolean" | "null" | "unknown"; minimum?: number }
 	| { kind: "literal"; value: string | number | boolean }
 	| { kind: "enum"; values: string[] }
 	| { kind: "ref"; name: string }
@@ -94,7 +94,7 @@ function parseType(schema: JsonSchema, where: string): WireType {
 		case "number":
 		case "boolean":
 		case "null":
-			return { kind: schema.type };
+			return { kind: schema.type, ...(typeof schema.minimum === "number" ? { minimum: schema.minimum } : {}) };
 		case "array":
 			if (schema.prefixItems) throw new Error(`${where}: tuples are not supported on the wire`);
 			return { kind: "array", items: parseType((schema.items ?? {}) as JsonSchema, `${where}[]`) };
@@ -181,18 +181,40 @@ export function unionLeaves(model: WireModel, name: string): string[] {
 export function unionDispatch(model: WireModel, name: string): WireDispatch | undefined {
 	const members = unionMembers(model.defs.get(name));
 	if (!members) return undefined;
-	for (const property of ["type", "role", "method", "stage"]) {
+	const first = model.defs.get(unionLeaves(model, members[0])[0]);
+	const properties = new Set(["type", "role", "method", "stage"]);
+	if (first?.kind === "object") {
+		for (const field of first.fields) {
+			if (field.required && (field.type.kind === "literal" || field.type.kind === "enum")) properties.add(field.key);
+		}
+	}
+	for (const property of properties) {
 		const cases = new Map<string, string>();
 		let routes = true;
 		for (const member of members) {
 			for (const leaf of unionLeaves(model, member)) {
-				const value = constantOf(model.defs.get(leaf), property);
-				const routed = value === undefined ? undefined : cases.get(value);
-				if (value === undefined || (routed !== undefined && routed !== member)) {
+				const def = model.defs.get(leaf);
+				const field = def?.kind === "object" ? def.fields.find(candidate => candidate.key === property) : undefined;
+				const values = field?.required
+					? field.type.kind === "literal" && typeof field.type.value === "string"
+						? [field.type.value]
+						: field.type.kind === "enum"
+							? field.type.values
+							: []
+					: [];
+				if (values.length === 0) {
 					routes = false;
 					break;
 				}
-				cases.set(value, member);
+				for (const value of values) {
+					const routed = cases.get(value);
+					if (routed !== undefined && routed !== member) {
+						routes = false;
+						break;
+					}
+					cases.set(value, member);
+				}
+				if (!routes) break;
 			}
 			if (!routes) break;
 		}

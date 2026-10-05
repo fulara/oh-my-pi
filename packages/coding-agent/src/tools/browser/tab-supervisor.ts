@@ -21,7 +21,7 @@ import { expandPath } from "../path-utils";
 import { CELL_BUDGET_SLACK_MS } from "../run-scope";
 import { ToolAbortError, toWorkerErrorPayload } from "../tool-errors";
 import { ToolError } from "@oh-my-pi/pi-tui/tools/tool-errors";
-import { gracefulKillTreeOnce, isChromiumBrowserExecutable, pickElectronTarget } from "./attach";
+import { gracefulKillTreeOnce, isChromiumBrowserExecutable, pickElectronTarget, waitForBrowserProcessExit } from "./attach";
 import type * as Cmux from "./cmux/cmux-tab";
 import { CmuxUnavailableError, mapWaitUntil } from "./cmux/rpc";
 import { browserConnection, DEFAULT_VIEWPORT, privateTargetId } from "./launch";
@@ -540,7 +540,7 @@ export function acquireTab(name: string, browser: BrowserHandle, opts: AcquireTa
 			return value;
 		},
 		async error => {
-			await releaseBrowser(browser, { kill: false }).catch(() => undefined);
+			await releaseBrowser(browser, { kill: false });
 			throw error;
 		},
 	);
@@ -796,7 +796,7 @@ async function acquireTabImpl(
 	if (opts.signal?.aborted) {
 		await worker.terminate().catch(() => undefined);
 		closeAbandonedWorkerPage(browser, worker);
-		if (tempHold || browser.refCount === 0) await releaseBrowser(browser, { kill: false }).catch(() => undefined);
+		if (tempHold || browser.refCount === 0) await releaseBrowser(browser, { kill: false });
 		throw new ToolAbortError("Browser tab open aborted");
 	}
 
@@ -1784,36 +1784,39 @@ export async function releaseTab(name: string, opts: ReleaseTabOptions = {}): Pr
 		ongoing.opts.kill = ongoing.opts.kill || opts.kill;
 		// A joining close wins over a session end's `keepPage` while the page is still undecided.
 		if (!opts.keepPage) ongoing.opts.keepPage = false;
-		const joined = await ongoing.promise;
-		if (!opts.keepPage && joined === "kept" && tab.backend === "worker") {
-			// The first release already decided to keep the page and may have disconnected.
-			// Reconnect to its browser, not a same-name tab which could now belong to another caller;
-			// a close never starts or replaces the relay that kept the page.
-			const browser = await acquireBrowser(tab.browser.kind, { cwd: getProjectDir(), startRelay: false });
-			holdBrowser(browser);
-			try {
-				const timeoutMs = opts.timeoutMs ?? DEFAULT_TAB_CLOSE_TIMEOUT_MS;
-				if (
-					!("browser" in browser) ||
-					!(await waitForTabCleanup(
-						tab,
-						timeoutMs,
-						`joined CDP target ${JSON.stringify(tab.targetId)} (Page.close)`,
-						closeTargetById(browser, tab.targetId, timeoutMs / 2),
-					))
-				) {
-					throw new ToolError(`Could not confirm closure of tab ${JSON.stringify(name)}`);
+		try {
+			const joined = await ongoing.promise;
+			if (!opts.keepPage && joined === "kept" && tab.backend === "worker") {
+				// The first release already decided to keep the page and may have disconnected.
+				// Reconnect to its browser, not a same-name tab which could now belong to another caller;
+				// a close never starts or replaces the relay that kept the page.
+				const browser = await acquireBrowser(tab.browser.kind, { cwd: getProjectDir(), startRelay: false });
+				holdBrowser(browser);
+				try {
+					const timeoutMs = opts.timeoutMs ?? DEFAULT_TAB_CLOSE_TIMEOUT_MS;
+					if (
+						!("browser" in browser) ||
+						!(await waitForTabCleanup(
+							tab,
+							timeoutMs,
+							`joined CDP target ${JSON.stringify(tab.targetId)} (Page.close)`,
+							closeTargetById(browser, tab.targetId, timeoutMs / 2),
+						))
+					) {
+						throw new ToolError(`Could not confirm closure of tab ${JSON.stringify(name)}`);
+					}
+					await removeUploadStaging(tab.uploadDir);
+				} finally {
+					await releaseBrowser(browser, { kill: false });
 				}
-				await removeUploadStaging(tab.uploadDir);
-			} finally {
-				await releaseBrowser(browser, { kill: false });
 			}
+			return true;
+		} finally {
+			// The upgrade above lands too late when the first release already
+			// passed `releaseBrowser` or failed afterwards: verify a still-running
+			// spawned app is terminated through its retained birth identity.
+			if (opts.kill) await ensureSpawnedKilled(tab.browser);
 		}
-		// The upgrade above lands too late when the first release already
-		// passed `releaseBrowser`: verify a still-running spawned app is
-		// terminated rather than trusting the joined outcome.
-		if (opts.kill) await ensureSpawnedKilled(tab.browser);
-		return true;
 	}
 	const entry = { promise: releaseTabInner(tab, name, opts), opts };
 	releaseInflight.set(tab, entry);
@@ -1826,18 +1829,23 @@ export async function releaseTab(name: string, opts: ReleaseTabOptions = {}): Pr
 }
 
 /**
- * Best-effort termination of a spawned app that outlived a joined teardown.
- * Fires only behind a live subprocess handle (kernel-tracked, so no
- * pid-reuse hazard): anything else already died or was never ours to kill.
+ * Terminate an owned spawned app that outlived a joined teardown. The
+ * subprocess proves liveness; only the retained birth identity authorizes kill.
  */
 async function ensureSpawnedKilled(browser: BrowserHandle): Promise<void> {
 	if (browser.kind.kind !== "spawned" || !("subprocess" in browser)) return;
-	const { pid, subprocess } = browser;
-	if (pid === undefined || !subprocess || subprocess.exitCode !== null) return;
-	await gracefulKillTreeOnce(pid).catch(() => undefined);
+	const { subprocess, ownedProcess } = browser;
+	if (!subprocess || subprocess.exitCode !== null || subprocess.signalCode !== null) return;
+	if (!ownedProcess || ownedProcess.pid !== subprocess.pid) {
+		throw new ToolError(
+			`Spawned browser cleanup refused (PID ${subprocess.pid}): missing or mismatched birth-pinned process identity; the resource may still be running.`,
+		);
+	}
+	await gracefulKillTreeOnce(ownedProcess);
+	await waitForBrowserProcessExit(ownedProcess, subprocess.exited);
 }
 
-/** Test hook for the kill guards without a live application. */
+/** Test hook for retained-identity cleanup using disposable application processes. */
 export function ensureSpawnedKilledForTest(browser: BrowserHandle): Promise<void> {
 	return ensureSpawnedKilled(browser);
 }
@@ -1978,7 +1986,11 @@ async function releaseTabInner(tab: TabSession, name: string, opts: ReleaseTabOp
 			resource: `tab ${JSON.stringify(name)}`,
 		});
 	} catch (error) {
-		cleanupError ??= error;
+		cleanupError = cleanupError
+			? new ToolError(
+					`${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}; browser cleanup also failed: ${error instanceof Error ? error.message : String(error)}`,
+				)
+			: error;
 	} finally {
 		tabs.delete(name);
 		const scope = sharedTargetScopeOf(tab.browser);

@@ -26,7 +26,6 @@ import {
 	acquireTab,
 	cancelIdleCloseForOwner,
 	earliestIdleCloseInMs,
-	ensureSpawnedKilledForTest,
 	freezeTabsForOwner,
 	getTabsMapForTest,
 	hasIdleCloseTimerForTest,
@@ -417,33 +416,6 @@ describe("browser settle — lifecycle freeze via CDP", () => {
 			});
 			expect(await unfreezeTabSessionForTest(tab)).toBe(true);
 			expect(calls.length).toBe(0);
-		});
-	});
-
-	describe("browser settle — spawned kill guards", () => {
-		function stubBrowser(overrides: Record<string, unknown> = {}): BrowserHandle {
-			return { kind: { kind: "headless" }, ...overrides } as unknown as BrowserHandle;
-		}
-
-		it("never touches non-spawned browsers", async () => {
-			await expect(ensureSpawnedKilledForTest(stubBrowser())).resolves.toBeUndefined();
-			await expect(
-				ensureSpawnedKilledForTest(stubBrowser({ kind: { kind: "connected", cdpUrl: "http://x" } })),
-			).resolves.toBeUndefined();
-		});
-
-		it("skips exited or untracked spawned apps", async () => {
-			await expect(
-				ensureSpawnedKilledForTest(
-					stubBrowser({ kind: { kind: "spawned", path: "/x" }, pid: 1, subprocess: { exitCode: 0 } }),
-				),
-			).resolves.toBeUndefined();
-			await expect(
-				ensureSpawnedKilledForTest(stubBrowser({ kind: { kind: "spawned", path: "/x" }, pid: 1 })),
-			).resolves.toBeUndefined();
-			await expect(
-				ensureSpawnedKilledForTest(stubBrowser({ kind: { kind: "spawned", path: "/x" } })),
-			).resolves.toBeUndefined();
 		});
 	});
 
