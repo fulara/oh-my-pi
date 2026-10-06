@@ -1660,7 +1660,7 @@ export interface HostUriSchemeDefinition {
 }
 
 /** Unsolicited outbound frame (everything except responses and host tool/URI requests), discriminated by `type`. */
-export type RpcNotification = ReadyEvent | PromptResultEvent | SessionSettledEvent | ExtensionError | ExtensionUiRequest | AvailableCommandsUpdateEvent | SubagentLifecycleEvent | SubagentProgressEvent | SubagentEvent | LivePhaseEvent | LiveLevelsEvent | LiveTranscriptEvent | LiveEndEvent | BtwDeltaEvent | BtwRecordEvent | CommandOutputEvent | SessionInfoUpdateEvent | ConfigUpdateEvent | RpcFrameErrorEvent | RpcAgentEvent;
+export type RpcNotification = ReadyEvent | PromptResultEvent | SessionSettledEvent | ExtensionError | ExtensionUiRequest | AvailableCommandsUpdateEvent | SubagentLifecycleEvent | SubagentProgressEvent | SubagentEvent | LivePhaseEvent | LiveLevelsEvent | LiveTranscriptEvent | LiveEndEvent | BtwDeltaEvent | BtwRecordEvent | PlanReviewEvent | BtwUpdateEvent | CommandOutputEvent | SessionInfoUpdateEvent | ConfigUpdateEvent | RpcFrameErrorEvent | RpcAgentEvent;
 
 /** Any frame the server writes to stdout (after reassembling `rpc_chunk` sequences), discriminated by `type`. */
 export type RpcServerFrame = RpcResponse | RpcHostRequest | RpcNotification;
@@ -1730,11 +1730,17 @@ export interface BtwStartResult {
 }
 
 export interface BtwCancelParams {
-	btwId: string;
+	/** Isolated answer selector; mutually exclusive with recordId. */
+	btwId?: string;
+	/** Persisted side-question selector; omitted to cancel the running side question. */
+	recordId?: string;
 }
 
 export interface BtwCancelResult {
-	btwId: string;
+	/** Returned when the request selected an isolated answer by btwId. */
+	btwId?: string;
+	/** Returned for persisted side-question cancellation, with or without recordId. */
+	cancelled?: boolean;
 }
 
 export interface BtwReleaseParams {
@@ -2098,14 +2104,6 @@ export interface BtwResult {
 	record: BtwHistoryRecord;
 }
 
-export interface BtwCancelParams {
-	recordId?: string;
-}
-
-export interface BtwCancelResult {
-	cancelled: boolean;
-}
-
 export interface GetBtwHistoryResult {
 	records: BtwHistoryRecord[];
 }
@@ -2192,6 +2190,5 @@ export interface RpcWireCommands {
 	predict_word: { params: PredictWordParams; result: PredictWordResult };
 	predict_word_feedback: { params: PredictWordFeedbackParams; result: undefined };
 	btw: { params: BtwParams; result: BtwResult };
-	btw_cancel: { params: BtwCancelParams; result: BtwCancelResult };
 	get_btw_history: { params: undefined; result: GetBtwHistoryResult };
 }

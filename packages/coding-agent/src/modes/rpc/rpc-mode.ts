@@ -630,6 +630,15 @@ export class RpcInputDispatcher {
 				dispatchRpcInputFrame(command, this.#deps);
 				return;
 			}
+			// Reject ambiguous selectors before they can cancel an admitted start.
+			if (
+				command.type === "btw_cancel" &&
+				"btwId" in command &&
+				(typeof command.btwId !== "string" || !command.btwId.trim() || command.recordId !== undefined)
+			) {
+				dispatchRpcInputFrame(command, this.#deps);
+				return;
+			}
 
 			let task: Promise<void>;
 			if ((command.type === "btw_cancel" && "btwId" in command) || command.type === "btw_release") {
