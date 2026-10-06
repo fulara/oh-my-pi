@@ -129,6 +129,8 @@ export function createComputerPrelude(
 	// JavaScript or Python kernel actually asks for its enabled preludes.
 	const { computerPreludeAssets } = require("./computer/prelude-definition");
 	let closed = false;
+	// Disposal can read this slot while the callback is being registered.
+	let unregisterDisposal: (() => void) | void = undefined;
 	const lifetime: ComputerLifetime = {
 		isClosed: () => closed,
 		close: async () => {
@@ -139,7 +141,7 @@ export function createComputerPrelude(
 			await controller.close();
 		},
 	};
-	const unregisterDisposal = session.registerDisposeCallback?.(() => {
+	unregisterDisposal = session.registerDisposeCallback?.(() => {
 		void lifetime.close();
 	});
 

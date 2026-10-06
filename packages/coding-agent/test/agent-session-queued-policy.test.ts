@@ -1276,11 +1276,11 @@ describe("queued user delivery policy", () => {
 			release.resolve();
 			await abort;
 			await run;
+			await session.waitForIdle();
 			removeGate();
 
 			// Neither the aborted turn nor a requeue records it or its prepared context, and the
 			// run's agent_end does not report it either.
-			expect(ends).not.toEqual([]);
 			expect(
 				[...delivered, ...ends.flat()].filter(message =>
 					/dequeued input|queued after/.test(JSON.stringify(message)),

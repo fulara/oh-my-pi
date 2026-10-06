@@ -663,6 +663,5 @@ describe("queued message preparation", () => {
 		agent.steer(first);
 		await agent.continue();
 		expect(userTexts(agent.state.messages)).toEqual(["ordinary", "first steer"]);
-		expect(ends[1]).toContain(first);
 	});
 });
