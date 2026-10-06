@@ -902,6 +902,8 @@ export const rpcContractFixtures = [
 				isSettled: true,
 				fastModeEnabled: false,
 				fastModeActive: false,
+				slowModeSupported: false,
+				slowModeEnabled: false,
 				tokensPerSecond: null,
 				todoPhases: [
 					{

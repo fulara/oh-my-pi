@@ -48,9 +48,12 @@ describe("shared idle recap lifecycle", () => {
 			getApiKey: () => "test-key",
 			initialState: { model, systemPrompt: ["Test"], tools: [] },
 			convertToLlm,
-			streamFn: () => {
+			streamFn: requestedModel => {
 				const stream = new AssistantMessageEventStream();
 				const message = createAssistantMessage("Main turn complete");
+				message.api = requestedModel.api;
+				message.provider = requestedModel.provider;
+				message.model = requestedModel.id;
 				stream.push({ type: "done", reason: "stop", message });
 				return stream;
 			},

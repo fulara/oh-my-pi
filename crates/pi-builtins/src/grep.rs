@@ -5,7 +5,6 @@
 //! the plumbing `rg` shares with it: exit status, record layout, and the
 //! line-length bound.
 
-
 use std::{
 	ffi::{OsStr, OsString},
 	fmt,
@@ -17,9 +16,12 @@ use std::{
 	},
 };
 
+use crate::bre;
+use crate::host::{AsyncUtility, Host, async_util};
+use crate::stdio;
 use brush_core::{ShellExtensions, builtins::Registration};
-use futures::{StreamExt, stream};
 use clap::{ArgMatches, CommandFactory, FromArgMatches, Parser, ValueEnum, parser::ValueSource};
+use futures::{StreamExt, stream};
 use globset::{Glob, GlobMatcher};
 use grep_matcher::{LineTerminator, Matcher};
 use grep_pcre2::RegexMatcherBuilder as PcreMatcherBuilder;
@@ -28,14 +30,10 @@ use grep_searcher::{
 	BinaryDetection, Searcher, SearcherBuilder, Sink, SinkContext, SinkFinish, SinkMatch,
 };
 use pi_walker::{
-	FileType,
-	exec,
+	FileType, exec,
 	grep::{Engine, pcre2_jit_enabled},
 	walk,
 };
-use crate::bre;
-use crate::host::{AsyncUtility, Host, async_util};
-use crate::stdio;
 
 /// Exit status of a `grep` or `rg` run: 0 when a line was selected, 1 when
 /// none was, 2 on any error, except that under `-q` a match outranks errors.
@@ -59,9 +57,9 @@ pub(crate) struct RecordFormat {
 	pub path_separator: Option<u8>,
 	/// End a printed path with NUL instead of its separator or terminator
 	/// (`grep -Z`, `rg -0`).
-	pub null_paths:     bool,
+	pub null_paths: bool,
 	/// Ends each record: `\n`, or NUL under `grep -z`.
-	pub terminator:     u8,
+	pub terminator: u8,
 }
 
 impl RecordFormat {
@@ -123,7 +121,11 @@ impl RecordFormat {
 		match path {
 			Some(path) => {
 				self.write_path(out, path)?;
-				out.write_all(&[if self.null_paths { b'\0' } else { self.terminator }])
+				out.write_all(&[if self.null_paths {
+					b'\0'
+				} else {
+					self.terminator
+				}])
 			},
 			None if self.null_paths => Ok(()),
 			None => out.write_all(&[self.terminator]),
@@ -418,8 +420,12 @@ pub(crate) struct Grep {
 }
 
 impl CommandFactory for Grep {
-	fn command() -> clap::Command { GrepArgs::command() }
-	fn command_for_update() -> clap::Command { GrepArgs::command_for_update() }
+	fn command() -> clap::Command {
+		GrepArgs::command()
+	}
+	fn command_for_update() -> clap::Command {
+		GrepArgs::command_for_update()
+	}
 }
 
 impl FromArgMatches for Grep {
@@ -466,22 +472,22 @@ enum MatchMode {
 /// Resolved, flag-free options shared with the search [`Sink`].
 #[derive(Clone)]
 struct Options {
-	line_number:         bool,
-	byte_offset:         bool,
-	count:               bool,
-	files_with_matches:  bool,
+	line_number: bool,
+	byte_offset: bool,
+	count: bool,
+	files_with_matches: bool,
 	files_without_match: bool,
-	only_matching:       bool,
-	before:              usize,
-	after:               usize,
-	no_messages:         bool,
-	quiet:               bool,
-	prefix_filename:     bool,
-	initial_tab:         bool,
-	record:              RecordFormat,
-	group_separator:     Option<Vec<u8>>,
-	line_buffered:       bool,
-	binary_files:        BinaryFiles,
+	only_matching: bool,
+	before: usize,
+	after: usize,
+	no_messages: bool,
+	quiet: bool,
+	prefix_filename: bool,
+	initial_tab: bool,
+	record: RecordFormat,
+	group_separator: Option<Vec<u8>>,
+	line_buffered: bool,
+	binary_files: BinaryFiles,
 }
 
 #[derive(Clone)]
@@ -491,7 +497,7 @@ struct PathRule {
 }
 
 struct RuleSpec {
-	index:   usize,
+	index: usize,
 	include: bool,
 	pattern: String,
 }
@@ -499,7 +505,7 @@ struct RuleSpec {
 #[derive(Clone, Default)]
 struct PathRules {
 	files: Vec<PathRule>,
-	dirs:  Vec<PathRule>,
+	dirs: Vec<PathRule>,
 }
 
 impl PathRules {
@@ -683,11 +689,29 @@ fn resolve_max_count(cli: &GrepArgs) -> Result<Option<u64>, String> {
 }
 
 fn option_takes_next_value(arg: &str) -> bool {
-	matches!(arg, "-e" | "-f" | "-m" | "-A" | "-B" | "-C" | "-D" | "-d"
-		| "--regexp" | "--file" | "--max-count" | "--after-context" | "--before-context"
-		| "--context" | "--label" | "--group-separator" | "--binary-files" | "--devices"
-		| "--directories" | "--include" | "--exclude" | "--exclude-from" | "--exclude-dir"
-		| "--include-dir")
+	matches!(
+		arg,
+		"-e"
+			| "-f" | "-m"
+			| "-A" | "-B"
+			| "-C" | "-D"
+			| "-d" | "--regexp"
+			| "--file"
+			| "--max-count"
+			| "--after-context"
+			| "--before-context"
+			| "--context"
+			| "--label"
+			| "--group-separator"
+			| "--binary-files"
+			| "--devices"
+			| "--directories"
+			| "--include"
+			| "--exclude"
+			| "--exclude-from"
+			| "--exclude-dir"
+			| "--include-dir"
+	)
 }
 
 fn normalize_context_args(argv: Vec<OsString>) -> Vec<OsString> {
@@ -700,10 +724,18 @@ fn normalize_context_args(argv: Vec<OsString>) -> Vec<OsString> {
 			normalized.push(arg);
 			continue;
 		}
-		let Some(text) = arg.to_str() else { normalized.push(arg); continue };
-		if text == "--" { literal = true; normalized.push(arg); continue }
+		let Some(text) = arg.to_str() else {
+			normalized.push(arg);
+			continue;
+		};
+		if text == "--" {
+			literal = true;
+			normalized.push(arg);
+			continue;
+		}
 		if let Some(digits) = text.strip_prefix('-')
-			&& !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit())
+			&& !digits.is_empty()
+			&& digits.bytes().all(|byte| byte.is_ascii_digit())
 		{
 			normalized.push(OsString::from(format!("--context={digits}")));
 			continue;
@@ -783,7 +815,10 @@ fn build_matcher(
 		builder.line_terminator(Some(b'\0'));
 	}
 	if mode == MatchMode::Fixed {
-		let escaped: Vec<String> = patterns.iter().map(|pattern| regex::escape(pattern)).collect();
+		let escaped: Vec<String> = patterns
+			.iter()
+			.map(|pattern| regex::escape(pattern))
+			.collect();
 		return builder
 			.build_many(&escaped)
 			.map(Engine::Rust)
@@ -813,8 +848,10 @@ fn build_matcher(
 	// `regex` crate refuses the whole pattern, so `grep -E '{a}'` failed on
 	// patterns real grep matches. An attempted-but-unterminated interval
 	// stays an error in both.
-	let patterns: Vec<std::borrow::Cow<'_, str>> =
-		patterns.iter().map(|p| bre::ere_literalize_braces(p)).collect();
+	let patterns: Vec<std::borrow::Cow<'_, str>> = patterns
+		.iter()
+		.map(|p| bre::ere_literalize_braces(p))
+		.collect();
 
 	// `regex` accepts `^+` and compiles it as `(?:^)+`, which matches at every
 	// line start. GNU and BSD grep both reject the pattern, so returning every
@@ -834,13 +871,14 @@ fn build_matcher(
 
 /// A search sink that renders GNU-compatible records and tracks selection.
 struct GrepSink<'a, M: Matcher, W: Write> {
-	out:         &'a mut W,
-	matcher:     &'a M,
-	display:     &'a [u8],
-	opts:        &'a Options,
+	out: &'a mut W,
+	matcher: &'a M,
+	display: &'a [u8],
+	opts: &'a Options,
 	match_count: u64,
-	any_match:   bool,
-	binary:      bool,
+	after_limit_left: usize,
+	any_match: bool,
+	binary: bool,
 }
 
 impl<M: Matcher, W: Write> GrepSink<'_, M, W> {
@@ -880,7 +918,10 @@ impl<M: Matcher, W: Write> GrepSink<'_, M, W> {
 	}
 
 	fn write_path_record(&mut self) -> io::Result<()> {
-		self.opts.record.write_path_record(self.out, Some(self.display))?;
+		self
+			.opts
+			.record
+			.write_path_record(self.out, Some(self.display))?;
 		self.flush_record()
 	}
 
@@ -913,7 +954,11 @@ impl<M: Matcher, W: Write> GrepSink<'_, M, W> {
 impl<M: Matcher, W: Write> Sink for GrepSink<'_, M, W> {
 	type Error = io::Error;
 
-	fn matched(&mut self, _searcher: &Searcher, mat: &SinkMatch<'_>) -> Result<bool, io::Error> {
+	fn begin(&mut self, searcher: &Searcher) -> io::Result<bool> {
+		Ok(searcher.max_matches() != Some(0))
+	}
+
+	fn matched(&mut self, searcher: &Searcher, mat: &SinkMatch<'_>) -> Result<bool, io::Error> {
 		if self.binary && self.opts.binary_files == BinaryFiles::WithoutMatch {
 			return Ok(false);
 		}
@@ -926,8 +971,17 @@ impl<M: Matcher, W: Write> Sink for GrepSink<'_, M, W> {
 		{
 			return Ok(false);
 		}
+		// The searcher may refill a buffer ending exactly at the limit before
+		// checking it again. Stop in the sink, after any requested context.
+		let reached_limit = searcher
+			.max_matches()
+			.is_some_and(|limit| self.match_count >= limit);
+		if reached_limit {
+			self.after_limit_left = self.opts.after;
+		}
+		let keep_going = !reached_limit || self.after_limit_left > 0;
 		if self.opts.count {
-			return Ok(true);
+			return Ok(keep_going);
 		}
 		if self.opts.only_matching {
 			self.print_only_matching(mat.bytes(), mat.line_number(), mat.absolute_byte_offset())?;
@@ -935,7 +989,7 @@ impl<M: Matcher, W: Write> Sink for GrepSink<'_, M, W> {
 			self.write_prefix(mat.line_number(), mat.absolute_byte_offset(), b':')?;
 			self.write_record(mat.bytes())?;
 		}
-		Ok(true)
+		Ok(keep_going)
 	}
 
 	fn context(&mut self, _searcher: &Searcher, ctx: &SinkContext<'_>) -> Result<bool, io::Error> {
@@ -944,6 +998,10 @@ impl<M: Matcher, W: Write> Sink for GrepSink<'_, M, W> {
 		}
 		self.write_prefix(ctx.line_number(), ctx.absolute_byte_offset(), b'-')?;
 		self.write_record(ctx.bytes())?;
+		if self.after_limit_left > 0 {
+			self.after_limit_left -= 1;
+			return Ok(self.after_limit_left > 0);
+		}
 		Ok(true)
 	}
 
@@ -1049,17 +1107,17 @@ fn display_path_for_operand(operand: &OsStr, resolved: &Path, path: &Path) -> Pa
 
 /// One searched file's output, handed to the consumer in path order.
 struct FileSearch {
-	out:       Vec<u8>,
-	err:       Vec<u8>,
+	out: Vec<u8>,
+	err: Vec<u8>,
 	had_error: bool,
-	matched:   io::Result<bool>,
+	matched: io::Result<bool>,
 }
 
 /// What one search worker reuses across files: its searcher, read buffer and output buffer.
 struct Worker {
 	searcher: Searcher,
-	buf:      Vec<u8>,
-	out:      Vec<u8>,
+	buf: Vec<u8>,
+	out: Vec<u8>,
 }
 
 impl Worker {
@@ -1075,13 +1133,13 @@ impl Worker {
 
 /// Everything the concurrent per-file searches of one directory operand share.
 struct DirSearch<M> {
-	fs:       pi_vfs::Fs,
-	halt:     Halt,
-	operand:  OsString,
+	fs: pi_vfs::Fs,
+	halt: Halt,
+	operand: OsString,
 	resolved: PathBuf,
-	matcher:  M,
+	matcher: M,
 	searcher: SearcherBuilder,
-	opts:     Options,
+	opts: Options,
 }
 
 impl<M: Matcher + Send + Sync + 'static> DirSearch<M> {
@@ -1221,17 +1279,22 @@ async fn search_dir<M: Matcher + Clone + Send + Sync + 'static, W: Write + Send>
 			let _ = writeln!(host.stderr, "grep: {}: {}", display_path.display(), error.error);
 		}
 	}
-	let paths: Vec<PathBuf> =
-		(0..files.len()).map(|index| layer.join(resolved, files.get(index).path)).collect();
-	let workers = if opts.line_buffered { 1 } else { walk_opts.parallelism(&layer) };
+	let paths: Vec<PathBuf> = (0..files.len())
+		.map(|index| layer.join(resolved, files.get(index).path))
+		.collect();
+	let workers = if opts.line_buffered {
+		1
+	} else {
+		walk_opts.parallelism(&layer)
+	};
 	let shared = Arc::new(DirSearch {
-		fs:       vfs.clone(),
-		halt:     Halt { scope, outer: Arc::clone(outer) },
-		operand:  operand.to_owned(),
+		fs: vfs.clone(),
+		halt: Halt { scope, outer: Arc::clone(outer) },
+		operand: operand.to_owned(),
 		resolved: resolved.to_owned(),
-		matcher:  matcher.clone(),
+		matcher: matcher.clone(),
 		searcher: searcher.clone(),
-		opts:     opts.clone(),
+		opts: opts.clone(),
 	});
 	let mut any = false;
 	let mut failed = None;
@@ -1246,9 +1309,13 @@ async fn search_dir<M: Matcher + Clone + Send + Sync + 'static, W: Write + Send>
 		}
 	});
 	while let Some(found) = results.next().await {
-		let written = out
-			.write_all(&found.out)
-			.and_then(|()| if opts.line_buffered { out.flush() } else { Ok(()) });
+		let written = out.write_all(&found.out).and_then(|()| {
+			if opts.line_buffered {
+				out.flush()
+			} else {
+				Ok(())
+			}
+		});
 		if let Err(error) = written {
 			failed = Some(error);
 			break;
@@ -1282,10 +1349,9 @@ async fn read_auxiliary_file(host: &mut Host, path: &OsStr) -> Result<Vec<u8>, S
 		let mut bytes = Vec::new();
 		match host.read_stdin_to_end(&mut bytes, MAX_LINE_BYTES).await {
 			Ok(_) => Ok(bytes),
-			Err(error) if error.kind() == io::ErrorKind::OutOfMemory => Err(io::Error::other(format!(
-				"pattern file larger than {} MiB",
-				MAX_LINE_BYTES >> 20
-			))),
+			Err(error) if error.kind() == io::ErrorKind::OutOfMemory => {
+				Err(io::Error::other(format!("pattern file larger than {} MiB", MAX_LINE_BYTES >> 20)))
+			},
 			Err(error) => Err(error),
 		}
 	} else {
@@ -1304,7 +1370,10 @@ fn pattern_file_lines(bytes: &[u8]) -> Vec<String> {
 		.collect()
 }
 
-async fn resolve_patterns(host: &mut Host, cli: &GrepArgs) -> Result<(Vec<String>, Vec<OsString>), String> {
+async fn resolve_patterns(
+	host: &mut Host,
+	cli: &GrepArgs,
+) -> Result<(Vec<String>, Vec<OsString>), String> {
 	let has_explicit_patterns = !cli.patterns.is_empty() || !cli.pattern_files.is_empty();
 	let mut patterns = Vec::new();
 	let mut files = Vec::new();
@@ -1379,7 +1448,11 @@ fn compile_rules(mut specs: Vec<RuleSpec>) -> Result<Vec<PathRule>, String> {
 		.collect()
 }
 
-async fn build_path_rules(host: &mut Host, cli: &GrepArgs, matches: &ArgMatches) -> Result<PathRules, String> {
+async fn build_path_rules(
+	host: &mut Host,
+	cli: &GrepArgs,
+	matches: &ArgMatches,
+) -> Result<PathRules, String> {
 	let (files, dirs) = collect_rule_specs(host, cli, matches).await?;
 	Ok(PathRules { files: compile_rules(files)?, dirs: compile_rules(dirs)? })
 }
@@ -1409,7 +1482,11 @@ pub(crate) struct LineLimitExceeded {
 
 impl fmt::Display for LineLimitExceeded {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		let what = if self.whole_file { "file larger than" } else { "line longer than" };
+		let what = if self.whole_file {
+			"file larger than"
+		} else {
+			"line longer than"
+		};
 		write!(f, "{what} {} MiB, not searched", MAX_LINE_BYTES >> 20)
 	}
 }
@@ -1448,7 +1525,10 @@ pub(crate) fn check_run(terminator: Option<u8>, run: &mut usize, chunk: &[u8]) -
 /// The message for a failed search: [`LineLimitExceeded`] says which bound it
 /// hit, anything else reads as reported.
 pub(crate) fn describe_search_error(error: &io::Error) -> String {
-	match error.get_ref().and_then(|inner| inner.downcast_ref::<LineLimitExceeded>()) {
+	match error
+		.get_ref()
+		.and_then(|inner| inner.downcast_ref::<LineLimitExceeded>())
+	{
 		Some(limit) => limit.to_string(),
 		None => error.to_string(),
 	}
@@ -1610,11 +1690,7 @@ async fn execute_search<M: Matcher + Clone + Send + Sync + 'static>(
 				DirectoryAction::Skip => {},
 				DirectoryAction::Read => {
 					had_error = true;
-					let _ = writeln!(
-						host.stderr,
-						"grep: {}: Is a directory",
-						operand.display()
-					);
+					let _ = writeln!(host.stderr, "grep: {}: Is a directory", operand.display());
 				},
 			},
 			Ok(metadata) => {
@@ -1625,13 +1701,13 @@ async fn execute_search<M: Matcher + Clone + Send + Sync + 'static>(
 					continue;
 				}
 				let shared = DirSearch {
-					fs:       fs.clone(),
-					halt:     Halt { scope: Arc::clone(&outer), outer: Arc::clone(&outer) },
-					operand:  operand.clone(),
+					fs: fs.clone(),
+					halt: Halt { scope: Arc::clone(&outer), outer: Arc::clone(&outer) },
+					operand: operand.clone(),
 					resolved: resolved.clone(),
-					matcher:  matcher.clone(),
+					matcher: matcher.clone(),
 					searcher: builder.clone(),
-					opts:     opts.clone(),
+					opts: opts.clone(),
 				};
 				// Its own task, so dropping this body (cancellation) raises the
 				// halt flag the search checks between reads.
@@ -1645,9 +1721,13 @@ async fn execute_search<M: Matcher + Clone + Send + Sync + 'static>(
 					Ok(found) => found,
 					Err(join) => std::panic::resume_unwind(join.into_panic()),
 				};
-				let written = out
-					.write_all(&found.out)
-					.and_then(|()| if opts.line_buffered { out.flush() } else { Ok(()) });
+				let written = out.write_all(&found.out).and_then(|()| {
+					if opts.line_buffered {
+						out.flush()
+					} else {
+						Ok(())
+					}
+				});
 				if written.is_err() {
 					return crate::host::SIGPIPE_EXIT_CODE;
 				}
@@ -1664,8 +1744,7 @@ async fn execute_search<M: Matcher + Clone + Send + Sync + 'static>(
 			Err(error) => {
 				had_error = true;
 				if !opts.no_messages {
-					let _ =
-						writeln!(host.stderr, "grep: {}: {error}", operand.display());
+					let _ = writeln!(host.stderr, "grep: {}: {error}", operand.display());
 				}
 			},
 		}
@@ -1694,112 +1773,116 @@ impl AsyncUtility for Grep {
 		let cli = self.cli;
 		let matches = self.matches;
 
-	let (mut patterns, mut files) = match resolve_patterns(host, &cli).await {
-		Ok(resolved) => resolved,
-		Err(error) => {
-			let _ = writeln!(host.stderr, "grep: {error}");
-			return 2;
-		},
-	};
-	let directory_action = resolve_directory_action(&cli, &matches);
-	if files.is_empty() {
-		files.push(OsString::from(if directory_action == DirectoryAction::Recurse {
-			"."
+		let (mut patterns, mut files) = match resolve_patterns(host, &cli).await {
+			Ok(resolved) => resolved,
+			Err(error) => {
+				let _ = writeln!(host.stderr, "grep: {error}");
+				return 2;
+			},
+		};
+		let directory_action = resolve_directory_action(&cli, &matches);
+		if files.is_empty() {
+			files.push(OsString::from(if directory_action == DirectoryAction::Recurse {
+				"."
+			} else {
+				"-"
+			}));
+		}
+
+		let max_count = match resolve_max_count(&cli) {
+			Ok(max_count) => max_count,
+			Err(error) => {
+				let _ = writeln!(host.stderr, "grep: {error}");
+				return 2;
+			},
+		};
+		let rules = match build_path_rules(host, &cli, &matches).await {
+			Ok(rules) => rules,
+			Err(error) => {
+				let _ = writeln!(host.stderr, "grep: {error}");
+				return 2;
+			},
+		};
+		let matcher = match build_matcher(
+			host,
+			&patterns,
+			&cli,
+			resolve_match_mode(&matches),
+			resolve_ignore_case(&matches),
+		) {
+			Ok(matcher) => matcher,
+			Err(error) => {
+				let _ = writeln!(host.stderr, "grep: {error}");
+				return 2;
+			},
+		};
+		patterns.clear();
+
+		let (files_with_matches, files_without_match) = resolve_file_list_modes(&matches);
+		let suppress_context =
+			cli.count || files_with_matches || files_without_match || cli.quiet || cli.only_matching;
+		let (before, after) = if suppress_context {
+			(0, 0)
 		} else {
-			"-"
-		}));
+			resolve_context(&cli, &matches)
+		};
+		let prefix_filename = resolve_filename_prefix(&matches)
+			.unwrap_or(directory_action == DirectoryAction::Recurse || files.len() > 1);
+		let opts = Options {
+			line_number: cli.line_number,
+			byte_offset: cli.byte_offset,
+			count: cli.count,
+			files_with_matches,
+			files_without_match,
+			only_matching: cli.only_matching,
+			before,
+			after,
+			no_messages: cli.no_messages,
+			quiet: cli.quiet,
+			prefix_filename,
+			initial_tab: cli.initial_tab,
+			record: RecordFormat {
+				path_separator: None,
+				null_paths: cli.null_paths,
+				terminator: if cli.null_data { b'\0' } else { b'\n' },
+			},
+			group_separator: resolve_group_separator(&cli, &matches),
+			line_buffered: cli.line_buffered,
+			binary_files: resolve_binary_files(&cli, &matches),
+		};
+		let follow_links = resolve_follow_links(&cli, &matches);
+
+		match matcher {
+			Engine::Rust(matcher) => {
+				execute_search(
+					host,
+					&cli,
+					&matcher,
+					&files,
+					directory_action,
+					follow_links,
+					&rules,
+					&opts,
+					max_count,
+				)
+				.await
+			},
+			Engine::Pcre(matcher) => {
+				execute_search(
+					host,
+					&cli,
+					&matcher,
+					&files,
+					directory_action,
+					follow_links,
+					&rules,
+					&opts,
+					max_count,
+				)
+				.await
+			},
+		}
 	}
-
-	let max_count = match resolve_max_count(&cli) {
-		Ok(max_count) => max_count,
-		Err(error) => {
-			let _ = writeln!(host.stderr, "grep: {error}");
-			return 2;
-		},
-	};
-	let rules = match build_path_rules(host, &cli, &matches).await {
-		Ok(rules) => rules,
-		Err(error) => {
-			let _ = writeln!(host.stderr, "grep: {error}");
-			return 2;
-		},
-	};
-	let matcher = match build_matcher(
-		host,
-		&patterns,
-		&cli,
-		resolve_match_mode(&matches),
-		resolve_ignore_case(&matches),
-	) {
-		Ok(matcher) => matcher,
-		Err(error) => {
-			let _ = writeln!(host.stderr, "grep: {error}");
-			return 2;
-		},
-	};
-	patterns.clear();
-
-	let (files_with_matches, files_without_match) = resolve_file_list_modes(&matches);
-	let suppress_context =
-		cli.count || files_with_matches || files_without_match || cli.quiet || cli.only_matching;
-	let (before, after) = if suppress_context {
-		(0, 0)
-	} else {
-		resolve_context(&cli, &matches)
-	};
-	let prefix_filename = resolve_filename_prefix(&matches)
-		.unwrap_or(directory_action == DirectoryAction::Recurse || files.len() > 1);
-	let opts = Options {
-		line_number: cli.line_number,
-		byte_offset: cli.byte_offset,
-		count: cli.count,
-		files_with_matches,
-		files_without_match,
-		only_matching: cli.only_matching,
-		before,
-		after,
-		no_messages: cli.no_messages,
-		quiet: cli.quiet,
-		prefix_filename,
-		initial_tab: cli.initial_tab,
-		record: RecordFormat {
-			path_separator: None,
-			null_paths:     cli.null_paths,
-			terminator:     if cli.null_data { b'\0' } else { b'\n' },
-		},
-		group_separator: resolve_group_separator(&cli, &matches),
-		line_buffered: cli.line_buffered,
-		binary_files: resolve_binary_files(&cli, &matches),
-	};
-	let follow_links = resolve_follow_links(&cli, &matches);
-
-	match matcher {
-		Engine::Rust(matcher) => execute_search(
-			host,
-			&cli,
-			&matcher,
-			&files,
-			directory_action,
-			follow_links,
-			&rules,
-			&opts,
-			max_count,
-		)
-		.await,
-		Engine::Pcre(matcher) => execute_search(
-			host,
-			&cli,
-			&matcher,
-			&files,
-			directory_action,
-			follow_links,
-			&rules,
-			&opts,
-			max_count,
-		)
-		.await,
-	}
-}
 }
 
 /// Creates the GNU `grep` builtin registration.
@@ -1817,23 +1900,19 @@ mod tests {
 	use parking_lot::Mutex;
 
 	use super::*;
-	use brush_core::openfiles;
-	use crate::host::{Host, run_async_util};
 	#[cfg(unix)]
 	use crate::host::tree_with_sparse_file;
+	use crate::host::{Host, run_async_util};
+	use brush_core::openfiles;
 
 	#[tokio::test(flavor = "multi_thread")]
 	async fn path_separator_rewrites_the_native_separator_on_windows() {
 		// Defends: --path-separator must rewrite the platform's own separator
 		// too, or Windows paths keep mixing `\` and the configured separator.
 		let mut out = Vec::new();
-		RecordFormat {
-			path_separator: Some(b'#'),
-			null_paths:     false,
-			terminator:     b'\n',
-		}
-		.write_path(&mut out, b"a\\b/c")
-		.unwrap();
+		RecordFormat { path_separator: Some(b'#'), null_paths: false, terminator: b'\n' }
+			.write_path(&mut out, b"a\\b/c")
+			.unwrap();
 		if cfg!(windows) {
 			assert_eq!(out, b"a#b#c");
 		} else {
@@ -1842,26 +1921,35 @@ mod tests {
 	}
 
 	struct SnapshottingStdin {
-		pos:      usize,
-		snapped:  bool,
-		stdout:   Arc<Mutex<Option<Arc<Mutex<Vec<u8>>>>>>,
+		pos: usize,
+		snapped: bool,
+		stdout: Arc<Mutex<Option<Arc<Mutex<Vec<u8>>>>>>,
 		snapshot: Arc<Mutex<Vec<u8>>>,
+		input: &'static [u8],
+		error_at_eof: bool,
 	}
 
 	const SNAPSHOT_INPUT: &[u8] = b"hit\nmiss\n";
 
 	impl Read for SnapshottingStdin {
 		fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-			if self.pos < SNAPSHOT_INPUT.len() {
-				let n = buf.len().min(SNAPSHOT_INPUT.len() - self.pos);
-				buf[..n].copy_from_slice(&SNAPSHOT_INPUT[self.pos..self.pos + n]);
+			if self.pos < self.input.len() {
+				let n = buf.len().min(self.input.len() - self.pos);
+				buf[..n].copy_from_slice(&self.input[self.pos..self.pos + n]);
 				self.pos += n;
 				return Ok(n);
+			}
+			if self.error_at_eof {
+				return Err(io::Error::new(io::ErrorKind::WouldBlock, "input remains open"));
 			}
 			// Input exhausted: grep is back asking for more. Whatever it has
 			// already flushed to stdout is what a live consumer would see now.
 			if !self.snapped {
-				let stdout = self.stdout.lock().clone().expect("stdout buffer is initialized");
+				let stdout = self
+					.stdout
+					.lock()
+					.clone()
+					.expect("stdout buffer is initialized");
 				*self.snapshot.lock() = stdout.lock().clone();
 				self.snapped = true;
 			}
@@ -1882,10 +1970,12 @@ mod tests {
 	impl openfiles::Stream for SnapshottingStdin {
 		fn clone_box(&self) -> Box<dyn openfiles::Stream> {
 			Box::new(Self {
-				pos:      self.pos,
-				snapped:  self.snapped,
-				stdout:   Arc::clone(&self.stdout),
+				pos: self.pos,
+				snapped: self.snapped,
+				stdout: Arc::clone(&self.stdout),
 				snapshot: Arc::clone(&self.snapshot),
+				input: self.input,
+				error_at_eof: self.error_at_eof,
 			})
 		}
 
@@ -1914,6 +2004,8 @@ mod tests {
 			snapped: false,
 			stdout: Arc::clone(&stdout),
 			snapshot: Arc::clone(&snapshot),
+			input: SNAPSHOT_INPUT,
+			error_at_eof: false,
 		});
 		let (mut host, capture) = Host::for_test_with_stdin("grep", stdin, "/");
 		*stdout.lock() = Some(capture.stdout_buffer());
@@ -1923,6 +2015,31 @@ mod tests {
 
 		// A regression re-buffering grep's output makes matches invisible until EOF.
 		assert_eq!(snapshot.lock().as_slice(), b"hit\n");
+	}
+
+	#[tokio::test(flavor = "multi_thread")]
+	async fn max_count_finishes_without_waiting_for_more_input() {
+		let cases: &[(&[&str], &[u8], i32, &str)] = &[
+			(&["grep", "-m1", "^hit$"], b"hit\n", 0, "hit\n"),
+			(&["grep", "-m1", "-A1", "^hit$"], b"hit\nmiss\n", 0, "hit\nmiss\n"),
+			(&["grep", "-vm1", "hit"], b"miss\n", 0, "miss\n"),
+			(&["grep", "-cm1", "^hit$"], b"hit\n", 0, "1\n"),
+			(&["grep", "-m0", "hit"], b"", 1, ""),
+		];
+		for &(args, input, expected_code, expected_output) in cases {
+			let stdin = Box::new(SnapshottingStdin {
+				pos: 0,
+				snapped: false,
+				stdout: Arc::new(Mutex::new(None)),
+				snapshot: Arc::new(Mutex::new(Vec::new())),
+				input,
+				error_at_eof: true,
+			});
+			let (mut host, capture) = Host::for_test_with_stdin("grep", stdin, "/");
+			let parsed = Grep::try_parse_from(args.iter().copied()).unwrap();
+			assert_eq!(parsed.run(&mut host).await, expected_code, "{args:?}: {}", capture.err());
+			assert_eq!(capture.out(), expected_output, "{args:?}");
+		}
 	}
 
 	#[tokio::test(flavor = "multi_thread")]
@@ -1940,7 +2057,8 @@ mod tests {
 		let tree = tempfile::tempdir().unwrap();
 		std::fs::write(tree.path().join("patterns"), "alpha\nbeta\n").unwrap();
 		std::fs::write(tree.path().join("haystack"), "alpha\ngamma\nbeta\n").unwrap();
-		let (code, capture) = run_async_util::<Grep>(&["-f", "patterns", "haystack"], "", tree.path()).await;
+		let (code, capture) =
+			run_async_util::<Grep>(&["-f", "patterns", "haystack"], "", tree.path()).await;
 		assert_eq!(code, 0, "{}", capture.err());
 		assert_eq!(capture.out(), "alpha\nbeta\n");
 	}
@@ -1993,7 +2111,9 @@ mod tests {
 				Ok(()) => {},
 				Err(error) => {
 					assert!(
-						error.get_ref().is_some_and(|inner| inner.is::<LineLimitExceeded>()),
+						error
+							.get_ref()
+							.is_some_and(|inner| inner.is::<LineLimitExceeded>()),
 						"untyped error: {error}"
 					);
 					return Some(describe_search_error(&error));
@@ -2042,7 +2162,12 @@ mod tests {
 		std::fs::write(tree.path().join("drop.txt"), "hit\n").unwrap();
 		std::fs::create_dir(tree.path().join("vendor")).unwrap();
 		std::fs::write(tree.path().join("vendor/hidden.rs"), "hit\n").unwrap();
-		let (code, capture) = run_async_util::<Grep>(&["-r", "--include=*.rs", "--exclude-dir=vendor", "hit", "."], "", tree.path()).await;
+		let (code, capture) = run_async_util::<Grep>(
+			&["-r", "--include=*.rs", "--exclude-dir=vendor", "hit", "."],
+			"",
+			tree.path(),
+		)
+		.await;
 		assert_eq!(code, 0, "{}", capture.err());
 		assert!(capture.out().contains("keep.rs:hit"));
 		assert!(!capture.out().contains("drop.txt"));
@@ -2060,10 +2185,11 @@ mod tests {
 		}
 		let (code, capture) = run_async_util::<Grep>(&["-rl", "hit", "t"], "", tree.path()).await;
 		assert_eq!(code, 0, "{}", capture.err());
-		let expected: String = ["t/a/0.txt", "t/a/b/3.txt", "t/a/c/2.txt", "t/b/1.txt", "t/m.txt", "t/z.txt"]
-			.iter()
-			.map(|path| format!("{}\n", path.replace('/', std::path::MAIN_SEPARATOR_STR)))
-			.collect();
+		let expected: String =
+			["t/a/0.txt", "t/a/b/3.txt", "t/a/c/2.txt", "t/b/1.txt", "t/m.txt", "t/z.txt"]
+				.iter()
+				.map(|path| format!("{}\n", path.replace('/', std::path::MAIN_SEPARATOR_STR)))
+				.collect();
 		assert_eq!(capture.out(), expected);
 	}
 
@@ -2071,7 +2197,8 @@ mod tests {
 	async fn quiet_match_wins_over_later_error() {
 		let tree = tempfile::tempdir().unwrap();
 		std::fs::write(tree.path().join("hit"), "needle\n").unwrap();
-		let (code, capture) = run_async_util::<Grep>(&["-q", "needle", "hit", "missing"], "", tree.path()).await;
+		let (code, capture) =
+			run_async_util::<Grep>(&["-q", "needle", "hit", "missing"], "", tree.path()).await;
 		assert_eq!(code, 0);
 		assert!(capture.out().is_empty());
 		assert!(capture.err().is_empty());
@@ -2100,8 +2227,7 @@ mod tests {
 		// behaviour; `/usr/bin/grep -e 'fo+' -e 'bar)' -h` on this input
 		// prints `bar)` alone on both GNU and BSD grep. Use `fo\+` for the
 		// quantifier.
-		let (code, out, err) =
-			run(&["-e", "fo+", "-e", "bar)", "-h"], "foooo\nbar)\nbaz\n").await;
+		let (code, out, err) = run(&["-e", "fo+", "-e", "bar)", "-h"], "foooo\nbar)\nbaz\n").await;
 		assert_eq!(code, 0, "{err}");
 		assert_eq!(out, "bar)\n");
 		let (code, out, err) = run(&["-e", r"fo\+", "-h"], "foooo\nbar)\nbaz\n").await;
@@ -2186,8 +2312,7 @@ mod tests {
 		// and GNU grep accepts it, because a `{` that opens no interval is a
 		// literal. An earlier revision of this guard exited 2 on it.
 		let input = "{\"a\":1}\n{foo\nplain\n";
-		for args in
-			[vec!["-c", "^{"], vec!["-Ec", "^\\{"], vec!["-Ec", "^\\{\""], vec!["-c", "{foo"]]
+		for args in [vec!["-c", "^{"], vec!["-Ec", "^\\{"], vec!["-Ec", "^\\{\""], vec!["-c", "{foo"]]
 		{
 			let (code, _, err) = run(&args, input).await;
 			assert!(code == 0 || code == 1, "{args:?} must not error: {err}");
@@ -2316,4 +2441,3 @@ mod tests {
 		}
 	}
 }
-

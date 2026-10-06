@@ -7587,6 +7587,8 @@ func (DictationTranscriptEvent) isRpcNotification()     {}
 func (DictationEndEvent) isRpcNotification()            {}
 func (BtwDeltaEvent) isRpcNotification()                {}
 func (BtwRecordEvent) isRpcNotification()               {}
+func (PlanReviewEvent) isRpcNotification()              {}
+func (BtwUpdateEvent) isRpcNotification()               {}
 func (CommandOutputEvent) isRpcNotification()           {}
 func (SessionInfoUpdateEvent) isRpcNotification()       {}
 func (ConfigUpdateEvent) isRpcNotification()            {}
@@ -7675,6 +7677,10 @@ func (v *RpcNotification) UnmarshalJSON(data []byte) error {
 		value, err = decodeVariant[BtwDeltaEvent](raw)
 	case "btw_record":
 		value, err = decodeVariant[BtwRecordEvent](raw)
+	case "plan_review":
+		value, err = decodeVariant[PlanReviewEvent](raw)
+	case "btw_update":
+		value, err = decodeVariant[BtwUpdateEvent](raw)
 	case "command_output":
 		value, err = decodeVariant[CommandOutputEvent](raw)
 	case "session_info_update":
@@ -7795,6 +7801,8 @@ func (DictationTranscriptEvent) isRpcServerFrame()     {}
 func (DictationEndEvent) isRpcServerFrame()            {}
 func (BtwDeltaEvent) isRpcServerFrame()                {}
 func (BtwRecordEvent) isRpcServerFrame()               {}
+func (PlanReviewEvent) isRpcServerFrame()              {}
+func (BtwUpdateEvent) isRpcServerFrame()               {}
 func (CommandOutputEvent) isRpcServerFrame()           {}
 func (SessionInfoUpdateEvent) isRpcServerFrame()       {}
 func (ConfigUpdateEvent) isRpcServerFrame()            {}
@@ -7893,6 +7901,10 @@ func (v *RpcServerFrame) UnmarshalJSON(data []byte) error {
 		value, err = decodeVariant[BtwDeltaEvent](raw)
 	case "btw_record":
 		value, err = decodeVariant[BtwRecordEvent](raw)
+	case "plan_review":
+		value, err = decodeVariant[PlanReviewEvent](raw)
+	case "btw_update":
+		value, err = decodeVariant[BtwUpdateEvent](raw)
 	case "command_output":
 		value, err = decodeVariant[CommandOutputEvent](raw)
 	case "session_info_update":
@@ -7991,6 +8003,90 @@ func (v *NegotiateProtocolResult) decodeFrom(raw map[string]json.RawMessage) err
 	var out NegotiateProtocolResult
 	d := fieldDecoder{raw: raw, owner: "NegotiateProtocolResult"}
 	d.required("protocolVersion", &out.ProtocolVersion)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
+type BtwStartResult struct {
+	BtwID string `json:"btwId"`
+}
+
+func (v *BtwStartResult) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "BtwStartResult", v.decodeFrom)
+}
+
+func (v *BtwStartResult) decodeFrom(raw map[string]json.RawMessage) error {
+	var out BtwStartResult
+	d := fieldDecoder{raw: raw, owner: "BtwStartResult"}
+	d.required("btwId", &out.BtwID)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
+type BtwCancelResult struct {
+	// Returned when the request selected an isolated answer by btwId.
+	BtwID *string `json:"btwId,omitempty"`
+	// Returned for persisted side-question cancellation, with or without recordId.
+	Cancelled *bool `json:"cancelled,omitempty"`
+}
+
+func (v *BtwCancelResult) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "BtwCancelResult", v.decodeFrom)
+}
+
+func (v *BtwCancelResult) decodeFrom(raw map[string]json.RawMessage) error {
+	var out BtwCancelResult
+	d := fieldDecoder{raw: raw, owner: "BtwCancelResult"}
+	d.optional("btwId", &out.BtwID)
+	d.optional("cancelled", &out.Cancelled)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
+type BtwReleaseResult struct {
+	BtwID string `json:"btwId"`
+}
+
+func (v *BtwReleaseResult) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "BtwReleaseResult", v.decodeFrom)
+}
+
+func (v *BtwReleaseResult) decodeFrom(raw map[string]json.RawMessage) error {
+	var out BtwReleaseResult
+	d := fieldDecoder{raw: raw, owner: "BtwReleaseResult"}
+	d.required("btwId", &out.BtwID)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
+type BtwPromoteResult struct {
+	BtwID       string `json:"btwId"`
+	SessionID   string `json:"sessionId"`
+	SessionFile string `json:"sessionFile"`
+}
+
+func (v *BtwPromoteResult) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "BtwPromoteResult", v.decodeFrom)
+}
+
+func (v *BtwPromoteResult) decodeFrom(raw map[string]json.RawMessage) error {
+	var out BtwPromoteResult
+	d := fieldDecoder{raw: raw, owner: "BtwPromoteResult"}
+	d.required("btwId", &out.BtwID)
+	d.required("sessionId", &out.SessionID)
+	d.required("sessionFile", &out.SessionFile)
 	if d.err != nil {
 		return d.err
 	}
@@ -8618,25 +8714,6 @@ func (v *BtwResult) decodeFrom(raw map[string]json.RawMessage) error {
 	return nil
 }
 
-type BtwCancelResult struct {
-	Cancelled bool `json:"cancelled"`
-}
-
-func (v *BtwCancelResult) UnmarshalJSON(data []byte) error {
-	return decodeWith(data, "BtwCancelResult", v.decodeFrom)
-}
-
-func (v *BtwCancelResult) decodeFrom(raw map[string]json.RawMessage) error {
-	var out BtwCancelResult
-	d := fieldDecoder{raw: raw, owner: "BtwCancelResult"}
-	d.required("cancelled", &out.Cancelled)
-	if d.err != nil {
-		return d.err
-	}
-	*v = out
-	return nil
-}
-
 type GetBtwHistoryResult struct {
 	Records []BtwHistoryRecord `json:"records"`
 }
@@ -8802,10 +8879,13 @@ func (c Commands) BtwStart(ctx context.Context, p BtwStartCommand) (BtwStartResu
 
 // BtwCancelCommand holds the parameters of "btw_cancel".
 type BtwCancelCommand struct {
-	BtwID string `json:"btwId"`
+	// Isolated answer selector; mutually exclusive with recordId.
+	BtwID *string `json:"btwId,omitempty"`
+	// Persisted side-question selector; omitted to cancel the running side question.
+	RecordID *string `json:"recordId,omitempty"`
 }
 
-// BtwCancel sends "btw_cancel": Cancel an isolated BTW answer.
+// BtwCancel sends "btw_cancel": Cancel an isolated BTW answer by btwId, or the running side question (only recordId when given).
 func (c Commands) BtwCancel(ctx context.Context, p BtwCancelCommand) (BtwCancelResult, error) {
 	var out BtwCancelResult
 	err := c.call(ctx, "btw_cancel", p, 0, &out)
@@ -9649,18 +9729,6 @@ func (c Commands) Btw(ctx context.Context, p BtwCommand) (BtwHistoryRecord, erro
 	var out BtwResult
 	err := c.call(ctx, "btw", p, 0, &out)
 	return out.Record, err
-}
-
-// BtwCancelCommand holds the parameters of "btw_cancel".
-type BtwCancelCommand struct {
-	RecordID *string `json:"recordId,omitempty"`
-}
-
-// BtwCancel sends "btw_cancel": Cancel the running side question (only topic `recordId` when given); false when none matches.
-func (c Commands) BtwCancel(ctx context.Context, p BtwCancelCommand) (bool, error) {
-	var out BtwCancelResult
-	err := c.call(ctx, "btw_cancel", p, 0, &out)
-	return out.Cancelled, err
 }
 
 // GetBtwHistory sends "get_btw_history": List the session's side-question records, newest first.
