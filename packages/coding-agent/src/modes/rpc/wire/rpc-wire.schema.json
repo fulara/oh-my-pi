@@ -143,7 +143,7 @@
 			},
 			{
 				"name": "btw_cancel",
-				"doc": "Cancel an isolated BTW answer.",
+				"doc": "Cancel an isolated BTW answer by btwId, or the running side question (only recordId when given).",
 				"params": "BtwCancelParams",
 				"result": "BtwCancelResult",
 				"nullable": false,
@@ -887,17 +887,6 @@
 				"result": "BtwResult",
 				"nullable": false,
 				"unwrap": "record",
-				"timeoutMs": null,
-				"completion": null,
-				"clientOmit": []
-			},
-			{
-				"name": "btw_cancel",
-				"doc": "Cancel the running side question (only topic `recordId` when given); false when none matches.",
-				"params": "BtwCancelParams",
-				"result": "BtwCancelResult",
-				"nullable": false,
-				"unwrap": "cancelled",
 				"timeoutMs": null,
 				"completion": null,
 				"clientOmit": []
@@ -6704,6 +6693,12 @@
 					"$ref": "#/$defs/BtwRecordEvent"
 				},
 				{
+					"$ref": "#/$defs/PlanReviewEvent"
+				},
+				{
+					"$ref": "#/$defs/BtwUpdateEvent"
+				},
+				{
 					"$ref": "#/$defs/CommandOutputEvent"
 				},
 				{
@@ -6922,23 +6917,27 @@
 			"type": "object",
 			"properties": {
 				"btwId": {
-					"type": "string"
+					"type": "string",
+					"description": "Isolated answer selector; mutually exclusive with recordId."
+				},
+				"recordId": {
+					"type": "string",
+					"description": "Persisted side-question selector; omitted to cancel the running side question."
 				}
-			},
-			"required": [
-				"btwId"
-			]
+			}
 		},
 		"BtwCancelResult": {
 			"type": "object",
 			"properties": {
 				"btwId": {
-					"type": "string"
+					"type": "string",
+					"description": "Returned when the request selected an isolated answer by btwId."
+				},
+				"cancelled": {
+					"type": "boolean",
+					"description": "Returned for persisted side-question cancellation, with or without recordId."
 				}
-			},
-			"required": [
-				"btwId"
-			]
+			}
 		},
 		"BtwReleaseParams": {
 			"type": "object",
@@ -8041,25 +8040,6 @@
 			},
 			"required": [
 				"record"
-			]
-		},
-		"BtwCancelParams": {
-			"type": "object",
-			"properties": {
-				"recordId": {
-					"type": "string"
-				}
-			}
-		},
-		"BtwCancelResult": {
-			"type": "object",
-			"properties": {
-				"cancelled": {
-					"type": "boolean"
-				}
-			},
-			"required": [
-				"cancelled"
 			]
 		},
 		"GetBtwHistoryResult": {

@@ -130,6 +130,16 @@ _SUBAGENT_STATUS_VALUES: Final[frozenset[str]] = frozenset({"pending", "running"
 _decode_subagent_status = cast("Decoder[SubagentStatus]", literal(_SUBAGENT_STATUS_VALUES))
 
 
+ActivityKind: TypeAlias = Literal["job", "agent", "service"]
+_ACTIVITY_KIND_VALUES: Final[frozenset[str]] = frozenset({"job", "agent", "service"})
+_decode_activity_kind = cast("Decoder[ActivityKind]", literal(_ACTIVITY_KIND_VALUES))
+
+
+ActivityStatus: TypeAlias = Literal["pending", "running", "completed", "failed", "cancelled", "starting", "ready", "restarting", "stopping", "exited", "aborted"]
+_ACTIVITY_STATUS_VALUES: Final[frozenset[str]] = frozenset({"pending", "running", "completed", "failed", "cancelled", "starting", "ready", "restarting", "stopping", "exited", "aborted"})
+_decode_activity_status = cast("Decoder[ActivityStatus]", literal(_ACTIVITY_STATUS_VALUES))
+
+
 SlowModeScope: TypeAlias = Literal["session", "global"]
 """Where `/slow` lives: persisted config shared by every session, or this session's flex tier."""
 _SLOW_MODE_SCOPE_VALUES: Final[frozenset[str]] = frozenset({"session", "global"})
@@ -1807,7 +1817,10 @@ class BtwStartResult:
 
 @dataclass(slots=True, frozen=True, kw_only=True)
 class BtwCancelResult:
-    btw_id: str
+    btw_id: str | None = None
+    """Returned when the request selected an isolated answer by btwId."""
+    cancelled: bool | None = None
+    """Returned for persisted side-question cancellation, with or without recordId."""
 
 
 @dataclass(slots=True, frozen=True, kw_only=True)
@@ -1858,11 +1871,14 @@ UsageLimitState: TypeAlias = UsageLimitLowPriority | UsageLimitWrapUp
 """Provider-neutral state of an account past its usage limit, discriminated by `stage`."""
 
 
-RpcAgentEvent: TypeAlias = AgentStartEvent | AgentEndEvent | TurnStartEvent | TurnEndEvent | MessageStartEvent | MessageUpdateEvent | MessageEndEvent | ToolExecutionStartEvent | ToolExecutionUpdateEvent | ToolStreamUpdateEvent | ToolExecutionEndEvent | AutoCompactionStartEvent | AutoCompactionEndEvent | AutoRetryStartEvent | AutoRetryEndEvent | CacheWarmingStartEvent | CacheWarmingEndEvent | RetryFallbackAppliedEvent | RetryFallbackSucceededEvent | ModelChangedEvent | ConfigWarningsChangedEvent | AdvisorCostChangedEvent | AdvisorYieldedEvent | TtsrTriggeredEvent | TodoReminderEvent | TodoAutoClearEvent | IrcMessageEvent | NoticeEvent | ThinkingLevelChangedEvent | GoalUpdatedEvent | QueueUpdateEvent
+RpcAgentEvent: TypeAlias = AgentStartEvent | AgentEndEvent | TurnStartEvent | TurnEndEvent | MessageStartEvent | MessageUpdateEvent | MessageEndEvent | ToolExecutionStartEvent | ToolExecutionUpdateEvent | ToolStreamUpdateEvent | ToolExecutionEndEvent | AutoCompactionStartEvent | AutoCompactionEndEvent | AutoRetryStartEvent | AutoRetryEndEvent | CacheWarmingStartEvent | CacheWarmingEndEvent | RetryFallbackAppliedEvent | RetryFallbackSucceededEvent | ModelChangedEvent | SessionSkillsUpdatedEvent | ConfigWarningsChangedEvent | AdvisorCostChangedEvent | AdvisorYieldedEvent | TtsrTriggeredEvent | TodoReminderEvent | TodoAutoClearEvent | IrcMessageEvent | NoticeEvent | ThinkingLevelChangedEvent | GoalUpdatedEvent | QueueUpdateEvent
 """A session event, discriminated by `type`; `set_event_filter` selects which are sent."""
 
 
-RpcNotification: TypeAlias = ReadyEvent | PromptResultEvent | SessionSettledEvent | ExtensionError | ExtensionUiRequest | AvailableCommandsUpdateEvent | SubagentLifecycleEvent | SubagentProgressEvent | SubagentEvent | LivePhaseEvent | LiveLevelsEvent | LiveTranscriptEvent | LiveEndEvent | BtwDeltaEvent | BtwRecordEvent | CommandOutputEvent | SessionInfoUpdateEvent | ConfigUpdateEvent | RpcFrameErrorEvent | RpcAgentEvent | UnknownNotification
+BtwUpdateEvent: TypeAlias = BtwStartedEvent | BtwStreamingEvent | BtwCompletedEvent | BtwCancelledEvent | BtwErrorEvent
+
+
+RpcNotification: TypeAlias = ReadyEvent | PromptResultEvent | SessionSettledEvent | ExtensionError | ExtensionUiRequest | AvailableCommandsUpdateEvent | SubagentLifecycleEvent | SubagentProgressEvent | SubagentEvent | LivePhaseEvent | LiveLevelsEvent | LiveTranscriptEvent | LiveEndEvent | BtwDeltaEvent | BtwRecordEvent | PlanReviewEvent | BtwUpdateEvent | CommandOutputEvent | SessionInfoUpdateEvent | ConfigUpdateEvent | RpcFrameErrorEvent | RpcAgentEvent | UnknownNotification
 """Unsolicited outbound frame (everything except responses and host tool/URI requests), discriminated by `type`."""
 
 
@@ -3510,6 +3526,61 @@ def parse_logout_result(value: object, path: str = "LogoutResult") -> LogoutResu
     )
 
 
+def parse_btw_start_result(value: object, path: str = "BtwStartResult") -> BtwStartResult:
+    payload = expect_object(value, path)
+    return BtwStartResult(
+        btw_id=required(payload, "btwId", decode_str, path),
+    )
+
+
+def parse_btw_cancel_result(value: object, path: str = "BtwCancelResult") -> BtwCancelResult:
+    payload = expect_object(value, path)
+    return BtwCancelResult(
+        btw_id=optional(payload, "btwId", decode_str, path),
+        cancelled=optional(payload, "cancelled", decode_bool, path),
+    )
+
+
+def parse_btw_release_result(value: object, path: str = "BtwReleaseResult") -> BtwReleaseResult:
+    payload = expect_object(value, path)
+    return BtwReleaseResult(
+        btw_id=required(payload, "btwId", decode_str, path),
+    )
+
+
+def parse_btw_promote_result(value: object, path: str = "BtwPromoteResult") -> BtwPromoteResult:
+    payload = expect_object(value, path)
+    return BtwPromoteResult(
+        btw_id=required(payload, "btwId", decode_str, path),
+        session_id=required(payload, "sessionId", decode_str, path),
+        session_file=required(payload, "sessionFile", decode_str, path),
+    )
+
+
+def parse_set_plan_mode_result(value: object, path: str = "SetPlanModeResult") -> SetPlanModeResult:
+    payload = expect_object(value, path)
+    return SetPlanModeResult(
+        plan_mode=required(payload, "planMode", nullable(parse_plan_mode_state), path),
+    )
+
+
+def parse_approve_plan_mode_result(value: object, path: str = "ApprovePlanModeResult") -> ApprovePlanModeResult:
+    payload = expect_object(value, path)
+    return ApprovePlanModeResult(
+        final_plan_file_path=required(payload, "finalPlanFilePath", decode_str, path),
+        context_preserved=required(payload, "contextPreserved", decode_bool, path),
+        execution_dispatched=required(payload, "executionDispatched", decode_bool, path),
+        compaction_outcome=optional(payload, "compactionOutcome", cast('Decoder[Literal["ok", "cancelled", "failed"]]', literal(frozenset({"ok", "cancelled", "failed"}))), path),
+    )
+
+
+def parse_goal_mode_result(value: object, path: str = "GoalModeResult") -> GoalModeResult:
+    payload = expect_object(value, path)
+    return GoalModeResult(
+        goal_mode=required(payload, "goalMode", nullable(parse_goal_mode_state), path),
+    )
+
+
 def parse_usage_limit_state(value: object, path: str = "UsageLimitState") -> UsageLimitState:
     return dispatch("stage", _USAGE_LIMIT_STATE_CASES)(value, path)
 
@@ -3598,6 +3669,8 @@ _RPC_NOTIFICATION_CASES: Final[dict[str, Decoder[RpcNotification]]] = {
         "live_end": parse_live_end_event,
         "btw_delta": parse_btw_delta_event,
         "btw_record": parse_btw_record_event,
+        "plan_review": parse_plan_review_event,
+        "btw_update": parse_btw_update_event,
         "command_output": parse_command_output_event,
         "session_info_update": parse_session_info_update_event,
         "config_update": parse_config_update_event,
@@ -3715,10 +3788,13 @@ class WireClient:
         params["question"] = question
         return parse_btw_start_result(self._command("btw_start", params), "btw_start")
 
-    def btw_cancel(self, btw_id: str) -> BtwCancelResult:
-        """Cancel an isolated BTW answer."""
+    def btw_cancel(self, *, btw_id: str | None = None, record_id: str | None = None) -> BtwCancelResult:
+        """Cancel an isolated BTW answer by btwId, or the running side question (only recordId when given)."""
         params: dict[str, object] = {}
-        params["btwId"] = btw_id
+        if btw_id is not None:
+            params["btwId"] = btw_id
+        if record_id is not None:
+            params["recordId"] = record_id
         return parse_btw_cancel_result(self._command("btw_cancel", params), "btw_cancel")
 
     def btw_release(self, btw_id: str) -> BtwReleaseResult:
@@ -4144,13 +4220,6 @@ class WireClient:
             params["recordId"] = record_id
         return required(expect_object(self._command("btw", params), "btw"), "record", parse_btw_history_record, "btw")
 
-    def btw_cancel(self, record_id: str | None = None) -> bool:
-        """Cancel the running side question (only topic `recordId` when given); false when none matches."""
-        params: dict[str, object] = {}
-        if record_id is not None:
-            params["recordId"] = record_id
-        return required(expect_object(self._command("btw_cancel", params), "btw_cancel"), "cancelled", decode_bool, "btw_cancel")
-
     def get_btw_history(self) -> tuple[BtwHistoryRecord, ...]:
         """List the session's side-question records, newest first."""
         params: dict[str, object] = {}
@@ -4215,6 +4284,14 @@ class WireClient:
     def on_btw_record(self, listener: Callable[[BtwRecordEvent], None]) -> Callable[[], None]:
         """Subscribe to `btw_record`: Full side-question record on every lifecycle change (started, complete, cancelled, error); the last one per id wins."""
         return self._listen("btw_record", listener)
+
+    def on_plan_review(self, listener: Callable[[PlanReviewEvent], None]) -> Callable[[], None]:
+        """Subscribe to `plan_review` frames."""
+        return self._listen("plan_review", listener)
+
+    def on_btw_update(self, listener: Callable[[BtwErrorEvent], None]) -> Callable[[], None]:
+        """Subscribe to `btw_update` frames."""
+        return self._listen("btw_update", listener)
 
     def on_command_output(self, listener: Callable[[CommandOutputEvent], None]) -> Callable[[], None]:
         """Subscribe to `command_output`: Output of a builtin slash command."""
@@ -4363,6 +4440,11 @@ class WireClient:
 
 __all__ = [
     "AbortAndRestoreQueueResult",
+    "ActivityItem",
+    "ActivityKind",
+    "ActivitySourceState",
+    "ActivitySources",
+    "ActivityStatus",
     "AdvisorCostChangedEvent",
     "AdvisorYieldedEvent",
     "AgentEndEvent",
@@ -4406,11 +4488,21 @@ __all__ = [
     "BranchMessage",
     "BranchResult",
     "BranchSummaryMessage",
+    "BtwCancelResult",
+    "BtwCancelledEvent",
+    "BtwCompletedEvent",
     "BtwDeltaEvent",
+    "BtwErrorEvent",
     "BtwHistoryRecord",
     "BtwHistoryTurn",
+    "BtwPromoteResult",
     "BtwRecordEvent",
+    "BtwReleaseResult",
+    "BtwStartResult",
+    "BtwStartedEvent",
     "BtwStatus",
+    "BtwStreamingEvent",
+    "BtwUpdateEvent",
     "CacheWarmingEndEvent",
     "CacheWarmingMode",
     "CacheWarmingOutcome",
@@ -4574,6 +4666,9 @@ __all__ = [
     "UserMessage",
     "WidgetPlacement",
     "parse_abort_and_restore_queue_result",
+    "parse_activity_item",
+    "parse_activity_source_state",
+    "parse_activity_sources",
     "parse_advisor_cost_changed_event",
     "parse_advisor_yielded_event",
     "parse_agent_end_event",
@@ -4613,10 +4708,20 @@ __all__ = [
     "parse_branch_message",
     "parse_branch_result",
     "parse_branch_summary_message",
+    "parse_btw_cancel_result",
+    "parse_btw_cancelled_event",
+    "parse_btw_completed_event",
     "parse_btw_delta_event",
+    "parse_btw_error_event",
     "parse_btw_history_record",
     "parse_btw_history_turn",
+    "parse_btw_promote_result",
     "parse_btw_record_event",
+    "parse_btw_release_result",
+    "parse_btw_start_result",
+    "parse_btw_started_event",
+    "parse_btw_streaming_event",
+    "parse_btw_update_event",
     "parse_cache_warming_end_event",
     "parse_cache_warming_start_event",
     "parse_cancel_ui_request",

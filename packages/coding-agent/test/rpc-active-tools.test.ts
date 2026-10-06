@@ -352,6 +352,27 @@ async function createBtwLifecycleHarness() {
 }
 
 describe("Fura RPC BTW lifecycle", () => {
+	it("ambiguous cancellation selectors reject without cancelling a queued snapshot", async () => {
+		const h = await createBtwLifecycleHarness();
+		h.dispatcher.dispatch({ type: "compact" });
+		await h.compactStarted.promise;
+		h.start();
+		h.dispatcher.dispatch({ id: "ambiguous", type: "btw_cancel", btwId: "owned", recordId: "topic" });
+		await flushBtw();
+		h.maintenance.resolve();
+		await h.dispatcher.drain();
+		expect(h.frames).toContainEqual(
+			expect.objectContaining({ id: "ambiguous", command: "btw_cancel", success: false }),
+		);
+		expect(h.frames).toContainEqual(
+			expect.objectContaining({ id: "start-owned", command: "btw_start", success: true }),
+		);
+		expect(h.signal?.aborted).toBe(false);
+		h.turn.resolve(btwAnswer("Snapshot survived invalid cancellation"));
+		await flushBtw();
+		await h.runtime.dispose();
+	});
+
 	for (const control of ["btw_cancel", "btw_release"] as const) {
 		it(`${control} prevents a queued BTW behind compact from ever dispatching`, async () => {
 			const h = await createBtwLifecycleHarness();

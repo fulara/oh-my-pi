@@ -5339,6 +5339,8 @@ pub enum RpcNotification {
 	BtwDelta(BtwDeltaEvent),
 	/// Full side-question record on every lifecycle change (started, complete, cancelled, error); the last one per id wins.
 	BtwRecord(BtwRecordEvent),
+	PlanReview(PlanReviewEvent),
+	BtwUpdateEvent(BtwUpdateEvent),
 	/// Output of a builtin slash command.
 	CommandOutput(CommandOutputEvent),
 	/// A builtin slash command changed the session title.
@@ -5372,6 +5374,8 @@ impl RpcNotification {
 			Some("live_end") => |value| serde_json::from_value(value).map(Self::LiveEnd),
 			Some("btw_delta") => |value| serde_json::from_value(value).map(Self::BtwDelta),
 			Some("btw_record") => |value| serde_json::from_value(value).map(Self::BtwRecord),
+			Some("plan_review") => |value| serde_json::from_value(value).map(Self::PlanReview),
+			Some("btw_update") => |value| serde_json::from_value(value).map(Self::BtwUpdateEvent),
 			Some("command_output") => |value| serde_json::from_value(value).map(Self::CommandOutput),
 			Some("session_info_update") => |value| serde_json::from_value(value).map(Self::SessionInfoUpdate),
 			Some("config_update") => |value| serde_json::from_value(value).map(Self::ConfigUpdate),
@@ -5401,6 +5405,8 @@ impl Serialize for RpcNotification {
 			Self::LiveEnd(member) => serialize_tagged(member, &[("type", "live_end")], serializer),
 			Self::BtwDelta(member) => serialize_tagged(member, &[("type", "btw_delta")], serializer),
 			Self::BtwRecord(member) => serialize_tagged(member, &[("type", "btw_record")], serializer),
+			Self::PlanReview(member) => serialize_tagged(member, &[("type", "plan_review")], serializer),
+			Self::BtwUpdateEvent(member) => member.serialize(serializer),
 			Self::CommandOutput(member) => serialize_tagged(member, &[("type", "command_output")], serializer),
 			Self::SessionInfoUpdate(member) => serialize_tagged(member, &[("type", "session_info_update")], serializer),
 			Self::ConfigUpdate(member) => serialize_tagged(member, &[("type", "config_update")], serializer),
@@ -5436,7 +5442,7 @@ impl RpcServerFrame {
 		let decode: fn(Value) -> Result<Self, serde_json::Error> = match value.get("type").and_then(Value::as_str) {
 			Some("response") => |value| serde_json::from_value(value).map(Self::Response),
 			Some("host_tool_call" | "host_tool_cancel" | "host_uri_request" | "host_uri_cancel") => |value| serde_json::from_value(value).map(Self::RpcHostRequest),
-			Some("ready" | "prompt_result" | "session_settled" | "extension_error" | "extension_ui_request" | "available_commands_update" | "subagent_lifecycle" | "subagent_progress" | "subagent_event" | "live_phase" | "live_levels" | "live_transcript" | "live_end" | "btw_delta" | "btw_record" | "command_output" | "session_info_update" | "config_update" | "rpc_frame_error" | "agent_start" | "agent_end" | "turn_start" | "turn_end" | "message_start" | "message_update" | "message_end" | "tool_execution_start" | "tool_execution_update" | "tool_stream_update" | "tool_execution_end" | "auto_compaction_start" | "auto_compaction_end" | "auto_retry_start" | "auto_retry_end" | "cache_warming_start" | "cache_warming_end" | "retry_fallback_applied" | "retry_fallback_succeeded" | "model_changed" | "config_warnings_changed" | "advisor_cost_changed" | "advisor_yielded" | "ttsr_triggered" | "todo_reminder" | "todo_auto_clear" | "irc_message" | "notice" | "thinking_level_changed" | "goal_updated" | "queue_update") => |value| serde_json::from_value(value).map(Self::RpcNotification),
+			Some("ready" | "prompt_result" | "session_settled" | "extension_error" | "extension_ui_request" | "available_commands_update" | "subagent_lifecycle" | "subagent_progress" | "subagent_event" | "live_phase" | "live_levels" | "live_transcript" | "live_end" | "btw_delta" | "btw_record" | "plan_review" | "btw_update" | "command_output" | "session_info_update" | "config_update" | "rpc_frame_error" | "agent_start" | "agent_end" | "turn_start" | "turn_end" | "message_start" | "message_update" | "message_end" | "tool_execution_start" | "tool_execution_update" | "tool_stream_update" | "tool_execution_end" | "auto_compaction_start" | "auto_compaction_end" | "auto_retry_start" | "auto_retry_end" | "cache_warming_start" | "cache_warming_end" | "retry_fallback_applied" | "retry_fallback_succeeded" | "model_changed" | "session_skills_updated" | "config_warnings_changed" | "advisor_cost_changed" | "advisor_yielded" | "ttsr_triggered" | "todo_reminder" | "todo_auto_clear" | "irc_message" | "notice" | "thinking_level_changed" | "goal_updated" | "queue_update") => |value| serde_json::from_value(value).map(Self::RpcNotification),
 			_ => |value| Ok(Self::Unknown(value)),
 		};
 		decode(value)
@@ -5554,14 +5560,22 @@ pub struct BtwStartResult {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BtwCancelParams {
-	#[serde(rename = "btwId")]
-	pub btw_id: String,
+	/// Isolated answer selector; mutually exclusive with recordId.
+	#[serde(rename = "btwId", default, skip_serializing_if = "Option::is_none")]
+	pub btw_id: Option<String>,
+	/// Persisted side-question selector; omitted to cancel the running side question.
+	#[serde(rename = "recordId", default, skip_serializing_if = "Option::is_none")]
+	pub record_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BtwCancelResult {
-	#[serde(rename = "btwId")]
-	pub btw_id: String,
+	/// Returned when the request selected an isolated answer by btwId.
+	#[serde(rename = "btwId", default, skip_serializing_if = "Option::is_none")]
+	pub btw_id: Option<String>,
+	/// Returned for persisted side-question cancellation, with or without recordId.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub cancelled: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -6073,17 +6087,6 @@ pub struct BtwParams {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BtwResult {
 	pub record: BtwHistoryRecord,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct BtwCancelParams {
-	#[serde(rename = "recordId", default, skip_serializing_if = "Option::is_none")]
-	pub record_id: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct BtwCancelResult {
-	pub cancelled: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -6872,11 +6875,15 @@ impl Command for BtwStartCommand {
 	}
 }
 
-/// Cancel an isolated BTW answer.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// Cancel an isolated BTW answer by btwId, or the running side question (only recordId when given).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct BtwCancelCommand {
-	#[serde(rename = "btwId")]
-	pub btw_id: String,
+	/// Isolated answer selector; mutually exclusive with recordId.
+	#[serde(rename = "btwId", default, skip_serializing_if = "Option::is_none")]
+	pub btw_id: Option<String>,
+	/// Persisted side-question selector; omitted to cancel the running side question.
+	#[serde(rename = "recordId", default, skip_serializing_if = "Option::is_none")]
+	pub record_id: Option<String>,
 }
 
 impl Command for BtwCancelCommand {
@@ -8031,23 +8038,6 @@ impl Command for BtwCommand {
 
 	fn decode(data: Option<Value>) -> Result<Self::Output, serde_json::Error> {
 		serde_json::from_value::<BtwResult>(data.unwrap_or_else(|| Value::Object(Map::new()))).map(|result| result.record)
-	}
-}
-
-/// Cancel the running side question (only topic `recordId` when given); false when none matches.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
-pub struct BtwCancelCommand {
-	#[serde(rename = "recordId", default, skip_serializing_if = "Option::is_none")]
-	pub record_id: Option<String>,
-}
-
-impl Command for BtwCancelCommand {
-	const NAME: &'static str = "btw_cancel";
-	const TIMEOUT_MS: Option<u64> = None;
-	type Output = bool;
-
-	fn decode(data: Option<Value>) -> Result<Self::Output, serde_json::Error> {
-		serde_json::from_value::<BtwCancelResult>(data.unwrap_or_else(|| Value::Object(Map::new()))).map(|result| result.cancelled)
 	}
 }
 

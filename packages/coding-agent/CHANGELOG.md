@@ -272,6 +272,7 @@
 ### Breaking Changes
 
 - `createAgentSession` now throws `Could not restore model <provider/id>` when a resumed session's saved models cannot be restored, and `AgentSession.switchSession` throws it, keeping the current session, when it opens such a session; both still fall back with a warning when `hasUI` is set and `retry.modelFallback` is on, and hosts that cannot show that warning can opt out with `allowSessionModelFallback: false` ([#13689](https://github.com/can1357/oh-my-pi/pull/13689) by [@alphastorm](https://github.com/alphastorm)).
+- Generated Python, Go and Rust `btw_cancel` APIs now accept optional `btwId`/`recordId` selectors and return the selected response envelope rather than an unwrapped upstream boolean. Python callers use keyword selectors; Go/Rust callers use optional fields and inspect `cancelled` or `btwId`.
 
 ### Added
 
@@ -307,6 +308,11 @@
 - Fixed Tern tooltips naming keys with Nerd Font icons Tern's UI font lacks (a box after "Thinking effort"); they show keycaps (`⇧⇥`) whatever the symbol preset
 - Fixed `/new`, session switches, and Esc aborts hanging for up to 30 seconds while an extension's `message_end` hook was still running; they now wait only for end-of-turn maintenance.
 - Fixed Tern's per-turn usage row showing a 24-hour time while the user message above it showed a 12-hour time; both now follow the terminal's clock ([#14565](https://github.com/can1357/oh-my-pi/pull/14565) by [@wolfiesch](https://github.com/wolfiesch))
+- Kept Fura's isolated BTW cancellation and upstream persisted-topic cancellation distinct by selector, including queued cancellation during maintenance; ambiguous selectors fail without cancelling a pending snapshot.
+- Preserved Fura's session-switch reconciliation and queued-input receipts alongside upstream model restoration, queue image recovery and event-driven native process control.
+- Fixed idle native `tail -f` pipelines hanging on macOS after their stdout reader exits: reader closure now recognizes Darwin's `POLLHUP` as well as `POLLERR`, including provider-backed files.
+- Fixed native `grep -m` waiting for another input chunk when an anchored match reaches its limit at the end of a live pipe; zero limits now avoid reading, and requested trailing context is retained before stopping.
+
 - Fixed Tern's agents pill missing while a finished subagent runs again after an IRC message woke or revived it; it now counts running agents as the status-line badge does
 - Fixed browser `tab.goto`, `back`, `forward` and `reload` timing out on pages whose ad, chat or other iframe never finishes loading, although the page itself had loaded ([#14421](https://github.com/can1357/oh-my-pi/pull/14421) by [@will-bogusz](https://github.com/will-bogusz))
 - Fixed the token count after a snapcompact compaction (divider and RPC result) disagreeing with the context count right after it ([#14291](https://github.com/can1357/oh-my-pi/pull/14291) by [@will-bogusz](https://github.com/will-bogusz))
