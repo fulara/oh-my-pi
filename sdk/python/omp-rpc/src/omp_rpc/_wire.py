@@ -1934,6 +1934,11 @@ class GoalModeResult:
     goal_mode: GoalModeState | None
 
 
+@dataclass(slots=True, frozen=True, kw_only=True)
+class LogoutResult:
+    remaining_source: str | None = None
+
+
 UserContent: TypeAlias = TextContent | ImageContent
 
 
@@ -3677,7 +3682,6 @@ def parse_logout_result(value: object, path: str = "LogoutResult") -> LogoutResu
         remaining_source=optional(payload, "remainingSource", decode_str, path),
     )
 
-
 def parse_btw_start_result(value: object, path: str = "BtwStartResult") -> BtwStartResult:
     payload = expect_object(value, path)
     return BtwStartResult(
@@ -3730,6 +3734,13 @@ def parse_goal_mode_result(value: object, path: str = "GoalModeResult") -> GoalM
     payload = expect_object(value, path)
     return GoalModeResult(
         goal_mode=required(payload, "goalMode", nullable(parse_goal_mode_state), path),
+    )
+
+
+def parse_logout_result(value: object, path: str = "LogoutResult") -> LogoutResult:
+    payload = expect_object(value, path)
+    return LogoutResult(
+        remaining_source=optional(payload, "remainingSource", decode_str, path),
     )
 
 
