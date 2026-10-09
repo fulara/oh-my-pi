@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Restored lazy Puppeteer loading for launched app connections after integrating the upstream connector with fork-owned process cleanup.
+- The parent-watchdog regression now verifies fixture birth identities before orphaning and cleans up only pinned owned processes, never a PID reopened after parent exit or a shared group.
+- Regenerated the Python RPC wire after combining upstream logout commands with the fork's BTW, plan and goal contracts.
+
 ## [18.8.7] - 2026-10-09
 
 ### Added

@@ -364,6 +364,7 @@ async function openBrowserHandle(kind: BrowserKind, opts: AcquireBrowserOptions)
 
 	let browser: Browser;
 	try {
+		const puppeteer = await loadPuppeteer();
 		browser = await connectPuppeteer(puppeteer, {
 			browserURL: cdpUrl,
 			defaultViewport: null,
