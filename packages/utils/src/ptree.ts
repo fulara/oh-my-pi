@@ -411,21 +411,36 @@ export class ChildProcess<In extends InMask = InMask> {
 	}
 
 	/**
-	 * Native tree termination through the root handle pinned at spawn; the PID
-	 * is never reopened. A pinned handle that cannot be used — e.g. a
-	 * `bun test --isolate` realm whose napi classes another realm superseded
-	 * ("Value is not an instance of class `Process`") — falls back to
-	 * signalling the still-running child directly.
+	 * Native tree termination through the root handle pinned at spawn. Without
+	 * that identity, or when the native call fails or refuses, cleanup is
+	 * reported instead of retried by PID or process group: those numbers cannot
+	 * prove they still name this invocation.
 	 */
 	#terminateTree(options: ProcessTerminateOptions | undefined): Promise<boolean | void> {
-		const gracefulMs = options?.gracefulMs ?? 1000;
 		const root = this.#rootProcess;
-		if (root) {
-			try {
-				return root.terminate(options).catch(() => this.#signalChild(gracefulMs));
-			} catch {}
+		if (!root) {
+			logger.warn("Process cleanup refused: missing pinned identity; resource may still be running", {
+				pid: this.proc.pid,
+			});
+			return Promise.resolve();
 		}
-		return this.#signalChild(gracefulMs);
+		const failed = (error: unknown): void => {
+			logger.warn("Process cleanup failed; no PID/group fallback attempted", {
+				pid: this.proc.pid,
+				error: String(error),
+			});
+		};
+		try {
+			return root.terminate(options).then(terminated => {
+				if (!terminated) {
+					logger.warn("Process cleanup refused; resource may still be running", { pid: this.proc.pid });
+				}
+				return terminated;
+			}, failed);
+		} catch (error) {
+			failed(error);
+			return Promise.resolve();
+		}
 	}
 
 	/**
