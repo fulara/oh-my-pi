@@ -1,9 +1,8 @@
 /**
- * abort() can land while prompt() is still normalizing images or building the
- * vision-model description for a text-only model — both run before
- * PromptOptions.onPromptAdmitted fires. The prompt must be dropped (handed to
- * setPromptDropped) instead of starting a turn or entering a queue afterward,
- * and abort() must cancel an in-flight vision description rather than wait on it.
+ * Idle prompt normalization precedes admission; streaming inputs are admitted
+ * before deferred queue preparation. Abort drops an unadmitted prompt, cancels
+ * vision work, and leaves an admitted queue entry restorable without dispatching
+ * another turn.
  */
 import { afterEach, describe, expect, it, spyOn } from "bun:test";
 import { Agent } from "@oh-my-pi/pi-agent-core";
@@ -115,7 +114,7 @@ describe("AgentSession prompt admission racing abort", () => {
 		expect(streamCalls).toEqual([]);
 	});
 
-	it("drops a streaming prompt instead of queueing it when abort lands mid-normalization", async () => {
+	it("aborts deferred image preparation without dispatching or losing the admitted follow-up", async () => {
 		const turnStarted = Promise.withResolvers<void>();
 		const releaseTurn = Promise.withResolvers<void>();
 		let calls = 0;
@@ -132,31 +131,41 @@ describe("AgentSession prompt admission racing abort", () => {
 			},
 		]);
 		const normalization = holdImageNormalization();
-
 		const running = session.prompt("start");
-		await withTimeout(turnStarted.promise, 2_000, "First turn never started");
+		try {
+			await withTimeout(turnStarted.promise, 2_000, "First turn never started");
+			let admitted = false;
+			expect(
+				await session.prompt("queue while normalizing", {
+					images: [IMAGE],
+					streamingBehavior: "followUp",
+					onPromptAdmitted: () => {
+						admitted = true;
+					},
+				}),
+			).toBe(true);
+			releaseTurn.resolve();
+			await withTimeout(normalization.started, 2_000, "Deferred normalization never started");
+			const aborting = session.abort({ reason: USER_INTERRUPT_LABEL });
+			normalization.release();
+			await aborting;
+			await running;
+			await session.waitForIdle();
 
-		let admitted = false;
-		const queuedPromise = session.prompt("queue while normalizing", {
-			images: [IMAGE],
-			streamingBehavior: "followUp",
-			onPromptAdmitted: () => {
-				admitted = true;
-			},
-		});
-		await withTimeout(normalization.started, 2_000, "Normalization never started");
-		const aborting = session.abort({ reason: USER_INTERRUPT_LABEL });
-		releaseTurn.resolve();
-		await aborting;
-		normalization.release();
-
-		expect(await queuedPromise).toBe(true);
-		await running;
-		await session.waitForIdle();
-		expect(admitted).toBe(false);
-		expect(dropped).toEqual(["queue while normalizing"]);
-		expect(session.getQueuedMessages()).toEqual({ steering: [], followUp: [], liveSteered: 0 });
-		expect(calls).toBe(1);
+			expect(admitted).toBe(true);
+			expect(dropped).toEqual([]);
+			expect(session.getQueuedMessages().followUp).toEqual(["queue while normalizing"]);
+			const restored = session.clearQueue().followUp;
+			expect(restored.map(({ text, images }) => ({ text, images }))).toEqual([
+				{ text: "queue while normalizing", images: [IMAGE] },
+			]);
+			expect(calls).toBe(1);
+		} finally {
+			releaseTurn.resolve();
+			normalization.release();
+			await session.abort({ reason: USER_INTERRUPT_LABEL });
+			await running;
+		}
 	});
 
 	it("keeps the next prompt busy when an interrupted setup unwinds late", async () => {

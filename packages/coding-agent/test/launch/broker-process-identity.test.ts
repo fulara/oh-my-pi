@@ -155,7 +155,7 @@ async function recoverSentinel(
 			client = await createDaemonBrokerClient(projectDir, { runtimeDir, idleGraceMs: 5_000 });
 			broker = startBroker(projectDir, runtimeDir);
 			const deadline = Date.now() + 5_000;
-			const endpoint = daemonBrokerEndpoint(projectDir, runtimeDir);
+			const endpoint = daemonBrokerEndpoint(runtimeDir);
 			while (
 				!(await fs.stat(endpoint).then(
 					() => true,
@@ -249,7 +249,7 @@ describe.skipIf(process.platform === "win32")("daemon broker process identity re
 		const spawn = spyOn(Bun, "spawn");
 		let connected = false;
 		try {
-			const endpoint = daemonBrokerEndpoint(projectDir, runtimeDir);
+			const endpoint = daemonBrokerEndpoint(runtimeDir);
 			const deadline = Date.now() + 5_000;
 			while (
 				!(await fs.stat(endpoint).then(

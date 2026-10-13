@@ -11,6 +11,9 @@
 
 import * as os from "node:os";
 import { afterEach, beforeEach, describe, expect, it, spyOn, vi } from "bun:test";
+import type { Process } from "@oh-my-pi/pi-natives";
+import { withTimeout } from "@oh-my-pi/pi-utils";
+import type { Subprocess } from "bun";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import { createBrowserPrelude } from "@oh-my-pi/pi-coding-agent/tools/browser";
 import * as attach from "@oh-my-pi/pi-coding-agent/tools/browser/attach";
@@ -271,10 +274,20 @@ describe("browser open — an abandoned browser acquisition does not hold up the
 	});
 
 	it("waits until a spawned app's abandoned acquisition has killed the app before looking for one to reuse", async () => {
-		// A long-lived stand-in app that exists on every platform: this Bun binary sleeping.
-		const kind = { kind: "spawned" as const, path: process.execPath, args: ["-e", "await Bun.sleep(30_000)"] };
+		const kind = {
+			kind: "spawned" as const,
+			path: process.execPath,
+			args: ["-e", "Bun.serve({hostname:'127.0.0.1',port:0,fetch:()=>new Response('fixture')})"],
+		};
 		const cwd = os.tmpdir();
 		const events: string[] = [];
+		const created: { subprocess: Subprocess; ownedProcess: Process }[] = [];
+		const spawnApp = attach.spawnBrowserApplication;
+		spyOn(attach, "spawnBrowserApplication").mockImplementation((argv, directory) => {
+			const owned = spawnApp(argv, directory);
+			created.push(owned);
+			return owned;
+		});
 		let lookups = 0;
 		spyOn(attach, "findReusableCdp").mockImplementation(async () => {
 			events.push("lookup");
@@ -290,8 +303,10 @@ describe("browser open — an abandoned browser acquisition does not hold up the
 			return stalledConnect.promise;
 		});
 		const killGate = Promise.withResolvers<void>();
+		const killStarted = Promise.withResolvers<void>();
 		spyOn(attach, "gracefulKillTreeOnce").mockImplementation(async owned => {
 			events.push("kill-start");
+			killStarted.resolve();
 			await killGate.promise;
 			await owned.terminate({ group: false, gracefulMs: -1 });
 			events.push("kill-end");
@@ -299,18 +314,36 @@ describe("browser open — an abandoned browser acquisition does not hold up the
 		const browser = { connected: true, disconnect: () => undefined } as unknown as Browser;
 
 		const owner = new AbortController();
-		const first = rejectionOf(registry.acquireBrowser(kind, { cwd, signal: owner.signal }));
-		await firstConnect.promise;
-		owner.abort();
-		const second = registry.acquireBrowser(kind, { cwd });
-		stalledConnect.resolve(browser);
-		for (let i = 0; i < 20; i++) await Promise.resolve();
-		killGate.resolve();
+		let first: Promise<unknown> | undefined;
+		let second: Promise<registry.BrowserHandle> | undefined;
+		try {
+			first = rejectionOf(registry.acquireBrowser(kind, { cwd, signal: owner.signal }));
+			await withTimeout(firstConnect.promise, 2000, "First browser connection did not start");
+			owner.abort();
+			second = registry.acquireBrowser(kind, { cwd });
+			stalledConnect.resolve(browser);
+			await withTimeout(killStarted.promise, 2000, "Abandoned browser cleanup did not start");
+			expect(lookups).toBe(1);
+			killGate.resolve();
 
-		expect(await first).toBeInstanceOf(ToolAbortError);
-		const handle = await second;
-		await registry.releaseBrowser(handle, { kill: false });
-		expect(events).toEqual(["lookup", "connect", "kill-start", "kill-end", "lookup", "connect"]);
+			expect(await withTimeout(first, 2000, "Abandoned acquisition did not settle")).toBeInstanceOf(ToolAbortError);
+			const handle = await withTimeout(second, 2000, "Replacement browser acquisition did not settle");
+			await registry.releaseBrowser(handle, { kill: false });
+			expect(events).toEqual(["lookup", "connect", "kill-start", "kill-end", "lookup", "connect"]);
+		} finally {
+			owner.abort();
+			stalledConnect.resolve(browser);
+			killGate.resolve();
+			for (const owned of created) {
+				await owned.ownedProcess.terminate({ group: false, gracefulMs: -1 });
+				await attach.waitForBrowserProcessExit(owned.ownedProcess, owned.subprocess.exited);
+			}
+			if (first) await withTimeout(first, 2000, "Abandoned acquisition cleanup did not settle");
+			if (second)
+				await withTimeout(second, 2000, "Replacement acquisition cleanup did not settle").then(handle =>
+					registry.releaseBrowser(handle, { kill: false }),
+				);
+		}
 	});
 });
 
@@ -322,10 +355,11 @@ describe("browser open — failed spawned-app acquisition reaps its owned proces
 			"-e",
 			"Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => new Response('fixture') })",
 		];
-		const victim = attach.spawnBrowserApplication(command, os.tmpdir());
 		const sentinel = attach.spawnBrowserApplication(command, os.tmpdir());
-		const sentinelIdentity = sentinel.ownedProcess.identity();
+		let victim: { subprocess: Subprocess; ownedProcess: Process } | undefined;
 		try {
+			const sentinelIdentity = sentinel.ownedProcess.identity();
+			victim = attach.spawnBrowserApplication(command, os.tmpdir());
 			const disconnectSpy = vi.fn();
 			const browser = {
 				key: `spawned:${victim.subprocess.pid}`,
@@ -365,6 +399,7 @@ describe("browser open — failed spawned-app acquisition reaps its owned proces
 			expect(getTabsMapForTest().has("failed-open")).toBe(false);
 		} finally {
 			for (const owned of [victim, sentinel]) {
+				if (!owned) continue;
 				await owned.ownedProcess.terminate({ group: false, gracefulMs: -1 });
 				await attach.waitForBrowserProcessExit(owned.ownedProcess, owned.subprocess.exited);
 			}
