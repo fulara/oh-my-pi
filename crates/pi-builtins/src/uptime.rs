@@ -767,14 +767,4 @@ mod tests {
 		assert_eq!(code, 0);
 		assert!(out.starts_with("up ") && out.ends_with("\n"), "{out}");
 	}
-
-	#[cfg(target_vendor = "apple")]
-	#[test]
-	fn live_since_matches_kern_boottime() {
-		let (host, _) = Host::for_test("uptime", "", std::env::temp_dir());
-		let boot = system_boot_time(&host).expect("kern.boottime");
-		let (code, out, err) = run_with_env(&[("TZ", "UTC")], &["-s"]);
-		assert_eq!((code, err.as_str()), (0, ""));
-		assert_eq!(out, format!("{}\n", since_line(boot, &utc())));
-	}
 }

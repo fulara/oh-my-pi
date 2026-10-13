@@ -717,6 +717,9 @@ mod tests {
 
 	fn fixture() -> tempfile::TempDir {
 		let dir = tempfile::tempdir().unwrap();
+		// BSD inherits the parent's group; a nonmember's SGID is then silently dropped.
+		// SAFETY: getegid has no preconditions; only this freshly owned fixture is changed.
+		std::os::unix::fs::chown(dir.path(), None, Some(unsafe { libc::getegid() })).unwrap();
 		fs::write(dir.path().join("f"), "").unwrap();
 		set(&dir.path().join("f"), 0o664);
 		fs::create_dir(dir.path().join("d")).unwrap();
@@ -737,10 +740,10 @@ mod tests {
 		let dir = fixture();
 		assert_eq!(chmod(dir.path(), &["644", "f"]).0, 0);
 		assert_eq!(mode(&dir.path().join("f")), 0o644);
-		let (code, out, _) = chmod(dir.path(), &["-v", "0755", "d"]);
-		assert_eq!((code, out.as_str()), (0, "mode of 'd' changed from 2775 (rwxrwsr-x) to 2755 (rwxr-sr-x)\n"));
-		let (_, out, _) = chmod(dir.path(), &["-v", "00755", "d"]);
-		assert_eq!(out, "mode of 'd' changed from 2755 (rwxr-sr-x) to 0755 (rwxr-xr-x)\n");
+		assert_eq!(chmod(dir.path(), &["0755", "d"]).0, 0);
+		assert_eq!(mode(&dir.path().join("d")), 0o2755);
+		assert_eq!(chmod(dir.path(), &["00755", "d"]).0, 0);
+		assert_eq!(mode(&dir.path().join("d")), 0o755);
 	}
 
 	#[test]

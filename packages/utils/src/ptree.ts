@@ -394,7 +394,33 @@ export class ChildProcess<In extends InMask = InMask> {
 						? { group: true }
 						: undefined
 					: { gracefulMs, group: this.#terminateGroup };
-			this.#terminating = this.#rootProcess?.terminate(options)?.catch(e => void e);
+			if (!this.#rootProcess) {
+				logger.warn("Process cleanup refused: missing pinned identity; resource may still be running", {
+					pid: this.proc.pid,
+				});
+				return;
+			}
+			try {
+				this.#terminating = this.#rootProcess.terminate(options).then(
+					terminated => {
+						if (!terminated) {
+							logger.warn("Process cleanup refused; resource may still be running", { pid: this.proc.pid });
+						}
+						return terminated;
+					},
+					error => {
+						logger.warn("Process cleanup failed; no PID/group fallback attempted", {
+							pid: this.proc.pid,
+							error: String(error),
+						});
+					},
+				);
+			} catch (error) {
+				logger.warn("Process cleanup failed; no PID/group fallback attempted", {
+					pid: this.proc.pid,
+					error: String(error),
+				});
+			}
 		}
 	}
 
