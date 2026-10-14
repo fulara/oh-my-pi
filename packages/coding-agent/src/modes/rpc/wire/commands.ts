@@ -217,34 +217,6 @@ export const rpcCommands: readonly RpcCommandSpec[] = [
 		unwrap: "todoPhases",
 	},
 	{
-		name: "set_plan_mode",
-		doc: "Enable or disable the browser plan workflow.",
-		params: { enabled: "boolean", "planFilePath?": "string", "workflow?": "'parallel' | 'iterative'" },
-		result: { planMode: "PlanModeState | null" },
-	},
-	{
-		name: "approve_plan_mode",
-		doc: "Approve a plan and dispatch execution with the chosen context policy.",
-		params: {
-			"planFilePath?": "string",
-			finalPlanFilePath: "string",
-			"preserveContext?": "boolean",
-			"compactBeforeExecute?": "boolean",
-		},
-		result: {
-			finalPlanFilePath: "string",
-			contextPreserved: "boolean",
-			"compactionOutcome?": "'ok' | 'cancelled' | 'failed'",
-			executionDispatched: "boolean",
-		},
-	},
-	{
-		name: "goal_mode",
-		doc: "Change the browser goal workflow.",
-		params: "GoalModeParams",
-		result: { goalMode: "GoalModeState | null" },
-	},
-	{
 		name: "set_active_tools",
 		doc: "Restrict the session to the named active tools.",
 		params: { toolNames: "string[]" },

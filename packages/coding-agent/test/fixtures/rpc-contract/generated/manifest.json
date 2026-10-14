@@ -5,11 +5,6 @@
     "file": "available-commands-update.json"
   },
   {
-    "name": "command-approve-plan-mode",
-    "category": "command",
-    "file": "command-approve-plan-mode.json"
-  },
-  {
     "name": "command-branch",
     "category": "command",
     "file": "command-branch.json"
@@ -70,16 +65,6 @@
     "file": "command-get-state.json"
   },
   {
-    "name": "command-goal-mode-create",
-    "category": "command",
-    "file": "command-goal-mode-create.json"
-  },
-  {
-    "name": "command-goal-mode-set-budget",
-    "category": "command",
-    "file": "command-goal-mode-set-budget.json"
-  },
-  {
     "name": "command-negotiate-protocol",
     "category": "command",
     "file": "command-negotiate-protocol.json"
@@ -103,11 +88,6 @@
     "name": "command-set-host-uri-schemes",
     "category": "command",
     "file": "command-set-host-uri-schemes.json"
-  },
-  {
-    "name": "command-set-plan-mode",
-    "category": "command",
-    "file": "command-set-plan-mode.json"
   },
   {
     "name": "command-set-session-skills",
@@ -183,11 +163,6 @@
     "name": "event-message-update-text",
     "category": "event",
     "file": "event-message-update-text.json"
-  },
-  {
-    "name": "event-plan-review",
-    "category": "event",
-    "file": "event-plan-review.json"
   },
   {
     "name": "event-session-skills-updated",
@@ -280,11 +255,6 @@
     "file": "ready.json"
   },
   {
-    "name": "response-approve-plan-mode",
-    "category": "response",
-    "file": "response-approve-plan-mode.json"
-  },
-  {
     "name": "response-branch",
     "category": "response",
     "file": "response-branch.json"
@@ -375,11 +345,6 @@
     "file": "response-get-state.json"
   },
   {
-    "name": "response-goal-mode",
-    "category": "response",
-    "file": "response-goal-mode.json"
-  },
-  {
     "name": "response-negotiate-protocol",
     "category": "response",
     "file": "response-negotiate-protocol.json"
@@ -403,11 +368,6 @@
     "name": "response-set-active-tools",
     "category": "response",
     "file": "response-set-active-tools.json"
-  },
-  {
-    "name": "response-set-plan-mode",
-    "category": "response",
-    "file": "response-set-plan-mode.json"
   },
   {
     "name": "response-set-session-skills",

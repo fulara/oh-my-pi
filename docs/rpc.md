@@ -33,6 +33,8 @@ Behavior notes:
 - Extension startup (`session_start`) runs after `ready`. While it runs, only `extension_ui_response` (an extension may be waiting on a dialog) and `set_ask_dialog` are handled; every other valid frame is read and waits, in order, until startup finishes (a malformed line still gets its `parse` failure at once). If stdin closes during startup, dialogs the extension awaits are rejected so startup can finish.
 - When stdin closes, pending extension UI, host-tool, and host-URI requests are rejected; accepted commands are drained, the session is disposed, pending stdout is delivered, and normal shutdown exits with code `0`. A session-persistence failure still latched at disposal exits with code `1` after delivering its `notice` frame.
 - Responses/events are written as one JSON object per line.
+- RPC does not restore legacy `plan` or `plan_paused` journal modes. Resumed sessions use ordinary tool and context policy; existing plan artifacts and journal entries are left unchanged. Native interactive planning remains available outside RPC.
+- The former browser-only Plan and Goal Mode commands are unsupported and receive the normal `Unknown command` failure. RPC state has no browser mode projections or plan-review notification. Native `goal` commands, the `goal` state field, and upstream Goal journal restoration remain unchanged; browser-specific restoration no longer reactivates paused goals.
 
 ## Transport and Framing
 

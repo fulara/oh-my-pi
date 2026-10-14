@@ -43,7 +43,8 @@
     "queuedMessageCount": 0,
     "queuedMessages": {
       "steering": [],
-      "followUp": []
+      "followUp": [],
+      "liveSteered": 0
     },
     "hasPendingAsyncWork": false,
     "isSettled": true,
@@ -64,26 +65,6 @@
         ]
       }
     ],
-    "planMode": {
-      "enabled": true,
-      "planFilePath": "local://PLAN.md",
-      "workflow": "parallel",
-      "reentry": false
-    },
-    "goalMode": {
-      "enabled": true,
-      "mode": "active",
-      "goal": {
-        "id": "goal-1",
-        "objective": "Ship goal-mode projection",
-        "status": "active",
-        "tokenBudget": 50000,
-        "tokensUsed": 1200,
-        "timeUsedSeconds": 90,
-        "createdAt": 1770000000000,
-        "updatedAt": 1770000009000
-      }
-    },
     "goal": {
       "enabled": true,
       "mode": "active",
