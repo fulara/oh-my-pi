@@ -12,7 +12,6 @@ import type { ContextUsage } from "../../extensibility/extensions/types";
 import type { RestoredQueuedMessage } from "../../session/agent-session-types";
 import type { CacheWarmingMode } from "../../session/cache-warmer";
 import type { GoalModeState } from "../../goals/state";
-import type { PlanModeState } from "../../plan-mode/state";
 import type { AgentSessionEvent, SessionStats } from "../../session/agent-session";
 import type { FileEntry, SessionEntry, SessionTreeNode } from "../../session/session-entries";
 import type { UsageLimitState } from "../../session/usage-limit";
@@ -28,15 +27,6 @@ import type { LivePhase } from "@oh-my-pi/pi-tui/apps/live-visualizer";
 import type { RpcMessagesPage } from "./rpc-messages";
 import type { RpcGoalOp, RpcGoalResult } from "./rpc-goal";
 import type { BtwHistoryRecord } from "../../session/btw-history";
-
-export interface RpcPlanReviewEvent {
-	type: "plan_review";
-	sessionId: string | null;
-	planFilePath: string;
-	finalPlanFilePath: string;
-	title?: string;
-	content: string;
-}
 
 // ============================================================================
 // RPC Commands (stdin)
@@ -110,21 +100,6 @@ export type RpcCommand =
 	| { id?: string; type: "get_entries"; since?: string }
 	| { id?: string; type: "get_tree" }
 	| { id?: string; type: "set_todos"; phases: TodoPhase[] }
-	| {
-			id?: string;
-			type: "set_plan_mode";
-			enabled: boolean;
-			planFilePath?: string;
-			workflow?: PlanModeState["workflow"];
-	  }
-	| {
-			id?: string;
-			type: "approve_plan_mode";
-			planFilePath?: string;
-			finalPlanFilePath: string;
-			preserveContext?: boolean;
-			compactBeforeExecute?: boolean;
-	  }
 	| { id?: string; type: "set_host_tools"; tools: RpcHostToolDefinition[] }
 	| { id?: string; type: "set_active_tools"; toolNames: string[] }
 	| { id?: string; type: "set_host_uri_schemes"; schemes: RpcHostUriSchemeDefinition[] }
@@ -138,19 +113,6 @@ export type RpcCommand =
 	| { id?: string; type: "live_start"; voice?: string; instructions?: string }
 	| { id?: string; type: "live_stop" }
 	| { id?: string; type: "live_mute"; muted?: boolean }
-	| {
-			id?: string;
-			type: "goal_mode";
-			op: "create";
-			objective: string;
-			tokenBudget?: number;
-	  }
-	| {
-			id?: string;
-			type: "goal_mode";
-			op: "pause" | "resume" | "drop" | "set_budget";
-			tokenBudget?: number;
-	  }
 
 	// Model
 	| { id?: string; type: "set_model"; provider: string; modelId: string }
@@ -261,8 +223,6 @@ export interface RpcSessionState {
 	 *  streaming response; `remove_queued_message` cannot reach them. */
 	queuedMessages: { steering: string[]; followUp: string[]; liveSteered: number };
 	todoPhases: TodoPhase[];
-	planMode: PlanModeState | null;
-	goalMode: GoalModeState | null;
 	sessionSkills?: SessionSkillsState;
 	/** For session dump / export (plain-text parity with /dump). */
 	systemPrompt?: string[];
@@ -596,25 +556,6 @@ export type RpcResponse =
 			data: { tree: SessionTreeNode[]; leafId: string | null };
 	  }
 	| { id?: string; type: "response"; command: "set_todos"; success: true; data: { todoPhases: TodoPhase[] } }
-	| {
-			id?: string;
-			type: "response";
-			command: "set_plan_mode";
-			success: true;
-			data: { planMode: PlanModeState | null };
-	  }
-	| {
-			id?: string;
-			type: "response";
-			command: "approve_plan_mode";
-			success: true;
-			data: {
-				finalPlanFilePath: string;
-				contextPreserved: boolean;
-				compactionOutcome?: "ok" | "cancelled" | "failed";
-				executionDispatched: boolean;
-			};
-	  }
 	| { id?: string; type: "response"; command: "set_host_tools"; success: true; data: { toolNames: string[] } }
 	| { id?: string; type: "response"; command: "set_active_tools"; success: true; data: { toolNames: string[] } }
 	| { id?: string; type: "response"; command: "set_host_uri_schemes"; success: true; data: { schemes: string[] } }
@@ -654,7 +595,6 @@ export type RpcResponse =
 			data: { cancelled: boolean };
 	  }
 	| { id?: string; type: "response"; command: "steer_subagent"; success: true }
-	| { id?: string; type: "response"; command: "goal_mode"; success: true; data: { goalMode: GoalModeState | null } }
 
 	// Model
 	| {

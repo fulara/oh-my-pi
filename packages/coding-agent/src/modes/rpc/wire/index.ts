@@ -77,7 +77,6 @@ const notificationDefs = {
 			"LiveEndEvent",
 			"BtwDeltaEvent",
 			"BtwRecordEvent",
-			"PlanReviewEvent",
 			"BtwUpdateEvent",
 			"CommandOutputEvent",
 			"SessionInfoUpdateEvent",

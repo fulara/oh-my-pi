@@ -571,14 +571,6 @@ class ModelInfo:
 
 
 @dataclass(slots=True, frozen=True, kw_only=True)
-class PlanModeState:
-    enabled: bool
-    plan_file_path: str
-    workflow: Literal["parallel", "iterative"] | None = None
-    reentry: bool | None = None
-
-
-@dataclass(slots=True, frozen=True, kw_only=True)
 class ActivityItem:
     id: str
     kind: ActivityKind
@@ -836,8 +828,6 @@ class SessionState:
     context_usage: ContextUsage | None = None
     goal: GoalModeState | None = None
     """Current goal mode; null when the session has no goal."""
-    plan_mode: PlanModeState | None = None
-    goal_mode: GoalModeState | None = None
     session_skills: SessionSkillsState | None = None
 
 
@@ -1429,16 +1419,6 @@ class ExtensionError:
 
 
 @dataclass(slots=True, frozen=True, kw_only=True)
-class PlanReviewEvent:
-    type: Literal["plan_review"] = "plan_review"
-    session_id: str | None
-    plan_file_path: str
-    final_plan_file_path: str
-    content: str
-    title: str | None = None
-
-
-@dataclass(slots=True, frozen=True, kw_only=True)
 class BtwStartedEvent:
     type: Literal["btw_update"] = "btw_update"
     btw_id: str
@@ -1840,24 +1820,6 @@ class BtwPromoteResult:
 
 
 @dataclass(slots=True, frozen=True, kw_only=True)
-class SetPlanModeResult:
-    plan_mode: PlanModeState | None
-
-
-@dataclass(slots=True, frozen=True, kw_only=True)
-class ApprovePlanModeResult:
-    final_plan_file_path: str
-    context_preserved: bool
-    execution_dispatched: bool
-    compaction_outcome: Literal["ok", "cancelled", "failed"] | None = None
-
-
-@dataclass(slots=True, frozen=True, kw_only=True)
-class GoalModeResult:
-    goal_mode: GoalModeState | None
-
-
-@dataclass(slots=True, frozen=True, kw_only=True)
 class LogoutResult:
     remaining_source: str | None = None
 
@@ -1887,7 +1849,7 @@ RpcAgentEvent: TypeAlias = AgentStartEvent | AgentEndEvent | TurnStartEvent | Tu
 BtwUpdateEvent: TypeAlias = BtwStartedEvent | BtwStreamingEvent | BtwCompletedEvent | BtwCancelledEvent | BtwErrorEvent
 
 
-RpcNotification: TypeAlias = ReadyEvent | PromptResultEvent | SessionSettledEvent | ExtensionError | ExtensionUiRequest | AvailableCommandsUpdateEvent | SubagentLifecycleEvent | SubagentProgressEvent | SubagentEvent | LivePhaseEvent | LiveLevelsEvent | LiveTranscriptEvent | LiveEndEvent | BtwDeltaEvent | BtwRecordEvent | PlanReviewEvent | BtwUpdateEvent | CommandOutputEvent | SessionInfoUpdateEvent | ConfigUpdateEvent | RpcFrameErrorEvent | RpcAgentEvent | UnknownNotification
+RpcNotification: TypeAlias = ReadyEvent | PromptResultEvent | SessionSettledEvent | ExtensionError | ExtensionUiRequest | AvailableCommandsUpdateEvent | SubagentLifecycleEvent | SubagentProgressEvent | SubagentEvent | LivePhaseEvent | LiveLevelsEvent | LiveTranscriptEvent | LiveEndEvent | BtwDeltaEvent | BtwRecordEvent | BtwUpdateEvent | CommandOutputEvent | SessionInfoUpdateEvent | ConfigUpdateEvent | RpcFrameErrorEvent | RpcAgentEvent | UnknownNotification
 """Unsolicited outbound frame (everything except responses and host tool/URI requests), discriminated by `type`."""
 
 
@@ -2101,16 +2063,6 @@ def parse_model_info(value: object, path: str = "ModelInfo") -> ModelInfo:
         priority=optional(payload, "priority", decode_int, path),
         thinking=optional(payload, "thinking", parse_thinking_config, path),
         compat=optional(payload, "compat", decode_json_object, path),
-    )
-
-
-def parse_plan_mode_state(value: object, path: str = "PlanModeState") -> PlanModeState:
-    payload = expect_object(value, path)
-    return PlanModeState(
-        enabled=required(payload, "enabled", decode_bool, path),
-        plan_file_path=required(payload, "planFilePath", decode_str, path),
-        workflow=optional(payload, "workflow", cast('Decoder[Literal["parallel", "iterative"]]', literal(frozenset({"parallel", "iterative"}))), path),
-        reentry=optional(payload, "reentry", decode_bool, path),
     )
 
 
@@ -2403,8 +2355,6 @@ def parse_session_state(value: object, path: str = "SessionState") -> SessionSta
         dump_tools=defaulted(payload, "dumpTools", array(parse_tool_descriptor), path, ()),
         context_usage=optional(payload, "contextUsage", parse_context_usage, path),
         goal=defaulted(payload, "goal", nullable(parse_goal_mode_state), path, None),
-        plan_mode=defaulted(payload, "planMode", nullable(parse_plan_mode_state), path, None),
-        goal_mode=defaulted(payload, "goalMode", nullable(parse_goal_mode_state), path, None),
         session_skills=optional(payload, "sessionSkills", parse_session_skills_state, path),
     )
 
@@ -3085,18 +3035,6 @@ def parse_extension_error(value: object, path: str = "ExtensionError") -> Extens
     )
 
 
-def parse_plan_review_event(value: object, path: str = "PlanReviewEvent") -> PlanReviewEvent:
-    payload = expect_object(value, path)
-    required(payload, "type", cast('Decoder[Literal["plan_review"]]', literal(frozenset({"plan_review"}))), path)
-    return PlanReviewEvent(
-        session_id=required(payload, "sessionId", nullable(decode_str), path),
-        plan_file_path=required(payload, "planFilePath", decode_str, path),
-        final_plan_file_path=required(payload, "finalPlanFilePath", decode_str, path),
-        content=required(payload, "content", decode_str, path),
-        title=optional(payload, "title", decode_str, path),
-    )
-
-
 def parse_btw_started_event(value: object, path: str = "BtwStartedEvent") -> BtwStartedEvent:
     payload = expect_object(value, path)
     required(payload, "type", cast('Decoder[Literal["btw_update"]]', literal(frozenset({"btw_update"}))), path)
@@ -3563,30 +3501,6 @@ def parse_btw_promote_result(value: object, path: str = "BtwPromoteResult") -> B
     )
 
 
-def parse_set_plan_mode_result(value: object, path: str = "SetPlanModeResult") -> SetPlanModeResult:
-    payload = expect_object(value, path)
-    return SetPlanModeResult(
-        plan_mode=required(payload, "planMode", nullable(parse_plan_mode_state), path),
-    )
-
-
-def parse_approve_plan_mode_result(value: object, path: str = "ApprovePlanModeResult") -> ApprovePlanModeResult:
-    payload = expect_object(value, path)
-    return ApprovePlanModeResult(
-        final_plan_file_path=required(payload, "finalPlanFilePath", decode_str, path),
-        context_preserved=required(payload, "contextPreserved", decode_bool, path),
-        execution_dispatched=required(payload, "executionDispatched", decode_bool, path),
-        compaction_outcome=optional(payload, "compactionOutcome", cast('Decoder[Literal["ok", "cancelled", "failed"]]', literal(frozenset({"ok", "cancelled", "failed"}))), path),
-    )
-
-
-def parse_goal_mode_result(value: object, path: str = "GoalModeResult") -> GoalModeResult:
-    payload = expect_object(value, path)
-    return GoalModeResult(
-        goal_mode=required(payload, "goalMode", nullable(parse_goal_mode_state), path),
-    )
-
-
 def parse_logout_result(value: object, path: str = "LogoutResult") -> LogoutResult:
     payload = expect_object(value, path)
     return LogoutResult(
@@ -3682,7 +3596,6 @@ _RPC_NOTIFICATION_CASES: Final[dict[str, Decoder[RpcNotification]]] = {
         "live_end": parse_live_end_event,
         "btw_delta": parse_btw_delta_event,
         "btw_record": parse_btw_record_event,
-        "plan_review": parse_plan_review_event,
         "btw_update": parse_btw_update_event,
         "command_output": parse_command_output_event,
         "session_info_update": parse_session_info_update_event,
@@ -3922,38 +3835,6 @@ class WireClient:
         """Read the raw session tree."""
         params: dict[str, object] = {}
         return parse_session_tree(self._command("get_tree", params), "get_tree")
-
-    def set_plan_mode(self, *, enabled: bool, plan_file_path: str | None = None, workflow: Literal["parallel", "iterative"] | None = None) -> SetPlanModeResult:
-        """Enable or disable the browser plan workflow."""
-        params: dict[str, object] = {}
-        params["enabled"] = enabled
-        if plan_file_path is not None:
-            params["planFilePath"] = plan_file_path
-        if workflow is not None:
-            params["workflow"] = workflow
-        return parse_set_plan_mode_result(self._command("set_plan_mode", params), "set_plan_mode")
-
-    def approve_plan_mode(self, final_plan_file_path: str, *, plan_file_path: str | None = None, preserve_context: bool | None = None, compact_before_execute: bool | None = None) -> ApprovePlanModeResult:
-        """Approve a plan and dispatch execution with the chosen context policy."""
-        params: dict[str, object] = {}
-        params["finalPlanFilePath"] = final_plan_file_path
-        if plan_file_path is not None:
-            params["planFilePath"] = plan_file_path
-        if preserve_context is not None:
-            params["preserveContext"] = preserve_context
-        if compact_before_execute is not None:
-            params["compactBeforeExecute"] = compact_before_execute
-        return parse_approve_plan_mode_result(self._command("approve_plan_mode", params), "approve_plan_mode")
-
-    def goal_mode(self, op: Literal["create", "pause", "resume", "drop", "set_budget"], *, objective: str | None = None, token_budget: int | None = None) -> GoalModeResult:
-        """Change the browser goal workflow."""
-        params: dict[str, object] = {}
-        params["op"] = op
-        if objective is not None:
-            params["objective"] = objective
-        if token_budget is not None:
-            params["tokenBudget"] = token_budget
-        return parse_goal_mode_result(self._command("goal_mode", params), "goal_mode")
 
     def set_active_tools(self, tool_names: Sequence[str]) -> tuple[str, ...]:
         """Restrict the session to the named active tools."""
@@ -4298,10 +4179,6 @@ class WireClient:
         """Subscribe to `btw_record`: Full side-question record on every lifecycle change (started, complete, cancelled, error); the last one per id wins."""
         return self._listen("btw_record", listener)
 
-    def on_plan_review(self, listener: Callable[[PlanReviewEvent], None]) -> Callable[[], None]:
-        """Subscribe to `plan_review` frames."""
-        return self._listen("plan_review", listener)
-
     def on_btw_update(self, listener: Callable[[BtwErrorEvent], None]) -> Callable[[], None]:
         """Subscribe to `btw_update` frames."""
         return self._listen("btw_update", listener)
@@ -4465,7 +4342,6 @@ __all__ = [
     "AgentSource",
     "AgentStartEvent",
     "AnthropicServerToolContent",
-    "ApprovePlanModeResult",
     "AskAnswer",
     "AskOption",
     "AskQuestion",
@@ -4543,7 +4419,6 @@ __all__ = [
     "FileMentionItem",
     "FileMentionMessage",
     "Goal",
-    "GoalModeResult",
     "GoalModeState",
     "GoalOp",
     "GoalResult",
@@ -4586,8 +4461,6 @@ __all__ = [
     "PendingMessageRemovalResult",
     "PendingMessagesRemoval",
     "PendingMessagesSnapshot",
-    "PlanModeState",
-    "PlanReviewEvent",
     "PromoteQueuedMessageResult",
     "PromptAck",
     "PromptError",
@@ -4626,7 +4499,6 @@ __all__ = [
     "SessionStats",
     "SessionTree",
     "SetEditorTextUiRequest",
-    "SetPlanModeResult",
     "SetStatusUiRequest",
     "SetTitleUiRequest",
     "SetWidgetUiRequest",
@@ -4688,7 +4560,6 @@ __all__ = [
     "parse_agent_message",
     "parse_agent_start_event",
     "parse_anthropic_server_tool_content",
-    "parse_approve_plan_mode_result",
     "parse_ask_answer",
     "parse_ask_option",
     "parse_ask_question",
@@ -4756,7 +4627,6 @@ __all__ = [
     "parse_file_mention_item",
     "parse_file_mention_message",
     "parse_goal",
-    "parse_goal_mode_result",
     "parse_goal_mode_state",
     "parse_goal_result",
     "parse_goal_updated_event",
@@ -4792,8 +4662,6 @@ __all__ = [
     "parse_pending_message_removal_result",
     "parse_pending_messages_removal",
     "parse_pending_messages_snapshot",
-    "parse_plan_mode_state",
-    "parse_plan_review_event",
     "parse_promote_queued_message_result",
     "parse_prompt_ack",
     "parse_prompt_error",
@@ -4828,7 +4696,6 @@ __all__ = [
     "parse_session_stats",
     "parse_session_tree",
     "parse_set_editor_text_ui_request",
-    "parse_set_plan_mode_result",
     "parse_set_status_ui_request",
     "parse_set_title_ui_request",
     "parse_set_widget_ui_request",

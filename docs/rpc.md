@@ -32,6 +32,8 @@ Behavior notes:
 - At startup it writes a `ready` frame before processing commands. The frame advertises supported protocol versions and transport limits.
 - When stdin closes, pending extension UI, host-tool, and host-URI requests are rejected; accepted commands are drained, the session is disposed, pending stdout is delivered, and normal shutdown exits with code `0`. A session-persistence failure still latched at disposal exits with code `1` after delivering its `notice` frame.
 - Responses/events are written as one JSON object per line.
+- RPC does not restore legacy `plan` or `plan_paused` journal modes. Resumed sessions use ordinary tool and context policy; existing plan artifacts and journal entries are left unchanged. Native interactive planning remains available outside RPC.
+- The former browser-only Plan and Goal Mode commands are unsupported and receive the normal `Unknown command` failure. RPC state has no browser mode projections or plan-review notification. Native `goal` commands, the `goal` state field, and upstream Goal journal restoration remain unchanged; browser-specific restoration no longer reactivates paused goals.
 
 ## Transport and Framing
 
