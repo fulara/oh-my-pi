@@ -29,17 +29,6 @@ export const stateDefs = {
 	),
 	AgentSource: "'bundled' | 'user' | 'project'",
 	SubagentStatus: "'pending' | 'running' | 'completed' | 'failed' | 'aborted'",
-	PlanModeState: {
-		enabled: "boolean",
-		planFilePath: "string",
-		"workflow?": "'parallel' | 'iterative'",
-		"reentry?": "boolean",
-	},
-	GoalModeParams: {
-		op: "'create' | 'pause' | 'resume' | 'drop' | 'set_budget'",
-		"objective?": doc("string", "Required for create; omitted for lifecycle mutations."),
-		"tokenBudget?": "number.integer",
-	},
 	ActivityKind: "'job' | 'agent' | 'service'",
 	ActivityStatus:
 		"'pending' | 'running' | 'completed' | 'failed' | 'cancelled' | 'starting' | 'ready' | 'restarting' | 'stopping' | 'exited' | 'aborted'",
@@ -237,8 +226,6 @@ export const stateDefs = {
 		dumpTools: absentAs("ToolDescriptor[]", []),
 		"contextUsage?": "ContextUsage",
 		goal: absentAs(doc("GoalModeState | null", "Current goal mode; null when the session has no goal."), null),
-		planMode: absentAs("PlanModeState | null", null),
-		goalMode: absentAs("GoalModeState | null", null),
 		"sessionSkills?": "SessionSkillsState",
 	},
 
