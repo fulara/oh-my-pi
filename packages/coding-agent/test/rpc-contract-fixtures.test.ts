@@ -61,13 +61,9 @@ const requiredFixtureNames = [
 	"event-tool-execution-start",
 	"event-tool-execution-update",
 	"event-tool-execution-end",
-	"event-plan-review",
 	"extension-ui-request-confirm",
 	"extension-ui-request-select",
-	"response-set-plan-mode",
-	"response-approve-plan-mode",
 	"response-set-active-tools",
-	"response-goal-mode",
 ] as const;
 
 function frameFor(name: string): Record<string, unknown> {
@@ -246,20 +242,16 @@ describe("RPC contract fixtures", () => {
 		});
 	});
 
-	test("get_state fixture exposes planMode, goalMode, and contextUsage", () => {
+	test("get_state fixture exposes native goal and contextUsage without browser mode projections", () => {
 		const frame = rpcContractFixtures.find(fixture => fixture.name === "response-get-state")?.frame;
 		expect(frame).toBeDefined();
 		if (frame?.type !== "response" || frame.command !== "get_state" || !frame.success) {
 			throw new Error("response-get-state fixture is not a successful get_state response");
 		}
 
-		expect(frame.data.planMode).toEqual({
-			enabled: true,
-			planFilePath: "local://PLAN.md",
-			workflow: "parallel",
-			reentry: false,
-		});
-		expect(frame.data.goalMode).toEqual({
+		expect(frame.data).not.toHaveProperty("planMode");
+		expect(frame.data).not.toHaveProperty("goalMode");
+		expect(frame.data.goal).toEqual({
 			enabled: true,
 			mode: "active",
 			goal: {

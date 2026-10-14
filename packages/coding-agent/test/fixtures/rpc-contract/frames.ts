@@ -14,7 +14,6 @@ import type {
 	RpcHostUriCancelRequest,
 	RpcHostUriRequest,
 	RpcHostUriResult,
-	RpcPlanReviewEvent,
 	RpcPromptResultFrame,
 	RpcReadyFrame,
 	RpcResponse,
@@ -40,7 +39,6 @@ type RpcContractFrame =
 	| RpcHostUriRequest
 	| RpcHostUriCancelRequest
 	| RpcHostUriResult
-	| RpcPlanReviewEvent
 	| RpcRuntimeUpdateFixtureFrame;
 
 type RpcRuntimeUpdateFixtureFrame =
@@ -94,13 +92,6 @@ const model = {
 	// is cast rather than fully constructed so it stays stable across upstream Model changes.
 } as unknown as NonNullable<Extract<RpcResponse, { command: "get_state"; success: true }>["data"]["model"]>;
 
-const planMode = {
-	enabled: true,
-	planFilePath: "local://PLAN.md",
-	workflow: "parallel",
-	reentry: false,
-} satisfies NonNullable<Extract<RpcResponse, { command: "set_plan_mode"; success: true }>["data"]["planMode"]>;
-
 const goalMode = {
 	enabled: true,
 	mode: "active",
@@ -114,7 +105,7 @@ const goalMode = {
 		createdAt: 1770000000000,
 		updatedAt: 1770000009000,
 	},
-} satisfies NonNullable<Extract<RpcResponse, { command: "goal_mode"; success: true }>["data"]["goalMode"]>;
+} satisfies NonNullable<RpcSessionState["goal"]>;
 
 const readToolResult = {
 	content: [{ type: "text", text: "fn main() {}" }],
@@ -530,29 +521,6 @@ export const rpcContractFixtures = [
 		} satisfies Extract<RpcCommand, { type: "set_host_uri_schemes" }>,
 	},
 	{
-		name: "command-set-plan-mode",
-		category: "command",
-		frame: {
-			id: "cmd-plan-1",
-			type: "set_plan_mode",
-			enabled: true,
-			planFilePath: "local://PLAN.md",
-			workflow: "parallel",
-		} satisfies Extract<RpcCommand, { type: "set_plan_mode" }>,
-	},
-	{
-		name: "command-approve-plan-mode",
-		category: "command",
-		frame: {
-			id: "cmd-plan-approve-1",
-			type: "approve_plan_mode",
-			planFilePath: "local://PLAN.md",
-			finalPlanFilePath: "local://Fura_RPC_Protocol_Plan.md",
-			preserveContext: true,
-			compactBeforeExecute: false,
-		} satisfies Extract<RpcCommand, { type: "approve_plan_mode" }>,
-	},
-	{
 		name: "command-set-active-tools",
 		category: "command",
 		frame: {
@@ -560,27 +528,6 @@ export const rpcContractFixtures = [
 			type: "set_active_tools",
 			toolNames: ["read", "todo_write", "task"],
 		} satisfies Extract<RpcCommand, { type: "set_active_tools" }>,
-	},
-	{
-		name: "command-goal-mode-create",
-		category: "command",
-		frame: {
-			id: "cmd-goal-create-1",
-			type: "goal_mode",
-			op: "create",
-			objective: "Ship goal-mode projection",
-			tokenBudget: 50000,
-		} satisfies Extract<RpcCommand, { type: "goal_mode"; op: "create" }>,
-	},
-	{
-		name: "command-goal-mode-set-budget",
-		category: "command",
-		frame: {
-			id: "cmd-goal-budget-1",
-			type: "goal_mode",
-			op: "set_budget",
-			tokenBudget: 75000,
-		} satisfies Extract<RpcCommand, { type: "goal_mode" }>,
 	},
 	{
 		name: "host-uri-request-read",
@@ -772,18 +719,6 @@ export const rpcContractFixtures = [
 		} satisfies Extract<AgentEvent, { type: "tool_execution_end" }>,
 	},
 	{
-		name: "event-plan-review",
-		category: "event",
-		frame: {
-			type: "plan_review",
-			sessionId: "session-123",
-			planFilePath: "local://PLAN.md",
-			finalPlanFilePath: "local://Fura_RPC_Protocol_Plan.md",
-			title: "Fura_RPC_Protocol_Plan",
-			content: "# Plan\n\nImplement the approved design.",
-		} satisfies RpcPlanReviewEvent,
-	},
-	{
 		name: "available-commands-update",
 		category: "event",
 		frame: {
@@ -917,8 +852,6 @@ export const rpcContractFixtures = [
 						],
 					},
 				],
-				planMode,
-				goalMode,
 				goal: goalMode,
 				sessionSkills,
 				systemPrompt: ["You are a reliable coding agent."],
@@ -1154,33 +1087,6 @@ export const rpcContractFixtures = [
 		} satisfies RpcBtwUpdateFrame,
 	},
 	{
-		name: "response-set-plan-mode",
-		category: "response",
-		frame: {
-			id: "rpc-plan-set-1",
-			type: "response",
-			command: "set_plan_mode",
-			success: true,
-			data: { planMode },
-		} satisfies Extract<RpcResponse, { command: "set_plan_mode"; success: true }>,
-	},
-	{
-		name: "response-approve-plan-mode",
-		category: "response",
-		frame: {
-			id: "rpc-plan-approve-1",
-			type: "response",
-			command: "approve_plan_mode",
-			success: true,
-			data: {
-				finalPlanFilePath: "local://Fura_RPC_Protocol_Plan.md",
-				contextPreserved: true,
-				compactionOutcome: "ok",
-				executionDispatched: true,
-			},
-		} satisfies Extract<RpcResponse, { command: "approve_plan_mode"; success: true }>,
-	},
-	{
 		name: "response-set-active-tools",
 		category: "response",
 		frame: {
@@ -1190,17 +1096,6 @@ export const rpcContractFixtures = [
 			success: true,
 			data: { toolNames: ["read", "todo_write", "task"] },
 		} satisfies Extract<RpcResponse, { command: "set_active_tools"; success: true }>,
-	},
-	{
-		name: "response-goal-mode",
-		category: "response",
-		frame: {
-			id: "rpc-goal-1",
-			type: "response",
-			command: "goal_mode",
-			success: true,
-			data: { goalMode },
-		} satisfies Extract<RpcResponse, { command: "goal_mode"; success: true }>,
 	},
 	{
 		name: "response-error",

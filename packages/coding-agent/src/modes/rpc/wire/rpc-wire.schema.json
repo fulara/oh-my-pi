@@ -351,39 +351,6 @@
 				"clientOmit": []
 			},
 			{
-				"name": "set_plan_mode",
-				"doc": "Enable or disable the browser plan workflow.",
-				"params": "SetPlanModeParams",
-				"result": "SetPlanModeResult",
-				"nullable": false,
-				"unwrap": null,
-				"timeoutMs": null,
-				"completion": null,
-				"clientOmit": []
-			},
-			{
-				"name": "approve_plan_mode",
-				"doc": "Approve a plan and dispatch execution with the chosen context policy.",
-				"params": "ApprovePlanModeParams",
-				"result": "ApprovePlanModeResult",
-				"nullable": false,
-				"unwrap": null,
-				"timeoutMs": null,
-				"completion": null,
-				"clientOmit": []
-			},
-			{
-				"name": "goal_mode",
-				"doc": "Change the browser goal workflow.",
-				"params": "GoalModeParams",
-				"result": "GoalModeResult",
-				"nullable": false,
-				"unwrap": null,
-				"timeoutMs": null,
-				"completion": null,
-				"clientOmit": []
-			},
-			{
 				"name": "set_active_tools",
 				"doc": "Restrict the session to the named active tools.",
 				"params": "SetActiveToolsParams",
@@ -2519,56 +2486,6 @@
 			],
 			"type": "string"
 		},
-		"PlanModeState": {
-			"type": "object",
-			"properties": {
-				"enabled": {
-					"type": "boolean"
-				},
-				"planFilePath": {
-					"type": "string"
-				},
-				"workflow": {
-					"enum": [
-						"parallel",
-						"iterative"
-					],
-					"type": "string"
-				},
-				"reentry": {
-					"type": "boolean"
-				}
-			},
-			"required": [
-				"enabled",
-				"planFilePath"
-			]
-		},
-		"GoalModeParams": {
-			"type": "object",
-			"properties": {
-				"op": {
-					"enum": [
-						"create",
-						"pause",
-						"resume",
-						"drop",
-						"set_budget"
-					],
-					"type": "string"
-				},
-				"objective": {
-					"type": "string",
-					"description": "Required for create; omitted for lifecycle mutations."
-				},
-				"tokenBudget": {
-					"type": "integer"
-				}
-			},
-			"required": [
-				"op"
-			]
-		},
 		"ActivityKind": {
 			"enum": [
 				"job",
@@ -3438,28 +3355,6 @@
 						}
 					],
 					"description": "Current goal mode; null when the session has no goal.",
-					"default": null
-				},
-				"planMode": {
-					"anyOf": [
-						{
-							"$ref": "#/$defs/PlanModeState"
-						},
-						{
-							"type": "null"
-						}
-					],
-					"default": null
-				},
-				"goalMode": {
-					"anyOf": [
-						{
-							"$ref": "#/$defs/GoalModeState"
-						},
-						{
-							"type": "null"
-						}
-					],
 					"default": null
 				},
 				"sessionSkills": {
@@ -5359,43 +5254,6 @@
 				"error"
 			]
 		},
-		"PlanReviewEvent": {
-			"type": "object",
-			"properties": {
-				"type": {
-					"const": "plan_review"
-				},
-				"sessionId": {
-					"anyOf": [
-						{
-							"type": "string"
-						},
-						{
-							"type": "null"
-						}
-					]
-				},
-				"planFilePath": {
-					"type": "string"
-				},
-				"finalPlanFilePath": {
-					"type": "string"
-				},
-				"content": {
-					"type": "string"
-				},
-				"title": {
-					"type": "string"
-				}
-			},
-			"required": [
-				"type",
-				"sessionId",
-				"planFilePath",
-				"finalPlanFilePath",
-				"content"
-			]
-		},
 		"BtwStartedEvent": {
 			"type": "object",
 			"properties": {
@@ -6960,9 +6818,6 @@
 					"$ref": "#/$defs/BtwRecordEvent"
 				},
 				{
-					"$ref": "#/$defs/PlanReviewEvent"
-				},
-				{
 					"$ref": "#/$defs/BtwUpdateEvent"
 				},
 				{
@@ -7497,110 +7352,6 @@
 			},
 			"required": [
 				"todoPhases"
-			]
-		},
-		"SetPlanModeParams": {
-			"type": "object",
-			"properties": {
-				"enabled": {
-					"type": "boolean"
-				},
-				"planFilePath": {
-					"type": "string"
-				},
-				"workflow": {
-					"enum": [
-						"parallel",
-						"iterative"
-					],
-					"type": "string"
-				}
-			},
-			"required": [
-				"enabled"
-			]
-		},
-		"SetPlanModeResult": {
-			"type": "object",
-			"properties": {
-				"planMode": {
-					"anyOf": [
-						{
-							"$ref": "#/$defs/PlanModeState"
-						},
-						{
-							"type": "null"
-						}
-					]
-				}
-			},
-			"required": [
-				"planMode"
-			]
-		},
-		"ApprovePlanModeParams": {
-			"type": "object",
-			"properties": {
-				"finalPlanFilePath": {
-					"type": "string"
-				},
-				"planFilePath": {
-					"type": "string"
-				},
-				"preserveContext": {
-					"type": "boolean"
-				},
-				"compactBeforeExecute": {
-					"type": "boolean"
-				}
-			},
-			"required": [
-				"finalPlanFilePath"
-			]
-		},
-		"ApprovePlanModeResult": {
-			"type": "object",
-			"properties": {
-				"finalPlanFilePath": {
-					"type": "string"
-				},
-				"contextPreserved": {
-					"type": "boolean"
-				},
-				"executionDispatched": {
-					"type": "boolean"
-				},
-				"compactionOutcome": {
-					"enum": [
-						"ok",
-						"cancelled",
-						"failed"
-					],
-					"type": "string"
-				}
-			},
-			"required": [
-				"finalPlanFilePath",
-				"contextPreserved",
-				"executionDispatched"
-			]
-		},
-		"GoalModeResult": {
-			"type": "object",
-			"properties": {
-				"goalMode": {
-					"anyOf": [
-						{
-							"$ref": "#/$defs/GoalModeState"
-						},
-						{
-							"type": "null"
-						}
-					]
-				}
-			},
-			"required": [
-				"goalMode"
 			]
 		},
 		"SetActiveToolsParams": {

@@ -13,7 +13,7 @@ import type { RpcSessionState } from "@oh-my-pi/pi-coding-agent/modes/rpc/rpc-ty
 import type { AgentSessionEvent } from "@oh-my-pi/pi-coding-agent/session/agent-session";
 import { isSessionSettled, type SessionSettleState } from "@oh-my-pi/pi-coding-agent/session/session-settle";
 import type { GoalModeState } from "@oh-my-pi/pi-coding-agent/goals/state";
-import { removeWithRetries, withTimeout } from "@oh-my-pi/pi-utils";
+import { isRecord, readJsonl, removeWithRetries, withTimeout } from "@oh-my-pi/pi-utils";
 
 function nextMacrotask(): Promise<void> {
 	const { promise, resolve } = Promise.withResolvers<void>();
@@ -66,6 +66,63 @@ describe("RPC goal command", () => {
 		await client.start();
 		return client;
 	}
+
+	test("removed browser mode commands return ordinary unsupported-command failures", async () => {
+		directory = await fs.mkdtemp(path.join(os.tmpdir(), "omp-rpc-no-browser-modes-"));
+		const child = Bun.spawn(
+			[process.execPath, path.join(import.meta.dir, "fixtures", "goal-rpc-agent.ts")],
+			{
+				cwd: directory,
+				env: { ...Bun.env, PI_CODING_AGENT_DIR: directory, PI_NO_TITLE: "1", GOAL_RPC_PLAN: "0" },
+				stdin: "pipe",
+				stdout: "pipe",
+				stderr: "pipe",
+			},
+		);
+		const stderr = new Response(child.stderr).text();
+		const commands = [
+			{ id: "removed-enable", type: "set_plan_mode", enabled: true },
+			{ id: "removed-approve", type: "approve_plan_mode", finalPlanFilePath: "local://PLAN.md" },
+			{ id: "removed-goal", type: "goal_mode", op: "create", objective: "Unsupported browser adapter" },
+			{ id: "ordinary-state", type: "get_state" },
+		];
+		const responses = new Map<string, Record<string, unknown>>();
+		try {
+			child.stdin.write(commands.map(command => `${JSON.stringify(command)}\n`).join(""));
+			await child.stdin.flush();
+			await withTimeout(
+				(async () => {
+					for await (const frame of readJsonl<unknown>(child.stdout)) {
+						if (isRecord(frame) && frame.type === "response" && typeof frame.id === "string") {
+							responses.set(frame.id, frame);
+							if (responses.size === commands.length) return;
+						}
+					}
+				})(),
+				15_000,
+				"Unsupported browser mode commands did not return RPC responses",
+			);
+			for (const command of commands.slice(0, -1)) {
+				expect(responses.get(command.id)).toEqual({
+					id: command.id,
+					type: "response",
+					command: command.type,
+					success: false,
+					error: `Unknown command: ${command.type}`,
+				});
+			}
+			const state = responses.get("ordinary-state");
+			expect(state?.success).toBe(true);
+			expect(state?.data).not.toHaveProperty("planMode");
+			expect(state?.data).not.toHaveProperty("goalMode");
+			expect(state?.data).toMatchObject({ goal: null, messageCount: 0 });
+		} finally {
+			child.stdin.end();
+			child.kill();
+			await child.exited;
+			await stderr;
+		}
+	}, 30_000);
 
 	test("get is a read without a model call; create activates the goal tool without prompting", async () => {
 		const rpc = await start({ continuation: false });

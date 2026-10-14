@@ -2949,27 +2949,6 @@ impl SubagentStatus {
 	}
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct PlanModeState {
-	pub enabled: bool,
-	#[serde(rename = "planFilePath")]
-	pub plan_file_path: String,
-	#[serde(default, skip_serializing_if = "Option::is_none")]
-	pub workflow: Option<PlanModeStateWorkflow>,
-	#[serde(default, skip_serializing_if = "Option::is_none")]
-	pub reentry: Option<bool>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct GoalModeParams {
-	pub op: GoalModeParamsOp,
-	/// Required for create; omitted for lifecycle mutations.
-	#[serde(default, skip_serializing_if = "Option::is_none")]
-	pub objective: Option<String>,
-	#[serde(rename = "tokenBudget", default, skip_serializing_if = "Option::is_none")]
-	pub token_budget: Option<i64>,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ActivityKind {
 	#[serde(rename = "job")]
@@ -3424,10 +3403,6 @@ pub struct SessionState {
 	/// Current goal mode; null when the session has no goal.
 	#[serde(default = "default_session_state_goal")]
 	pub goal: Option<GoalModeState>,
-	#[serde(rename = "planMode", default = "default_session_state_plan_mode")]
-	pub plan_mode: Option<PlanModeState>,
-	#[serde(rename = "goalMode", default = "default_session_state_goal_mode")]
-	pub goal_mode: Option<GoalModeState>,
 	#[serde(rename = "sessionSkills", default, skip_serializing_if = "Option::is_none")]
 	pub session_skills: Option<SessionSkillsState>,
 }
@@ -4475,19 +4450,6 @@ pub struct ExtensionError {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct PlanReviewEvent {
-	#[serde(rename = "sessionId", deserialize_with = "Deserialize::deserialize")]
-	pub session_id: Option<String>,
-	#[serde(rename = "planFilePath")]
-	pub plan_file_path: String,
-	#[serde(rename = "finalPlanFilePath")]
-	pub final_plan_file_path: String,
-	pub content: String,
-	#[serde(default, skip_serializing_if = "Option::is_none")]
-	pub title: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BtwStartedEvent {
 	#[serde(rename = "btwId")]
 	pub btw_id: String,
@@ -5448,7 +5410,6 @@ pub enum RpcNotification {
 	BtwDelta(BtwDeltaEvent),
 	/// Full side-question record on every lifecycle change (started, complete, cancelled, error); the last one per id wins.
 	BtwRecord(BtwRecordEvent),
-	PlanReview(PlanReviewEvent),
 	BtwUpdateEvent(BtwUpdateEvent),
 	/// Output of a builtin slash command.
 	CommandOutput(CommandOutputEvent),
@@ -5486,7 +5447,6 @@ impl RpcNotification {
 			Some("dictation_end") => |value| serde_json::from_value(value).map(Self::DictationEnd),
 			Some("btw_delta") => |value| serde_json::from_value(value).map(Self::BtwDelta),
 			Some("btw_record") => |value| serde_json::from_value(value).map(Self::BtwRecord),
-			Some("plan_review") => |value| serde_json::from_value(value).map(Self::PlanReview),
 			Some("btw_update") => |value| serde_json::from_value(value).map(Self::BtwUpdateEvent),
 			Some("command_output") => |value| serde_json::from_value(value).map(Self::CommandOutput),
 			Some("session_info_update") => |value| serde_json::from_value(value).map(Self::SessionInfoUpdate),
@@ -5520,7 +5480,6 @@ impl Serialize for RpcNotification {
 			Self::DictationEnd(member) => serialize_tagged(member, &[("type", "dictation_end")], serializer),
 			Self::BtwDelta(member) => serialize_tagged(member, &[("type", "btw_delta")], serializer),
 			Self::BtwRecord(member) => serialize_tagged(member, &[("type", "btw_record")], serializer),
-			Self::PlanReview(member) => serialize_tagged(member, &[("type", "plan_review")], serializer),
 			Self::BtwUpdateEvent(member) => member.serialize(serializer),
 			Self::CommandOutput(member) => serialize_tagged(member, &[("type", "command_output")], serializer),
 			Self::SessionInfoUpdate(member) => serialize_tagged(member, &[("type", "session_info_update")], serializer),
@@ -5831,51 +5790,6 @@ pub struct SetTodosParams {
 pub struct SetTodosResult {
 	#[serde(rename = "todoPhases")]
 	pub todo_phases: Vec<TodoPhase>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct SetPlanModeParams {
-	pub enabled: bool,
-	#[serde(rename = "planFilePath", default, skip_serializing_if = "Option::is_none")]
-	pub plan_file_path: Option<String>,
-	#[serde(default, skip_serializing_if = "Option::is_none")]
-	pub workflow: Option<SetPlanModeParamsWorkflow>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct SetPlanModeResult {
-	#[serde(rename = "planMode", deserialize_with = "Deserialize::deserialize")]
-	pub plan_mode: Option<PlanModeState>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ApprovePlanModeParams {
-	#[serde(rename = "finalPlanFilePath")]
-	pub final_plan_file_path: String,
-	#[serde(rename = "planFilePath", default, skip_serializing_if = "Option::is_none")]
-	pub plan_file_path: Option<String>,
-	#[serde(rename = "preserveContext", default, skip_serializing_if = "Option::is_none")]
-	pub preserve_context: Option<bool>,
-	#[serde(rename = "compactBeforeExecute", default, skip_serializing_if = "Option::is_none")]
-	pub compact_before_execute: Option<bool>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ApprovePlanModeResult {
-	#[serde(rename = "finalPlanFilePath")]
-	pub final_plan_file_path: String,
-	#[serde(rename = "contextPreserved")]
-	pub context_preserved: bool,
-	#[serde(rename = "executionDispatched")]
-	pub execution_dispatched: bool,
-	#[serde(rename = "compactionOutcome", default, skip_serializing_if = "Option::is_none")]
-	pub compaction_outcome: Option<ApprovePlanModeResultCompactionOutcome>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct GoalModeResult {
-	#[serde(rename = "goalMode", deserialize_with = "Deserialize::deserialize")]
-	pub goal_mode: Option<GoalModeState>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -6468,51 +6382,6 @@ impl AssistantErrorEventReason {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum PlanModeStateWorkflow {
-	#[serde(rename = "parallel")]
-	Parallel,
-	#[serde(rename = "iterative")]
-	Iterative,
-}
-
-impl PlanModeStateWorkflow {
-	/// Wire value.
-	pub fn as_str(self) -> &'static str {
-		match self {
-			Self::Parallel => "parallel",
-			Self::Iterative => "iterative",
-		}
-	}
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum GoalModeParamsOp {
-	#[serde(rename = "create")]
-	Create,
-	#[serde(rename = "pause")]
-	Pause,
-	#[serde(rename = "resume")]
-	Resume,
-	#[serde(rename = "drop")]
-	Drop,
-	#[serde(rename = "set_budget")]
-	SetBudget,
-}
-
-impl GoalModeParamsOp {
-	/// Wire value.
-	pub fn as_str(self) -> &'static str {
-		match self {
-			Self::Create => "create",
-			Self::Pause => "pause",
-			Self::Resume => "resume",
-			Self::Drop => "drop",
-			Self::SetBudget => "set_budget",
-		}
-	}
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum PendingMessageState {
 	#[serde(rename = "queued")]
 	Queued,
@@ -6713,45 +6582,6 @@ impl HostUriResultContentType {
 	}
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum SetPlanModeParamsWorkflow {
-	#[serde(rename = "parallel")]
-	Parallel,
-	#[serde(rename = "iterative")]
-	Iterative,
-}
-
-impl SetPlanModeParamsWorkflow {
-	/// Wire value.
-	pub fn as_str(self) -> &'static str {
-		match self {
-			Self::Parallel => "parallel",
-			Self::Iterative => "iterative",
-		}
-	}
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum ApprovePlanModeResultCompactionOutcome {
-	#[serde(rename = "ok")]
-	Ok,
-	#[serde(rename = "cancelled")]
-	Cancelled,
-	#[serde(rename = "failed")]
-	Failed,
-}
-
-impl ApprovePlanModeResultCompactionOutcome {
-	/// Wire value.
-	pub fn as_str(self) -> &'static str {
-		match self {
-			Self::Ok => "ok",
-			Self::Cancelled => "cancelled",
-			Self::Failed => "failed",
-		}
-	}
-}
-
 fn default_queued_messages_state_live_steered() -> i64 {
 	serde_json::from_str("0").expect("valid wire default")
 }
@@ -6833,14 +6663,6 @@ fn default_session_state_dump_tools() -> Vec<ToolDescriptor> {
 }
 
 fn default_session_state_goal() -> Option<GoalModeState> {
-	serde_json::from_str("null").expect("valid wire default")
-}
-
-fn default_session_state_plan_mode() -> Option<PlanModeState> {
-	serde_json::from_str("null").expect("valid wire default")
-}
-
-fn default_session_state_goal_mode() -> Option<GoalModeState> {
 	serde_json::from_str("null").expect("valid wire default")
 }
 
@@ -7416,70 +7238,6 @@ impl Command for SetTodosCommand {
 
 	fn decode(data: Option<Value>) -> Result<Self::Output, serde_json::Error> {
 		serde_json::from_value::<SetTodosResult>(data.unwrap_or_else(|| Value::Object(Map::new()))).map(|result| result.todo_phases)
-	}
-}
-
-/// Enable or disable the browser plan workflow.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct SetPlanModeCommand {
-	pub enabled: bool,
-	#[serde(rename = "planFilePath", default, skip_serializing_if = "Option::is_none")]
-	pub plan_file_path: Option<String>,
-	#[serde(default, skip_serializing_if = "Option::is_none")]
-	pub workflow: Option<SetPlanModeParamsWorkflow>,
-}
-
-impl Command for SetPlanModeCommand {
-	const NAME: &'static str = "set_plan_mode";
-	const TIMEOUT_MS: Option<u64> = None;
-	type Output = SetPlanModeResult;
-
-	fn decode(data: Option<Value>) -> Result<Self::Output, serde_json::Error> {
-		serde_json::from_value::<SetPlanModeResult>(data.unwrap_or_else(|| Value::Object(Map::new())))
-	}
-}
-
-/// Approve a plan and dispatch execution with the chosen context policy.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ApprovePlanModeCommand {
-	#[serde(rename = "finalPlanFilePath")]
-	pub final_plan_file_path: String,
-	#[serde(rename = "planFilePath", default, skip_serializing_if = "Option::is_none")]
-	pub plan_file_path: Option<String>,
-	#[serde(rename = "preserveContext", default, skip_serializing_if = "Option::is_none")]
-	pub preserve_context: Option<bool>,
-	#[serde(rename = "compactBeforeExecute", default, skip_serializing_if = "Option::is_none")]
-	pub compact_before_execute: Option<bool>,
-}
-
-impl Command for ApprovePlanModeCommand {
-	const NAME: &'static str = "approve_plan_mode";
-	const TIMEOUT_MS: Option<u64> = None;
-	type Output = ApprovePlanModeResult;
-
-	fn decode(data: Option<Value>) -> Result<Self::Output, serde_json::Error> {
-		serde_json::from_value::<ApprovePlanModeResult>(data.unwrap_or_else(|| Value::Object(Map::new())))
-	}
-}
-
-/// Change the browser goal workflow.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct GoalModeCommand {
-	pub op: GoalModeParamsOp,
-	/// Required for create; omitted for lifecycle mutations.
-	#[serde(default, skip_serializing_if = "Option::is_none")]
-	pub objective: Option<String>,
-	#[serde(rename = "tokenBudget", default, skip_serializing_if = "Option::is_none")]
-	pub token_budget: Option<i64>,
-}
-
-impl Command for GoalModeCommand {
-	const NAME: &'static str = "goal_mode";
-	const TIMEOUT_MS: Option<u64> = None;
-	type Output = GoalModeResult;
-
-	fn decode(data: Option<Value>) -> Result<Self::Output, serde_json::Error> {
-		serde_json::from_value::<GoalModeResult>(data.unwrap_or_else(|| Value::Object(Map::new())))
 	}
 }
 

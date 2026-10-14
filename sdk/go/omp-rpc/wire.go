@@ -2193,51 +2193,6 @@ func (v *SubagentStatus) UnmarshalJSON(data []byte) error {
 	return unknownValue("SubagentStatus", s)
 }
 
-type PlanModeState struct {
-	Enabled      bool                   `json:"enabled"`
-	PlanFilePath string                 `json:"planFilePath"`
-	Workflow     *PlanModeStateWorkflow `json:"workflow,omitempty"`
-	Reentry      *bool                  `json:"reentry,omitempty"`
-}
-
-func (v *PlanModeState) UnmarshalJSON(data []byte) error {
-	return decodeWith(data, "PlanModeState", v.decodeFrom)
-}
-
-func (v *PlanModeState) decodeFrom(raw map[string]json.RawMessage) error {
-	var out PlanModeState
-	d := fieldDecoder{raw: raw, owner: "PlanModeState"}
-	d.required("enabled", &out.Enabled)
-	d.required("planFilePath", &out.PlanFilePath)
-	d.optional("workflow", &out.Workflow)
-	d.optional("reentry", &out.Reentry)
-	if d.err != nil {
-		return d.err
-	}
-	*v = out
-	return nil
-}
-
-type PlanModeStateWorkflow string
-
-const (
-	PlanModeStateWorkflowParallel  PlanModeStateWorkflow = "parallel"
-	PlanModeStateWorkflowIterative PlanModeStateWorkflow = "iterative"
-)
-
-func (v *PlanModeStateWorkflow) UnmarshalJSON(data []byte) error {
-	s, err := decodeString(data, "PlanModeStateWorkflow")
-	if err != nil {
-		return err
-	}
-	switch value := PlanModeStateWorkflow(s); value {
-	case PlanModeStateWorkflowParallel, PlanModeStateWorkflowIterative:
-		*v = value
-		return nil
-	}
-	return unknownValue("PlanModeStateWorkflow", s)
-}
-
 type ActivityKind string
 
 const (
@@ -3151,8 +3106,6 @@ type SessionState struct {
 	ContextUsage *ContextUsage    `json:"contextUsage,omitempty"`
 	// Current goal mode; null when the session has no goal.
 	Goal          *GoalModeState      `json:"goal"`
-	PlanMode      *PlanModeState      `json:"planMode"`
-	GoalMode      *GoalModeState      `json:"goalMode"`
 	SessionSkills *SessionSkillsState `json:"sessionSkills,omitempty"`
 }
 
@@ -3192,8 +3145,6 @@ func (v *SessionState) decodeFrom(raw map[string]json.RawMessage) error {
 	d.defaulted("dumpTools", &out.DumpTools, `[]`)
 	d.optional("contextUsage", &out.ContextUsage)
 	d.defaulted("goal", &out.Goal, `null`)
-	d.defaulted("planMode", &out.PlanMode, `null`)
-	d.defaulted("goalMode", &out.GoalMode, `null`)
 	d.optional("sessionSkills", &out.SessionSkills)
 	if d.err != nil {
 		return d.err
@@ -5508,39 +5459,6 @@ func (v ExtensionError) MarshalJSON() ([]byte, error) {
 	return encodeObject(plain(v), `"type":"extension_error"`, nil)
 }
 
-type PlanReviewEvent struct {
-	SessionID         *string `json:"sessionId"`
-	PlanFilePath      string  `json:"planFilePath"`
-	FinalPlanFilePath string  `json:"finalPlanFilePath"`
-	Content           string  `json:"content"`
-	Title             *string `json:"title,omitempty"`
-}
-
-func (v *PlanReviewEvent) UnmarshalJSON(data []byte) error {
-	return decodeWith(data, "PlanReviewEvent", v.decodeFrom)
-}
-
-func (v *PlanReviewEvent) decodeFrom(raw map[string]json.RawMessage) error {
-	var out PlanReviewEvent
-	d := fieldDecoder{raw: raw, owner: "PlanReviewEvent"}
-	d.constant("type", "plan_review")
-	d.nullable("sessionId", &out.SessionID)
-	d.required("planFilePath", &out.PlanFilePath)
-	d.required("finalPlanFilePath", &out.FinalPlanFilePath)
-	d.required("content", &out.Content)
-	d.optional("title", &out.Title)
-	if d.err != nil {
-		return d.err
-	}
-	*v = out
-	return nil
-}
-
-func (v PlanReviewEvent) MarshalJSON() ([]byte, error) {
-	type plain PlanReviewEvent
-	return encodeObject(plain(v), `"type":"plan_review"`, nil)
-}
-
 type BtwStartedEvent struct {
 	BtwID    string `json:"btwId"`
 	Question string `json:"question"`
@@ -7587,7 +7505,6 @@ func (DictationTranscriptEvent) isRpcNotification()     {}
 func (DictationEndEvent) isRpcNotification()            {}
 func (BtwDeltaEvent) isRpcNotification()                {}
 func (BtwRecordEvent) isRpcNotification()               {}
-func (PlanReviewEvent) isRpcNotification()              {}
 func (BtwUpdateEvent) isRpcNotification()               {}
 func (CommandOutputEvent) isRpcNotification()           {}
 func (SessionInfoUpdateEvent) isRpcNotification()       {}
@@ -7677,8 +7594,6 @@ func (v *RpcNotification) UnmarshalJSON(data []byte) error {
 		value, err = decodeVariant[BtwDeltaEvent](raw)
 	case "btw_record":
 		value, err = decodeVariant[BtwRecordEvent](raw)
-	case "plan_review":
-		value, err = decodeVariant[PlanReviewEvent](raw)
 	case "btw_update":
 		value, err = decodeVariant[BtwUpdateEvent](raw)
 	case "command_output":
@@ -7801,7 +7716,6 @@ func (DictationTranscriptEvent) isRpcServerFrame()     {}
 func (DictationEndEvent) isRpcServerFrame()            {}
 func (BtwDeltaEvent) isRpcServerFrame()                {}
 func (BtwRecordEvent) isRpcServerFrame()               {}
-func (PlanReviewEvent) isRpcServerFrame()              {}
 func (BtwUpdateEvent) isRpcServerFrame()               {}
 func (CommandOutputEvent) isRpcServerFrame()           {}
 func (SessionInfoUpdateEvent) isRpcServerFrame()       {}
@@ -7901,8 +7815,6 @@ func (v *RpcServerFrame) UnmarshalJSON(data []byte) error {
 		value, err = decodeVariant[BtwDeltaEvent](raw)
 	case "btw_record":
 		value, err = decodeVariant[BtwRecordEvent](raw)
-	case "plan_review":
-		value, err = decodeVariant[PlanReviewEvent](raw)
 	case "btw_update":
 		value, err = decodeVariant[BtwUpdateEvent](raw)
 	case "command_output":
@@ -8163,90 +8075,6 @@ func (v *SetTodosResult) decodeFrom(raw map[string]json.RawMessage) error {
 	var out SetTodosResult
 	d := fieldDecoder{raw: raw, owner: "SetTodosResult"}
 	d.required("todoPhases", &out.TodoPhases)
-	if d.err != nil {
-		return d.err
-	}
-	*v = out
-	return nil
-}
-
-type SetPlanModeResult struct {
-	PlanMode *PlanModeState `json:"planMode"`
-}
-
-func (v *SetPlanModeResult) UnmarshalJSON(data []byte) error {
-	return decodeWith(data, "SetPlanModeResult", v.decodeFrom)
-}
-
-func (v *SetPlanModeResult) decodeFrom(raw map[string]json.RawMessage) error {
-	var out SetPlanModeResult
-	d := fieldDecoder{raw: raw, owner: "SetPlanModeResult"}
-	d.nullable("planMode", &out.PlanMode)
-	if d.err != nil {
-		return d.err
-	}
-	*v = out
-	return nil
-}
-
-type ApprovePlanModeResult struct {
-	FinalPlanFilePath   string                                  `json:"finalPlanFilePath"`
-	ContextPreserved    bool                                    `json:"contextPreserved"`
-	ExecutionDispatched bool                                    `json:"executionDispatched"`
-	CompactionOutcome   *ApprovePlanModeResultCompactionOutcome `json:"compactionOutcome,omitempty"`
-}
-
-func (v *ApprovePlanModeResult) UnmarshalJSON(data []byte) error {
-	return decodeWith(data, "ApprovePlanModeResult", v.decodeFrom)
-}
-
-func (v *ApprovePlanModeResult) decodeFrom(raw map[string]json.RawMessage) error {
-	var out ApprovePlanModeResult
-	d := fieldDecoder{raw: raw, owner: "ApprovePlanModeResult"}
-	d.required("finalPlanFilePath", &out.FinalPlanFilePath)
-	d.required("contextPreserved", &out.ContextPreserved)
-	d.required("executionDispatched", &out.ExecutionDispatched)
-	d.optional("compactionOutcome", &out.CompactionOutcome)
-	if d.err != nil {
-		return d.err
-	}
-	*v = out
-	return nil
-}
-
-type ApprovePlanModeResultCompactionOutcome string
-
-const (
-	ApprovePlanModeResultCompactionOutcomeOk        ApprovePlanModeResultCompactionOutcome = "ok"
-	ApprovePlanModeResultCompactionOutcomeCancelled ApprovePlanModeResultCompactionOutcome = "cancelled"
-	ApprovePlanModeResultCompactionOutcomeFailed    ApprovePlanModeResultCompactionOutcome = "failed"
-)
-
-func (v *ApprovePlanModeResultCompactionOutcome) UnmarshalJSON(data []byte) error {
-	s, err := decodeString(data, "ApprovePlanModeResultCompactionOutcome")
-	if err != nil {
-		return err
-	}
-	switch value := ApprovePlanModeResultCompactionOutcome(s); value {
-	case ApprovePlanModeResultCompactionOutcomeOk, ApprovePlanModeResultCompactionOutcomeCancelled, ApprovePlanModeResultCompactionOutcomeFailed:
-		*v = value
-		return nil
-	}
-	return unknownValue("ApprovePlanModeResultCompactionOutcome", s)
-}
-
-type GoalModeResult struct {
-	GoalMode *GoalModeState `json:"goalMode"`
-}
-
-func (v *GoalModeResult) UnmarshalJSON(data []byte) error {
-	return decodeWith(data, "GoalModeResult", v.decodeFrom)
-}
-
-func (v *GoalModeResult) decodeFrom(raw map[string]json.RawMessage) error {
-	var out GoalModeResult
-	d := fieldDecoder{raw: raw, owner: "GoalModeResult"}
-	d.nullable("goalMode", &out.GoalMode)
 	if d.err != nil {
 		return d.err
 	}
@@ -9102,93 +8930,6 @@ func (c Commands) SetTodos(ctx context.Context, p SetTodosCommand) ([]TodoPhase,
 	var out SetTodosResult
 	err := c.call(ctx, "set_todos", p, 0, &out)
 	return out.TodoPhases, err
-}
-
-// SetPlanModeCommand holds the parameters of "set_plan_mode".
-type SetPlanModeCommand struct {
-	Enabled      bool                        `json:"enabled"`
-	PlanFilePath *string                     `json:"planFilePath,omitempty"`
-	Workflow     *SetPlanModeCommandWorkflow `json:"workflow,omitempty"`
-}
-
-// SetPlanMode sends "set_plan_mode": Enable or disable the browser plan workflow.
-func (c Commands) SetPlanMode(ctx context.Context, p SetPlanModeCommand) (SetPlanModeResult, error) {
-	var out SetPlanModeResult
-	err := c.call(ctx, "set_plan_mode", p, 0, &out)
-	return out, err
-}
-
-type SetPlanModeCommandWorkflow string
-
-const (
-	SetPlanModeCommandWorkflowParallel  SetPlanModeCommandWorkflow = "parallel"
-	SetPlanModeCommandWorkflowIterative SetPlanModeCommandWorkflow = "iterative"
-)
-
-func (v *SetPlanModeCommandWorkflow) UnmarshalJSON(data []byte) error {
-	s, err := decodeString(data, "SetPlanModeCommandWorkflow")
-	if err != nil {
-		return err
-	}
-	switch value := SetPlanModeCommandWorkflow(s); value {
-	case SetPlanModeCommandWorkflowParallel, SetPlanModeCommandWorkflowIterative:
-		*v = value
-		return nil
-	}
-	return unknownValue("SetPlanModeCommandWorkflow", s)
-}
-
-// ApprovePlanModeCommand holds the parameters of "approve_plan_mode".
-type ApprovePlanModeCommand struct {
-	FinalPlanFilePath    string  `json:"finalPlanFilePath"`
-	PlanFilePath         *string `json:"planFilePath,omitempty"`
-	PreserveContext      *bool   `json:"preserveContext,omitempty"`
-	CompactBeforeExecute *bool   `json:"compactBeforeExecute,omitempty"`
-}
-
-// ApprovePlanMode sends "approve_plan_mode": Approve a plan and dispatch execution with the chosen context policy.
-func (c Commands) ApprovePlanMode(ctx context.Context, p ApprovePlanModeCommand) (ApprovePlanModeResult, error) {
-	var out ApprovePlanModeResult
-	err := c.call(ctx, "approve_plan_mode", p, 0, &out)
-	return out, err
-}
-
-// GoalModeCommand holds the parameters of "goal_mode".
-type GoalModeCommand struct {
-	Op GoalModeCommandOp `json:"op"`
-	// Required for create; omitted for lifecycle mutations.
-	Objective   *string `json:"objective,omitempty"`
-	TokenBudget *int64  `json:"tokenBudget,omitempty"`
-}
-
-// GoalMode sends "goal_mode": Change the browser goal workflow.
-func (c Commands) GoalMode(ctx context.Context, p GoalModeCommand) (GoalModeResult, error) {
-	var out GoalModeResult
-	err := c.call(ctx, "goal_mode", p, 0, &out)
-	return out, err
-}
-
-type GoalModeCommandOp string
-
-const (
-	GoalModeCommandOpCreate    GoalModeCommandOp = "create"
-	GoalModeCommandOpPause     GoalModeCommandOp = "pause"
-	GoalModeCommandOpResume    GoalModeCommandOp = "resume"
-	GoalModeCommandOpDrop      GoalModeCommandOp = "drop"
-	GoalModeCommandOpSetBudget GoalModeCommandOp = "set_budget"
-)
-
-func (v *GoalModeCommandOp) UnmarshalJSON(data []byte) error {
-	s, err := decodeString(data, "GoalModeCommandOp")
-	if err != nil {
-		return err
-	}
-	switch value := GoalModeCommandOp(s); value {
-	case GoalModeCommandOpCreate, GoalModeCommandOpPause, GoalModeCommandOpResume, GoalModeCommandOpDrop, GoalModeCommandOpSetBudget:
-		*v = value
-		return nil
-	}
-	return unknownValue("GoalModeCommandOp", s)
 }
 
 // SetActiveToolsCommand holds the parameters of "set_active_tools".

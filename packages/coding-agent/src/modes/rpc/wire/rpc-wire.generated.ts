@@ -407,20 +407,6 @@ export type AgentSource = "bundled" | "user" | "project";
 
 export type SubagentStatus = "pending" | "running" | "completed" | "failed" | "aborted";
 
-export interface PlanModeState {
-	enabled: boolean;
-	planFilePath: string;
-	workflow?: "parallel" | "iterative";
-	reentry?: boolean;
-}
-
-export interface GoalModeParams {
-	op: "create" | "pause" | "resume" | "drop" | "set_budget";
-	/** Required for create; omitted for lifecycle mutations. */
-	objective?: string;
-	tokenBudget?: number;
-}
-
 export type ActivityKind = "job" | "agent" | "service";
 
 export type ActivityStatus = "pending" | "running" | "completed" | "failed" | "cancelled" | "starting" | "ready" | "restarting" | "stopping" | "exited" | "aborted";
@@ -663,8 +649,6 @@ export interface SessionState {
 	contextUsage?: ContextUsage;
 	/** Current goal mode; null when the session has no goal. */
 	goal?: GoalModeState | null;
-	planMode?: PlanModeState | null;
-	goalMode?: GoalModeState | null;
 	sessionSkills?: SessionSkillsState;
 }
 
@@ -1240,15 +1224,6 @@ export interface ExtensionError {
 	extensionPath: string;
 	event: string;
 	error: string;
-}
-
-export interface PlanReviewEvent {
-	type: "plan_review";
-	sessionId: string | null;
-	planFilePath: string;
-	finalPlanFilePath: string;
-	content: string;
-	title?: string;
 }
 
 export interface BtwStartedEvent {
@@ -1899,34 +1874,6 @@ export interface SetTodosResult {
 	todoPhases: TodoPhase[];
 }
 
-export interface SetPlanModeParams {
-	enabled: boolean;
-	planFilePath?: string;
-	workflow?: "parallel" | "iterative";
-}
-
-export interface SetPlanModeResult {
-	planMode: PlanModeState | null;
-}
-
-export interface ApprovePlanModeParams {
-	finalPlanFilePath: string;
-	planFilePath?: string;
-	preserveContext?: boolean;
-	compactBeforeExecute?: boolean;
-}
-
-export interface ApprovePlanModeResult {
-	finalPlanFilePath: string;
-	contextPreserved: boolean;
-	executionDispatched: boolean;
-	compactionOutcome?: "ok" | "cancelled" | "failed";
-}
-
-export interface GoalModeResult {
-	goalMode: GoalModeState | null;
-}
-
 export interface SetActiveToolsParams {
 	toolNames: string[];
 }
@@ -2232,9 +2179,6 @@ export interface RpcWireCommands {
 	get_entries: { params: GetEntriesParams; result: SessionEntries };
 	get_tree: { params: undefined; result: SessionTree };
 	set_todos: { params: SetTodosParams; result: SetTodosResult };
-	set_plan_mode: { params: SetPlanModeParams; result: SetPlanModeResult };
-	approve_plan_mode: { params: ApprovePlanModeParams; result: ApprovePlanModeResult };
-	goal_mode: { params: GoalModeParams; result: GoalModeResult };
 	set_active_tools: { params: SetActiveToolsParams; result: SetActiveToolsResult };
 	set_host_tools: { params: SetHostToolsParams; result: SetHostToolsResult };
 	set_host_uri_schemes: { params: SetHostUriSchemesParams; result: SetHostUriSchemesResult };

@@ -57,14 +57,6 @@ export const frameDefs = {
 		"The session went quiet: the last run yielded and no background work can wake it.",
 	),
 	ExtensionError: { type: "'extension_error'", extensionPath: "string", event: "string", error: "string" },
-	PlanReviewEvent: {
-		type: "'plan_review'",
-		sessionId: "string | null",
-		planFilePath: "string",
-		finalPlanFilePath: "string",
-		"title?": "string",
-		content: "string",
-	},
 	BtwStartedEvent: { type: "'btw_update'", btwId: "string", state: "'started'", question: "string" },
 	BtwStreamingEvent: { type: "'btw_update'", btwId: "string", state: "'streaming'", delta: "string" },
 	BtwCompletedEvent: {

@@ -296,7 +296,6 @@ async function createBtwLifecycleHarness() {
 			const update = frame as RpcBtwUpdateFrame;
 			if (update.type === "btw_update" && update.state === "cancelled") cancelled.resolve();
 		},
-		undefined,
 		() => dispatcher.cancelPendingBtw(),
 	);
 	const maintenance = Promise.withResolvers<void>();
@@ -472,7 +471,7 @@ describe("Fura RPC BTW lifecycle", () => {
 			h.start();
 			await h.dispatcher.drain();
 			let settled = false;
-			const cleanup = boundary === "shutdown" ? h.runtime.dispose() : h.runtime.reconcileSessionMode();
+			const cleanup = boundary === "shutdown" ? h.runtime.dispose() : h.runtime.reconcileSession();
 			void cleanup.then(() => {
 				settled = true;
 			});
@@ -560,8 +559,8 @@ describe("Fura RPC BTW real session transitions", () => {
 	for (const kind of ["new", "resume", "fork", "branch"] as const) {
 		it(`${kind} aborts and drains BTW before changing source identity or context`, async () => {
 			const h = await createBtwLifecycleHarness();
-			// Mirror the live mode-restoration callback; invoke the real session API, not this callback.
-			h.session.setSessionSwitchReconciler(() => h.runtime.reconcileSessionMode());
+			// Mirror the live session-transition callback; invoke the real session API, not this callback.
+			h.session.setSessionSwitchReconciler(() => h.runtime.reconcileSession());
 			const change = await prepareBtwTransition(h.session, kind);
 			const sourceFile = h.session.sessionFile;
 			const sourceId = h.session.sessionId;
@@ -589,7 +588,7 @@ describe("Fura RPC BTW real session transitions", () => {
 
 		it(`${kind} rejects a BTW drain timeout without changing source identity or context`, async () => {
 			const h = await createBtwLifecycleHarness();
-			h.session.setSessionSwitchReconciler(() => h.runtime.reconcileSessionMode());
+			h.session.setSessionSwitchReconciler(() => h.runtime.reconcileSession());
 			const change = await prepareBtwTransition(h.session, kind);
 			const sourceFile = h.session.sessionFile;
 			const sourceId = h.session.sessionId;
@@ -635,7 +634,7 @@ describe("Fura RPC BTW real session transitions", () => {
 
 	it("extension-driven fork invalidates BTW starts queued behind compact", async () => {
 		const h = await createBtwLifecycleHarness();
-		h.session.setSessionSwitchReconciler(() => h.runtime.reconcileSessionMode());
+		h.session.setSessionSwitchReconciler(() => h.runtime.reconcileSession());
 		h.dispatcher.dispatch({ type: "compact" });
 		await h.compactStarted.promise;
 		h.start();
@@ -653,7 +652,7 @@ describe("Fura RPC BTW transition admission", () => {
 	for (const outcome of ["success", "failure"] as const) {
 		it(`blocks direct and queued BTW through held fork and reopens after ${outcome}`, async () => {
 			const h = await createBtwLifecycleHarness();
-			h.session.setSessionSwitchReconciler(() => h.runtime.reconcileSessionMode());
+			h.session.setSessionSwitchReconciler(() => h.runtime.reconcileSession());
 			const mutationEntered = Promise.withResolvers<void>();
 			const releaseMutation = Promise.withResolvers<void>();
 			const originalFork = h.session.sessionManager.fork.bind(h.session.sessionManager);

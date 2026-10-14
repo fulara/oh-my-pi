@@ -19,10 +19,8 @@ import type { Model } from "@oh-my-pi/pi-ai";
 import { getOAuthProviders } from "@oh-my-pi/pi-ai/oauth";
 import { toolWireSchema } from "@oh-my-pi/pi-ai/utils/schema";
 import { modelsAreEqual } from "@oh-my-pi/pi-catalog/models";
-import type { AgentToolResult } from "@oh-my-pi/pi-agent-core";
-import { CompactionCancelledError } from "@oh-my-pi/pi-agent-core/compaction";
 import type { AssistantMessage, ImageContent, TextContent } from "@oh-my-pi/pi-ai";
-import { $env, isEnoent, isRecord, logger, prompt, Snowflake, toError, withTimeout } from "@oh-my-pi/pi-utils";
+import { $env, isRecord, logger, Snowflake, toError, withTimeout } from "@oh-my-pi/pi-utils";
 import { clearPluginRootsAndCaches, resolveActiveProjectRegistryPath } from "../../discovery/helpers";
 import {
 	type ExtensionAskDialogQuestion,
@@ -43,9 +41,6 @@ import {
 	type SkillPromptInput,
 	type SkillRediscoverySource,
 } from "../../extensibility/skills";
-import type { Goal } from "@oh-my-pi/pi-tui/tools/goal";
-import { cfgGoalEnabled } from "../../goals/settings";
-import { InternalUrlRouter, resolveLocalUrlToPath } from "../../internal-urls";
 import { type Theme, theme } from "@oh-my-pi/pi-tui/theme";
 import { AgentLifecycleManager } from "../../registry/agent-lifecycle";
 import {
@@ -61,13 +56,6 @@ import { reconnectMcpManagerServer } from "../../mcp/oauth-reauth";
 import type { RestoredQueuedMessage } from "../../session/agent-session-types";
 import { CACHE_WARMING_MODES } from "../../session/cache-warmer";
 import { findMostRecentNonEmptySession, findRecentSessionContinuation } from "../../session/session-listing";
-import { type PlanApprovalDetails, resolvePlanTitle } from "../../plan-mode/approved-plan";
-import { cfgPlanEnabled } from "../../plan-mode/settings";
-import type { PlanModeState } from "../../plan-mode/state";
-import planModeApprovedPrompt from "../../prompts/system/plan-mode-approved.md" with { type: "text" };
-import planModeCompactInstructionsPrompt from "../../prompts/system/plan-mode-compact-instructions.md" with {
-	type: "text",
-};
 import type { PendingMessageRemovalReceipt } from "../../session/queued-messages";
 import { SKILL_PROMPT_MESSAGE_TYPE, USER_INTERRUPT_LABEL } from "../../session/messages";
 import type { DetachedBranchSnapshot } from "../../session/session-manager";
@@ -78,10 +66,6 @@ import { listLogoutAccounts, logoutCredential } from "../../slash-commands/helpe
 import { cfgSttEnabled } from "../../stt/settings";
 import { defaultLoadModeForToolName } from "../../tools/essential-tools";
 import { USER_TODO_EDIT_CUSTOM_TYPE } from "../../tools/todo";
-import { resolveToCwd } from "../../tools/path-utils";
-import { PROPOSE_DEVICE_NAME } from "@oh-my-pi/pi-tui/tools/resolve";
-import { ToolError } from "@oh-my-pi/pi-tui/tools/tool-errors";
-import { writeDeviceDispatch } from "../../tools/resolve";
 import type { EventBus } from "../../utils/event-bus";
 import { selectRpcEntries } from "./rpc-compat";
 import {
@@ -129,7 +113,6 @@ import type {
 	RpcHostUriResult,
 	RpcOpenSessionResult,
 	RpcRemoveQueuedMessageResult,
-	RpcPlanReviewEvent,
 	RpcResponse,
 	RpcSessionState,
 	RpcSubagentSubscriptionLevel,
@@ -247,7 +230,6 @@ export class RpcPendingExtensionRequests extends Map<string, PendingExtensionReq
 type RpcOutput = (
 	obj:
 		| RpcResponse
-		| RpcPlanReviewEvent
 		| RpcExtensionUIRequest
 		| RpcHostToolCallRequest
 		| RpcHostToolCancelRequest
@@ -1180,14 +1162,6 @@ export function requestRpcSelect(
 		response => parseValueDialogResponse(response, dialogOptions),
 	);
 }
-export interface RpcFuraRuntimeState {
-	planPreviousTools?: string[];
-	planPreviousMountedTools?: string[];
-	planHasEntered: boolean;
-	goalPreviousTools?: string[];
-	goalPreviousMountedTools?: string[];
-}
-
 function successResponse<T extends RpcCommand["type"]>(
 	id: string | undefined,
 	command: T,
@@ -1219,449 +1193,15 @@ export function executeRpcPendingMessagesCommand(
 	}
 }
 
-function getRpcLocalOptions(session: AgentSession) {
-	return {
-		getArtifactsDir: () => session.sessionManager.getArtifactsDir(),
-		getSessionId: () => session.sessionManager.getSessionId(),
-	};
-}
-
-export function resolveRpcPlanPath(session: AgentSession, planFilePath: string): string {
-	const normalized = InternalUrlRouter.instance().normalize(planFilePath);
-	if (normalized.startsWith("local:")) {
-		return resolveLocalUrlToPath(normalized, getRpcLocalOptions(session));
-	}
-	return resolveToCwd(normalized, session.sessionManager.getCwd());
-}
-
-export async function readRpcPlanFile(session: AgentSession, planFilePath: string): Promise<string | null> {
-	try {
-		return await fs.readFile(resolveRpcPlanPath(session, planFilePath), "utf8");
-	} catch (error) {
-		if (isEnoent(error)) return null;
-		throw error;
-	}
-}
-
-interface RpcPlanApprovalDetails extends PlanApprovalDetails {
-	finalPlanFilePath: string;
-}
-
-export async function buildRpcPlanApprovalDetails(
-	session: AgentSession,
-	input: { planFilePath: string; suppliedTitle?: unknown; finalPlanFilePath?: string },
-): Promise<RpcPlanApprovalDetails & { content: string }> {
-	const content = await readRpcPlanFile(session, input.planFilePath);
-	if (content === null) {
-		throw new ToolError(
-			`Plan file not found at ${input.planFilePath}. Write the finalized plan before requesting approval.`,
-		);
-	}
-	const normalized = resolvePlanTitle({
-		suppliedTitle: input.suppliedTitle,
-		planContent: content,
-		planFilePath: input.planFilePath,
-	});
-	return {
-		planFilePath: input.planFilePath,
-		finalPlanFilePath: input.finalPlanFilePath ?? `local://${normalized.fileName}`,
-		title: normalized.title,
-		planExists: true,
-		content,
-	};
-}
-
-function isLocalPlanPath(planFilePath: string): boolean {
-	return InternalUrlRouter.instance().normalize(planFilePath).startsWith("local:");
-}
-
-function isBlockingGoalModeState(session: AgentSession): boolean {
-	const goalMode = session.getGoalModeState();
-	if (!goalMode?.goal) return false;
-	return goalMode.goal.status !== "complete" && goalMode.goal.status !== "dropped";
-}
-function parseRpcGoalModeData(modeData: Record<string, unknown> | undefined): Goal | undefined {
-	const goal = modeData?.goal;
-	if (!goal || typeof goal !== "object") return undefined;
-	const value = goal as Record<string, unknown>;
-	if (
-		typeof value.id !== "string" ||
-		typeof value.objective !== "string" ||
-		typeof value.status !== "string" ||
-		typeof value.tokensUsed !== "number" ||
-		typeof value.timeUsedSeconds !== "number" ||
-		typeof value.createdAt !== "number" ||
-		typeof value.updatedAt !== "number"
-	) {
-		return undefined;
-	}
-	return {
-		id: value.id,
-		objective: value.objective,
-		status: value.status as Goal["status"],
-		tokenBudget: typeof value.tokenBudget === "number" ? value.tokenBudget : undefined,
-		tokensUsed: value.tokensUsed,
-		timeUsedSeconds: value.timeUsedSeconds,
-		createdAt: value.createdAt,
-		updatedAt: value.updatedAt,
-	};
-}
-
-function extractRpcPlanReviewDetails(toolName: string, result: unknown): RpcPlanApprovalDetails | undefined {
-	let directDetails: unknown;
-	if (result !== null && typeof result === "object" && "details" in result) {
-		directDetails = result.details;
-	}
-
-	const dispatch = writeDeviceDispatch(toolName, result);
-	const candidateDetails = dispatch?.tool === PROPOSE_DEVICE_NAME ? dispatch.inner : directDetails;
-	if (typeof candidateDetails !== "object" || candidateDetails === null) return undefined;
-	if (
-		!("sourceToolName" in candidateDetails) ||
-		!("action" in candidateDetails) ||
-		!("sourceResultDetails" in candidateDetails) ||
-		candidateDetails.sourceToolName !== "plan_approval" ||
-		candidateDetails.action !== "apply"
-	) {
-		return undefined;
-	}
-
-	const sourceDetails = candidateDetails.sourceResultDetails;
-	if (typeof sourceDetails !== "object" || sourceDetails === null) return undefined;
-	if (
-		!("planFilePath" in sourceDetails) ||
-		!("finalPlanFilePath" in sourceDetails) ||
-		!("title" in sourceDetails) ||
-		typeof sourceDetails.planFilePath !== "string" ||
-		typeof sourceDetails.finalPlanFilePath !== "string" ||
-		typeof sourceDetails.title !== "string"
-	) {
-		return undefined;
-	}
-	return {
-		planFilePath: sourceDetails.planFilePath,
-		finalPlanFilePath: sourceDetails.finalPlanFilePath,
-		title: sourceDetails.title,
-		planExists: "planExists" in sourceDetails && sourceDetails.planExists === true,
-	};
-}
-
 export function createFuraRpcRuntime(
 	session: AgentSession,
 	output: RpcOutput = () => {},
-	state: RpcFuraRuntimeState = { planHasEntered: false },
 	cancelPendingBtw?: () => void,
 ): {
 	handleCommand(command: RpcCommand): Promise<RpcResponse | undefined>;
-	handleSessionEvent(event: AgentSessionEvent): Promise<void>;
-	reconcileSessionMode(initialPlanMode?: PlanModeState): Promise<void>;
+	reconcileSession(): Promise<void>;
 	dispose(): Promise<void>;
 } {
-	const restorePlanTools = async (): Promise<void> => {
-		if (state.planPreviousTools !== undefined) {
-			await session.setActiveToolPresentation(state.planPreviousTools, state.planPreviousMountedTools ?? []);
-			state.planPreviousTools = undefined;
-			state.planPreviousMountedTools = undefined;
-		}
-	};
-
-	const restoreGoalTools = async (): Promise<void> => {
-		const previousTools = state.goalPreviousTools;
-		if (previousTools === undefined) return;
-		const previousMountedTools = state.goalPreviousMountedTools ?? [];
-		state.goalPreviousTools = undefined;
-		state.goalPreviousMountedTools = undefined;
-		try {
-			await session.setActiveToolPresentation(previousTools, previousMountedTools);
-		} catch (error) {
-			state.goalPreviousTools = previousTools;
-			state.goalPreviousMountedTools = previousMountedTools;
-			throw error;
-		}
-	};
-
-	const activateGoalTools = async (): Promise<void> => {
-		if (state.goalPreviousTools === undefined) {
-			state.goalPreviousTools = session.getEnabledToolNames().filter(name => name !== "goal");
-			state.goalPreviousMountedTools = session.getMountedXdevToolNames().filter(name => name !== "goal");
-		}
-		const previousTools = state.goalPreviousTools;
-		const hasGoalTool = session.getToolByName("goal") !== undefined;
-		const goalTools = hasGoalTool ? [...previousTools, "goal"] : previousTools;
-		await session.setActiveToolPresentation([...new Set(goalTools)], state.goalPreviousMountedTools ?? []);
-		if (session.isStreaming) {
-			await session.sendGoalModeContext({ deliverAs: "steer" });
-		}
-	};
-
-	const handleGoalMode = async (command: Extract<RpcCommand, { type: "goal_mode" }>): Promise<RpcResponse> => {
-		if (!cfgGoalEnabled.get(session.settings)) {
-			return errorResponse(command.id, "goal_mode", "Goal mode is disabled. Enable it in settings (goal.enabled).");
-		}
-		if (session.getPlanModeState()?.enabled) {
-			return errorResponse(command.id, "goal_mode", "Exit plan mode first.");
-		}
-
-		switch (command.op) {
-			case "create": {
-				const goalMode = await session.goalRuntime.createGoal({
-					objective: command.objective,
-					tokenBudget: command.tokenBudget,
-				});
-				await activateGoalTools();
-				return successResponse(command.id, "goal_mode", { goalMode });
-			}
-			case "pause": {
-				if (!session.getGoalModeState()?.enabled) {
-					return errorResponse(command.id, "goal_mode", "No active goal to pause.");
-				}
-				const goalMode = (await session.goalRuntime.pauseGoal()) ?? null;
-				await restoreGoalTools();
-				return successResponse(command.id, "goal_mode", { goalMode });
-			}
-			case "resume": {
-				const current = session.getGoalModeState();
-				if (current?.enabled || current?.goal.status !== "paused") {
-					return errorResponse(command.id, "goal_mode", "No paused goal to resume.");
-				}
-				const goalMode = await session.goalRuntime.resumeGoal();
-				await activateGoalTools();
-				return successResponse(command.id, "goal_mode", { goalMode });
-			}
-			case "drop": {
-				if (!session.getGoalModeState()?.goal) {
-					return errorResponse(command.id, "goal_mode", "No goal to drop.");
-				}
-				await session.goalRuntime.dropGoal();
-				await restoreGoalTools();
-				return successResponse(command.id, "goal_mode", { goalMode: null });
-			}
-			case "set_budget": {
-				if (!session.getGoalModeState()?.enabled) {
-					return errorResponse(command.id, "goal_mode", "No active goal.");
-				}
-				const goalMode = (await session.goalRuntime.onBudgetMutated(command.tokenBudget)) ?? null;
-				return successResponse(command.id, "goal_mode", { goalMode });
-			}
-		}
-	};
-
-	const exitPlanMode = async (): Promise<null> => {
-		if (session.getPlanModeState()?.enabled) {
-			await restorePlanTools();
-			session.setPlanProposalHandler(null);
-			session.setPlanModeState(undefined);
-			session.sessionManager.appendModeChange("none");
-		}
-		return null;
-	};
-
-	const handleRpcPlanProposal = async (title: string): Promise<AgentToolResult<unknown>> => {
-		const planMode = session.getPlanModeState();
-		if (!planMode?.enabled) {
-			throw new ToolError("Plan mode is not active.");
-		}
-		const details = await buildRpcPlanApprovalDetails(session, {
-			planFilePath: planMode.planFilePath,
-			suppliedTitle: title,
-		});
-		return {
-			content: [{ type: "text" as const, text: "Plan ready for approval." }],
-			details: {
-				action: "apply",
-				reason: title,
-				sourceToolName: "plan_approval",
-				label: "Plan ready for approval",
-				sourceResultDetails: {
-					planFilePath: details.planFilePath,
-					finalPlanFilePath: details.finalPlanFilePath,
-					title: details.title,
-					planExists: details.planExists,
-				},
-			},
-		};
-	};
-	const enterPlanMode = async (
-		command: Extract<RpcCommand, { type: "set_plan_mode" }>,
-		options: { persist?: boolean } = {},
-	): Promise<RpcResponse> => {
-		if (isBlockingGoalModeState(session)) {
-			return errorResponse(command.id, "set_plan_mode", "Exit goal mode first.");
-		}
-		const previousPlanMode = session.getPlanModeState();
-		const planFilePath = command.planFilePath?.trim() || "local://PLAN.md";
-
-		if (!previousPlanMode?.enabled && state.planPreviousTools === undefined) {
-			state.planPreviousTools = session.getEnabledToolNames();
-			state.planPreviousMountedTools = session.getMountedXdevToolNames();
-		}
-
-		const previousTools = state.planPreviousTools ?? session.getEnabledToolNames();
-		const previousMountedTools = state.planPreviousMountedTools ?? session.getMountedXdevToolNames();
-		const hasWriteTool = session.hasBuiltInTool("write");
-		const activeTools = hasWriteTool ? [...previousTools, "write"] : previousTools;
-		await session.setActiveToolPresentation([...new Set(activeTools)], previousMountedTools);
-
-		const planMode = {
-			enabled: true,
-			planFilePath,
-			workflow: command.workflow ?? "parallel",
-			reentry: state.planHasEntered || previousPlanMode !== undefined,
-		};
-		session.setPlanModeState(planMode);
-		session.setPlanProposalHandler(title => handleRpcPlanProposal(title));
-		if (session.isStreaming) {
-			await session.sendPlanModeContext({ deliverAs: "steer" });
-		}
-		state.planHasEntered = true;
-		if (options.persist !== false) session.sessionManager.appendModeChange("plan", { planFilePath });
-		return successResponse(command.id, "set_plan_mode", { planMode });
-	};
-
-	const maybeRenameApprovedPlan = async (
-		planFilePath: string,
-		finalPlanFilePath: string,
-	): Promise<{ source: string; destination: string } | undefined> => {
-		if (planFilePath === finalPlanFilePath) return undefined;
-		if (!isLocalPlanPath(planFilePath) || !isLocalPlanPath(finalPlanFilePath)) return undefined;
-		const localOptions = getRpcLocalOptions(session);
-		const router = InternalUrlRouter.instance();
-		const source = resolveLocalUrlToPath(router.normalize(planFilePath), localOptions);
-		const destination = resolveLocalUrlToPath(router.normalize(finalPlanFilePath), localOptions);
-		if (source === destination) return undefined;
-		try {
-			const destinationStat = await fs.stat(destination);
-			if (destinationStat.isFile()) {
-				throw new ToolError(
-					`Plan destination already exists at ${finalPlanFilePath}. Choose a different title and submit the plan for approval again.`,
-				);
-			}
-			throw new ToolError(`Plan destination exists but is not a file: ${finalPlanFilePath}`);
-		} catch (error) {
-			if (!isEnoent(error)) throw error;
-		}
-		await fs.rename(source, destination);
-		return { source, destination };
-	};
-
-	const approvePlanMode = async (
-		command: Extract<RpcCommand, { type: "approve_plan_mode" }>,
-	): Promise<RpcResponse> => {
-		const activePlanMode = session.getPlanModeState();
-		if (!activePlanMode?.enabled && !command.planFilePath) {
-			return errorResponse(command.id, "approve_plan_mode", "Plan mode is not active.");
-		}
-
-		const planFilePath = command.planFilePath ?? activePlanMode?.planFilePath ?? "local://PLAN.md";
-		const details = await buildRpcPlanApprovalDetails(session, {
-			planFilePath,
-			finalPlanFilePath: command.finalPlanFilePath,
-		});
-		const { content: planContent, finalPlanFilePath } = details;
-		const previousTools = state.planPreviousTools ?? session.getEnabledToolNames();
-		const previousMountedTools = state.planPreviousMountedTools ?? session.getMountedXdevToolNames();
-		// Execution receives the reviewed plan inline. Keep `read` available for
-		// recovery from the durable local:// artifact after compaction or handoff.
-		const executionTools = previousTools.includes("read") ? previousTools : [...previousTools, "read"];
-		const approvalSessionId = session.sessionId;
-
-		const renamedPlan = await maybeRenameApprovedPlan(planFilePath, finalPlanFilePath);
-
-		const contextPreserved = command.preserveContext === true;
-		const compactBeforeExecute = contextPreserved && command.compactBeforeExecute === true;
-		if (compactBeforeExecute) {
-			session.markPlanInternalAbortPending();
-		}
-
-		const rollbackCancelledPlanApproval = async (): Promise<void> => {
-			if (renamedPlan) await fs.rename(renamedPlan.destination, renamedPlan.source);
-			if (!activePlanMode?.enabled) return;
-			state.planPreviousTools = previousTools;
-			state.planPreviousMountedTools = previousMountedTools;
-			session.setPlanModeState(activePlanMode);
-			session.setPlanProposalHandler(title => handleRpcPlanProposal(title));
-			session.sessionManager.appendModeChange("plan", { planFilePath: activePlanMode.planFilePath });
-			const planTools = session.hasBuiltInTool("write") ? [...previousTools, "write"] : previousTools;
-			await session.setActiveToolPresentation([...new Set(planTools)], previousMountedTools);
-		};
-
-		let compactionOutcome: "ok" | "cancelled" | "failed" | undefined;
-		try {
-			await exitPlanMode();
-
-			if (!contextPreserved) {
-				const previousSessionFile = session.sessionFile;
-				const started = await session.newSession(
-					previousSessionFile ? { parentSession: previousSessionFile } : undefined,
-				);
-				if (!started) {
-					await rollbackCancelledPlanApproval();
-					return successResponse(command.id, "approve_plan_mode", {
-						finalPlanFilePath,
-						contextPreserved: false,
-						executionDispatched: false,
-					});
-				}
-				await reconcileSessionMode();
-				const newPlanPath = resolveRpcPlanPath(session, finalPlanFilePath);
-				await fs.mkdir(path.dirname(newPlanPath), { recursive: true });
-				await fs.writeFile(newPlanPath, planContent);
-			} else if (compactBeforeExecute) {
-				session.setPlanReferencePath(finalPlanFilePath);
-				const compactionPrompt = prompt.render(planModeCompactInstructionsPrompt, {
-					planFilePath: finalPlanFilePath,
-				});
-				try {
-					await session.compact(undefined, { internalGuidance: compactionPrompt, suppressContinuation: true });
-					compactionOutcome = "ok";
-				} catch (error) {
-					compactionOutcome = error instanceof CompactionCancelledError ? "cancelled" : "failed";
-				}
-			}
-		} catch (error) {
-			if (!contextPreserved && session.sessionId === approvalSessionId) {
-				await rollbackCancelledPlanApproval();
-			}
-			throw error;
-		} finally {
-			session.clearPlanInternalAbortPending();
-		}
-
-		await session.setActiveToolPresentation(executionTools, previousMountedTools);
-		state.planPreviousTools = undefined;
-		state.planPreviousMountedTools = undefined;
-		session.setPlanProposalHandler(null);
-		session.setPlanModeState(undefined);
-		session.setPlanReferencePath(finalPlanFilePath);
-
-		if (compactionOutcome === "cancelled") {
-			return successResponse(command.id, "approve_plan_mode", {
-				finalPlanFilePath,
-				contextPreserved,
-				compactionOutcome,
-				executionDispatched: false,
-			});
-		}
-
-		session.markPlanReferenceSent();
-		const planModePrompt = prompt.render(planModeApprovedPrompt, {
-			planFilePath: finalPlanFilePath,
-			planContent,
-			finalPlanFilePath,
-			contextPreserved,
-		});
-		session.prompt(planModePrompt, { synthetic: true }).catch(error => {
-			output(errorResponse(undefined, "approve_plan_mode", error instanceof Error ? error.message : String(error)));
-		});
-
-		return successResponse(command.id, "approve_plan_mode", {
-			finalPlanFilePath,
-			contextPreserved,
-			...(compactionOutcome ? { compactionOutcome } : {}),
-			executionDispatched: true,
-		});
-	};
-
 	type BtwRequest = {
 		question: string;
 		snapshot: DetachedBranchSnapshot;
@@ -1810,67 +1350,6 @@ export function createFuraRpcRuntime(
 		return btwDisposal;
 	};
 
-	const reconcileSessionMode = async (initialPlanMode?: PlanModeState): Promise<void> => {
-		await cancelAllBtw();
-		await restorePlanTools();
-		await restoreGoalTools();
-		state.planHasEntered = false;
-		session.setPlanProposalHandler(null);
-		session.setPlanModeState(undefined);
-		session.setGoalModeState(undefined);
-		session.goalRuntime.clearAccounting();
-
-		const sessionContext = session.sessionManager.buildSessionContext();
-		if (sessionContext.mode === "goal" || sessionContext.mode === "goal_paused") {
-			if (!cfgGoalEnabled.get(session.settings)) {
-				session.sessionManager.appendModeChange("none");
-				return;
-			}
-			const goal = parseRpcGoalModeData(sessionContext.modeData);
-			if (!goal) {
-				session.sessionManager.appendModeChange("none");
-				return;
-			}
-			session.setGoalModeState({
-				enabled: sessionContext.mode === "goal",
-				mode: "active",
-				goal,
-			});
-			const restored = await session.goalRuntime.onThreadResumed({ preserveActiveGoal: true });
-			if (restored?.enabled && restored.goal.status === "active") await activateGoalTools();
-			return;
-		}
-		// Initial SDK plan state need not have a journal mode entry yet.
-		// Session switches pass no initial state and only restore their target journal.
-		if (sessionContext.mode === "none" && initialPlanMode?.enabled) {
-			await enterPlanMode(
-				{
-					type: "set_plan_mode",
-					enabled: true,
-					planFilePath: initialPlanMode.planFilePath,
-					workflow: initialPlanMode.workflow,
-				},
-				{ persist: false },
-			);
-			return;
-		}
-
-		if (sessionContext.mode === "plan" || sessionContext.mode === "plan_paused") {
-			if (!cfgPlanEnabled.get(session.settings)) {
-				session.sessionManager.appendModeChange("none");
-				return;
-			}
-			state.planHasEntered = true;
-			if (sessionContext.mode === "plan") {
-				const planFilePath =
-					typeof sessionContext.modeData?.planFilePath === "string"
-						? sessionContext.modeData.planFilePath
-						: undefined;
-				await enterPlanMode({ type: "set_plan_mode", enabled: true, planFilePath }, { persist: false });
-			}
-		}
-	};
-
 	const handleCommand = async (command: RpcCommand): Promise<RpcResponse | undefined> => {
 		try {
 			switch (command.type) {
@@ -1886,17 +1365,6 @@ export function createFuraRpcRuntime(
 					await session.setActiveToolsByName(command.toolNames);
 					return successResponse(command.id, "set_active_tools", { toolNames: session.getActiveToolNames() });
 				}
-				case "set_plan_mode": {
-					return command.enabled
-						? await enterPlanMode(command)
-						: successResponse(command.id, "set_plan_mode", { planMode: await exitPlanMode() });
-				}
-				case "approve_plan_mode": {
-					return await approvePlanMode(command);
-				}
-				case "goal_mode": {
-					return await handleGoalMode(command);
-				}
 
 				default:
 					return undefined;
@@ -1904,45 +1372,6 @@ export function createFuraRpcRuntime(
 		} catch (error) {
 			return errorResponse(command.id, command.type, error instanceof Error ? error.message : String(error));
 		}
-	};
-
-	const handleSessionEvent = async (event: AgentSessionEvent): Promise<void> => {
-		if (event.type === "goal_updated") {
-			if (event.state?.enabled !== true || event.goal?.status !== "active") await restoreGoalTools();
-			return;
-		}
-		if (event.type === "agent_end") {
-			const goalMode = session.getGoalModeState();
-			if (goalMode?.mode !== "exiting" || goalMode.reason !== "completed") return;
-			await restoreGoalTools();
-			session.setGoalModeState(undefined);
-			session.sessionManager.appendModeChange("none");
-			session.sessionManager.appendCustomEntry("goal-completed", {
-				objective: goalMode.goal.objective,
-				tokensUsed: goalMode.goal.tokensUsed,
-				tokenBudget: goalMode.goal.tokenBudget,
-				timeUsedSeconds: goalMode.goal.timeUsedSeconds,
-			});
-			return;
-		}
-		if (event.type !== "tool_execution_end" || event.isError) return;
-		const details = extractRpcPlanReviewDetails(event.toolName, event.result);
-		if (!details) return;
-
-		const planContent = await readRpcPlanFile(session, details.planFilePath);
-		if (planContent === null) {
-			output(errorResponse(undefined, "resolve", `Plan file not found at ${details.planFilePath}`));
-			return;
-		}
-		await session.abort();
-		output({
-			type: "plan_review",
-			sessionId: session.sessionId ?? null,
-			planFilePath: details.planFilePath,
-			finalPlanFilePath: details.finalPlanFilePath,
-			title: details.title,
-			content: planContent,
-		} satisfies RpcPlanReviewEvent);
 	};
 
 	session.setSessionBeforeSwitchReconciler?.(async () => {
@@ -1962,7 +1391,7 @@ export function createFuraRpcRuntime(
 		}
 	});
 
-	return { handleCommand, handleSessionEvent, reconcileSessionMode, dispose };
+	return { handleCommand, reconcileSession: cancelAllBtw, dispose };
 }
 
 /** Sends an RPC input request, passing optional secret masking and timeout metadata. */
@@ -2398,7 +1827,7 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 	const subagentRegistry = subagentEventBus ? new RpcSubagentRegistry(subagentEventBus, output) : undefined;
 	const activity = new RpcActivity(session, subagentRegistry);
 	const disableRecaps = options.enableRecaps ? enableRpcSessionRecaps(session) : undefined;
-	const furaRuntime = createFuraRpcRuntime(session, output, undefined, () => inputDispatcher.cancelPendingBtw());
+	const furaRuntime = createFuraRpcRuntime(session, output, () => inputDispatcher.cancelPendingBtw());
 
 	// Shutdown request flag (wrapped in object to allow mutation with const)
 	const shutdownState = { requested: false };
@@ -2693,15 +2122,11 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 		goalController.observe(event);
 		promptResults.observe(event);
 		settleWatcher.observe(event);
-		void furaRuntime.handleSessionEvent(event).catch(err => {
-			output(error(undefined, "resolve", err instanceof Error ? err.message : String(err)));
-		});
 	});
-	session.setSessionSwitchReconciler(() => furaRuntime.reconcileSessionMode());
-	const initialPlanMode = session.getPlanModeState();
+	session.setSessionSwitchReconciler(() => furaRuntime.reconcileSession());
 	await goalController.reconcile();
 	await goalController.settled();
-	await furaRuntime.reconcileSessionMode(initialPlanMode);
+	await furaRuntime.reconcileSession();
 
 	// Discriminates a store failure from any other dispose rejection below.
 	let persistenceFailure: Error | undefined;
@@ -3191,8 +2616,6 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 					slowModeScope: session.getSlowModeScope(),
 					usageLimit: session.getUsageLimitState(),
 					messageCount: session.messages.length,
-					planMode: session.getPlanModeState() ?? null,
-					goalMode: session.getGoalModeState() ?? null,
 					sessionSkills: session.getSessionSkillsState(),
 					systemPrompt: session.systemPrompt,
 					dumpTools: session.agent.state.tools.map(tool => ({
