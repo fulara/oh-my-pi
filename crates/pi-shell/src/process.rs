@@ -1373,6 +1373,20 @@ impl SpawnRegistry {
 		}
 	}
 
+	/// Carry this shell session's spawn-time ownership into its next run.
+	/// Never reopen a process from a job table's possibly recycled PID.
+	pub(crate) fn inherit(&self, previous: &Self) {
+		if std::ptr::eq(self, previous) {
+			return;
+		}
+		let retained = {
+			let mut state = previous.state.lock();
+			prune_exited(&mut state.spawned);
+			state.spawned.clone()
+		};
+		self.state.lock().spawned.extend(retained);
+	}
+
 	/// Pids of recorded processes that are still alive, in spawn order.
 	///
 	/// Liveness is probed through each entry's pinned [`Process`] (pidfd on
@@ -2239,6 +2253,39 @@ mod tests {
 			watermark_after_fill,
 			"watermark must not advance while the vec stays below it — otherwise a sweep ran"
 		);
+	}
+
+	/// A later run can stop a retained job, but numeric job metadata alone
+	/// must never grant authority over an unrelated process.
+	#[cfg(unix)]
+	#[tokio::test]
+	async fn inherited_registry_keeps_pinned_jobs_and_refuses_unowned_pids() {
+		let mut owned = tokio::process::Command::new("sleep")
+			.arg("30")
+			.kill_on_drop(true)
+			.spawn()
+			.expect("owned job");
+		let mut sentinel = tokio::process::Command::new("sleep")
+			.arg("30")
+			.kill_on_drop(true)
+			.spawn()
+			.expect("protected sentinel");
+		let owned_pid = i32::try_from(owned.id().unwrap()).unwrap();
+		let sentinel_pid = i32::try_from(sentinel.id().unwrap()).unwrap();
+		let previous = SpawnRegistry::new();
+		previous.record(None, Process::from_pid(owned_pid));
+		previous.record(Some(sentinel_pid), None);
+		let next = SpawnRegistry::new();
+		next.inherit(&previous);
+		drop(previous);
+		next.build_targets().signal(TERM_SIGNAL);
+		tokio::time::timeout(Duration::from_secs(5), owned.wait())
+			.await
+			.expect("retained owned job stopped")
+			.expect("reap owned job");
+		assert!(sentinel.try_wait().expect("sentinel status").is_none());
+		sentinel.kill().await.expect("stop fixture sentinel");
+		sentinel.wait().await.expect("reap fixture sentinel");
 	}
 
 	/// `wait_for_exit` on a lone process resolves when it exits, reports a

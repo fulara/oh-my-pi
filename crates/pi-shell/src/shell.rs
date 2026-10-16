@@ -46,6 +46,9 @@ struct ShellSessionCore {
 	/// Session filesystem; each run installs a cancellation-scoped view of it
 	/// (or of the run's own override) and restores it afterwards.
 	filesystem: Fs,
+	/// Last run's pinned handles, retained while its background jobs can
+	/// survive.
+	spawn_registry: Option<Arc<process::SpawnRegistry>>,
 }
 
 #[derive(Clone, Default)]
@@ -971,10 +974,10 @@ async fn create_session_for_run(
 	configure_windows_path(&mut shell)?;
 
 	if let Some(snapshot_path) = config.snapshot_path.as_ref() {
-		source_snapshot(&mut shell, snapshot_path, spawn_registry, cancel_token).await?;
+		source_snapshot(&mut shell, snapshot_path, spawn_registry.clone(), cancel_token).await?;
 	}
 
-	Ok(ShellSessionCore { shell, filesystem: config.filesystem.clone() })
+	Ok(ShellSessionCore { shell, filesystem: config.filesystem.clone(), spawn_registry })
 }
 
 async fn source_snapshot(
@@ -1424,7 +1427,7 @@ async fn run_shell_command_once(
 	params.set_fd(OpenFiles::STDOUT_FD, stdout_file);
 	params.set_fd(OpenFiles::STDERR_FD, stderr_file);
 	params.process_group_policy = ProcessGroupPolicy::NewProcessGroup;
-	register_background_jobs(&session.shell, &spawn_registry);
+	retain_background_ownership(session, &spawn_registry);
 	params.set_cancel_token(cancel_token.clone());
 	params.set_spawn_observer(spawn_registry.clone());
 	// Only a buffered capture can be minimized, so only it asks for the report.
@@ -1589,7 +1592,7 @@ async fn run_shell_command_streams_in_filesystem(
 	params.set_fd(OpenFiles::STDOUT_FD, stdout_file);
 	params.set_fd(OpenFiles::STDERR_FD, stderr_file);
 	params.process_group_policy = ProcessGroupPolicy::NewProcessGroup;
-	register_background_jobs(&session.shell, &spawn_registry);
+	retain_background_ownership(session, &spawn_registry);
 	params.set_cancel_token(cancel_token.clone());
 	params.set_spawn_observer(spawn_registry.clone());
 	let reader_cancel = CancellationToken::new();
@@ -1832,18 +1835,14 @@ async fn wait_for_term_grace(registry: &process::SpawnRegistry) {
 	let _ = registry;
 }
 
-fn register_background_jobs(shell: &BrushShell, registry: &process::SpawnRegistry) {
-	// Include retained session jobs in the same cancellation wave as new spawns.
-	for job in &shell.jobs().jobs {
-		// A reaped job keeps its representative PID for `wait`, but that PID
-		// may later be reused by an unrelated process. Use an external child
-		// still held by the job (the first pipeline stage may have exited).
-		let Some(pid) = job.process_ids().next() else {
-			continue;
-		};
-		let process = process::Process::from_pid(pid);
-		registry.record(job.process_group_id(), process);
+fn retain_background_ownership(
+	session: &mut ShellSessionCore,
+	registry: &Arc<process::SpawnRegistry>,
+) {
+	if let Some(previous) = session.spawn_registry.as_ref() {
+		registry.inherit(previous);
 	}
+	session.spawn_registry = Some(registry.clone());
 }
 
 async fn terminate_background_jobs(shell: &mut BrushShell, registry: &process::SpawnRegistry) {
