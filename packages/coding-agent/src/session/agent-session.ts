@@ -7547,7 +7547,6 @@ export class AgentSession implements SettingsScope {
 				promptGeneration: queueGeneration,
 				clientMessageId: options?.clientMessageId,
 				displayText: typedText,
-				companions: keywordNotices,
 				onRemoved: options?.onQueuedMessageRemoved,
 			});
 			outcome.sessionClaimed = queued;
@@ -7624,7 +7623,6 @@ export class AgentSession implements SettingsScope {
 				rawText: typedText,
 				clientMessageId: options?.clientMessageId,
 				displayText: typedText,
-				companions: keywordNotices,
 				onRemoved: options?.onQueuedMessageRemoved,
 				preprocessed: {
 					images: normalizedImages,
@@ -7815,9 +7813,8 @@ export class AgentSession implements SettingsScope {
 
 			await this.#queueCustomMessage(message, streamingBehavior, {
 				queueChipText: options?.queueChipText,
-				prependMessages: queuedNotices,
 				onPromptAdmitted: options?.onPromptAdmitted,
-				companions: keywordNotices,
+				companions: queuedNotices,
 				onRemoved: options?.onQueuedMessageRemoved,
 			});
 			outcome.sessionClaimed = true;
@@ -7862,10 +7859,9 @@ export class AgentSession implements SettingsScope {
 			}
 			await this.#queueCustomMessage(message, streamingBehavior, {
 				queueChipText: options?.queueChipText,
-				companions: keywordNotices,
+				companions: queuedNotices,
 				onRemoved: options?.onQueuedMessageRemoved,
 				preprocessed: { content: preparedMessage.content, descriptionNotice },
-				prependMessages: queuedNotices,
 				onPromptAdmitted: options?.onPromptAdmitted,
 			});
 			outcome.sessionClaimed = true;
@@ -8582,7 +8578,6 @@ export class AgentSession implements SettingsScope {
 			promptGeneration?: number;
 			clientMessageId?: string;
 			displayText?: string;
-			companions?: CustomMessage[];
 			onRemoved?: PromptOptions["onQueuedMessageRemoved"];
 		},
 	): Promise<boolean> {
@@ -8621,7 +8616,7 @@ export class AgentSession implements SettingsScope {
 			this.#queuedMessageRawText.set(message, rawText);
 			const queueOptions = {
 				preview: { text: options?.displayText ?? text, images, clientMessageId },
-				companions: [...(options?.companions ?? []), ...attachmentSourceNotices],
+				companions: [...prependMessages, ...attachmentSourceNotices],
 				onRemoved: (pendingMessageId: string) =>
 					options?.onRemoved?.({
 						sessionId: this.sessionId,
@@ -8885,8 +8880,6 @@ export class AgentSession implements SettingsScope {
 			onRemoved?: PromptOptions["onQueuedMessageRemoved"];
 			/** Content and vision companion already prepared by the caller; skips re-normalizing and re-describing. */
 			preprocessed?: { content: CustomMessage<T>["content"]; descriptionNotice?: CustomMessage };
-			/** Hidden notices published immediately before this message, in the same synchronous group. */
-			prependMessages?: readonly CustomMessage[];
 			/** Called synchronously once the message is pushed onto its queue. See {@link PromptOptions.onPromptAdmitted}. */
 			onPromptAdmitted?: () => void;
 		},

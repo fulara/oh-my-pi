@@ -592,7 +592,7 @@ class DaemonBroker {
 			// Observers never acquire a lifetime lease or alter completion routing,
 			// even if a regular client accidentally attaches delivery metadata.
 			if (request.operation.op === "inspect-list" || request.operation.op === "inspect-logs") {
-				const result = await this.#dispatch(request.operation);
+				const result = await this.#dispatch(request.operation, socket);
 				socket.send(JSON.stringify({ id, ok: true, result }));
 				return;
 			}
