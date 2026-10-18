@@ -11,7 +11,7 @@ import { cfgRecapEnabled, cfgRecapIdleSeconds } from "@oh-my-pi/pi-coding-agent/
 import { AgentSession } from "@oh-my-pi/pi-coding-agent/session/agent-session";
 import type { AuthStorage } from "@oh-my-pi/pi-coding-agent/session/auth-storage";
 import { convertToLlm } from "@oh-my-pi/pi-coding-agent/session/messages";
-import { lookupLatestSessionRecap, resetSessionIndexForTests } from "@oh-my-pi/pi-coding-agent/session/session-index";
+import { lookupLatestSessionRecap, closeSessionIndex } from "@oh-my-pi/pi-coding-agent/session/session-index";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
 import {
 	enableRpcSessionRecaps,
@@ -39,7 +39,7 @@ describe("shared idle recap lifecycle", () => {
 		directory = fs.mkdtempSync(path.join(os.tmpdir(), "omp-recap-lifecycle-"));
 		setAgentDir(directory);
 		process.env.PI_NO_TITLE = "1";
-		resetSessionIndexForTests();
+		closeSessionIndex();
 		auth = createInMemoryAuthStorage();
 		auth.keys.setRuntime("anthropic", "test-key");
 		requests = [];
@@ -99,7 +99,7 @@ describe("shared idle recap lifecycle", () => {
 		await session.dispose();
 		auth.close();
 		vi.restoreAllMocks();
-		resetSessionIndexForTests();
+		closeSessionIndex();
 		setAgentDir(originalAgentDir ?? path.join(getConfigRootDir(), "agent"));
 		if (originalAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 		if (originalNoTitle === undefined) delete process.env.PI_NO_TITLE;
