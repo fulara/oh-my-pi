@@ -10438,6 +10438,7 @@ export class AgentSession implements SettingsScope {
 				this.#freshProviderSessionId = undefined;
 				this.#clearInheritedProviderPromptCacheKey();
 				this.#syncAgentSessionId();
+				await this.#prewalk.resetForNewSession(this.#agentKind === "main" && cfgPrewalkEnabled.get(this.settings));
 				// Re-apply the configured selector so the new session does not inherit
 				// the previous session's auto-classified effort: auto stays auto but
 				// restarts at the provisional level; a pinned level re-resolves to itself.

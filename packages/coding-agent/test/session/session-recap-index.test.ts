@@ -6,7 +6,8 @@ import * as path from "node:path";
 import {
 	lookupLatestSessionRecap,
 	recordSessionRecap,
-	resetSessionIndexForTests,
+	closeSessionIndex,
+	salvageSessionIndex,
 } from "@oh-my-pi/pi-coding-agent/session/session-index";
 import { getConfigRootDir, getHistoryDbPath, removeSyncWithRetries, setAgentDir } from "@oh-my-pi/pi-utils";
 
@@ -17,11 +18,11 @@ describe("persisted session recaps", () => {
 	beforeEach(() => {
 		directory = fs.mkdtempSync(path.join(os.tmpdir(), "omp-recap-index-"));
 		setAgentDir(directory);
-		resetSessionIndexForTests();
+		closeSessionIndex();
 	});
 
 	afterEach(() => {
-		resetSessionIndexForTests();
+		closeSessionIndex();
 		setAgentDir(originalAgentDir ?? path.join(getConfigRootDir(), "agent"));
 		if (originalAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 		removeSyncWithRetries(directory);
@@ -52,9 +53,32 @@ describe("persisted session recaps", () => {
 		expect(lookupLatestSessionRecap("a")).toMatchObject({ id: second!.id, text: "second", createdAt: 101_000 });
 
 		// A reopen must retain both source metadata and deterministic ordering.
-		resetSessionIndexForTests();
+		closeSessionIndex();
 		expect(lookupLatestSessionRecap("a")?.sourceLeafId).toBe("leaf-second");
 		expect(lookupLatestSessionRecap("other")).toBeUndefined();
+	});
+
+	it.each([false, true])("salvages recap freshness metadata from legacy/current journals (current=%s)", modern => {
+		using source = new Database(":memory:");
+		using target = new Database(":memory:");
+		source.run(`
+			CREATE TABLE session_titles (session_id TEXT, title TEXT, updated_at INTEGER);
+			CREATE TABLE session_recaps (
+				id INTEGER PRIMARY KEY, session_id TEXT, cwd TEXT, recap TEXT, created_at INTEGER
+				${modern ? ", source_leaf_id TEXT" : ""}
+			);
+		`);
+		source
+			.query(`INSERT INTO session_recaps VALUES (1, 's', '/project', 'continue review', 123${modern ? ", ?" : ""})`)
+			.run(...(modern ? ["review-leaf"] : []));
+
+		expect(salvageSessionIndex(source, target).recaps).toBe(1);
+		expect(target.query("SELECT session_id, recap, created_at, source_leaf_id FROM session_recaps").get()).toEqual({
+			session_id: "s",
+			recap: "continue review",
+			created_at: 123,
+			source_leaf_id: modern ? "review-leaf" : null,
+		});
 	});
 
 	it("isolates identical logical IDs across agent-directory profiles", () => {
