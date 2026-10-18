@@ -388,8 +388,6 @@ interface CursorToolResultEntry {
 	additionalContext?: string;
 }
 
-export type QueuedMessageQueue = "steering" | "followUp";
-
 export interface QueuedMessagePreview {
 	text: string;
 	images?: ImageContent[];

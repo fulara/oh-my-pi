@@ -1735,7 +1735,7 @@ class DaemonBroker {
 	}
 
 	/**
-	 * Give up the scope once the socket file is gone. The native lease outlives a
+	 * Give up the scope once its runtime directory or socket file is gone. The native lease outlives a
 	 * deleted runtime dir, so a broker that kept running would hold the scope
 	 * while every new broker exits on the held lease and every new client fails
 	 * with `connect ENOENT`. Shutting down releases the lease, and the next client
@@ -1744,12 +1744,16 @@ class DaemonBroker {
 	#watchEndpoint(): void {
 		this.#endpointTimer = setInterval(() => {
 			void fs
-				.stat(this.#endpoint)
+				.stat(this.#runtimeDir)
+				.then(() => fs.stat(this.#endpoint))
 				.then(
 					() => undefined,
 					error => {
 						if (!isEnoent(error) || this.#shuttingDown) return;
-						logger.warn("Daemon broker socket was deleted; releasing the scope", { endpoint: this.#endpoint });
+						logger.warn("Daemon broker runtime directory or socket was deleted; releasing the scope", {
+							endpoint: this.#endpoint,
+							runtimeDir: this.#runtimeDir,
+						});
 						return this.shutdown();
 					},
 				)

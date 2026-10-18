@@ -299,6 +299,7 @@ interface SalvagedRecap {
 	cwd: unknown;
 	recap: unknown;
 	created_at: unknown;
+	source_leaf_id?: unknown;
 }
 
 function readSalvageable<T extends object>(source: Database, table: string, columns: string): T[] {
@@ -321,7 +322,8 @@ export function salvageSessionIndex(source: Database, target: Database): { title
 		row =>
 			typeof row.session_id === "string" && typeof row.title === "string" && Number.isSafeInteger(row.updated_at),
 	);
-	const recaps = readSalvageable<SalvagedRecap>(source, "session_recaps", "session_id, cwd, recap, created_at").filter(
+	// SELECT * also accepts legacy journals that have no source_leaf_id column.
+	const recaps = readSalvageable<SalvagedRecap>(source, "session_recaps", "*").filter(
 		row =>
 			typeof row.session_id === "string" &&
 			typeof row.cwd === "string" &&
@@ -335,10 +337,16 @@ WHERE excluded.updated_at > session_titles.updated_at
 	`);
 	for (const row of titles) upsertTitle.run(row.session_id as string, row.title as string, row.updated_at as number);
 	using insertRecap = target.prepare(
-		"INSERT INTO session_recaps (session_id, cwd, recap, created_at) VALUES (?, ?, ?, ?)",
+		"INSERT INTO session_recaps (session_id, cwd, recap, created_at, source_leaf_id) VALUES (?, ?, ?, ?, ?)",
 	);
 	for (const row of recaps) {
-		insertRecap.run(row.session_id as string, row.cwd as string, row.recap as string, row.created_at as number);
+		insertRecap.run(
+			row.session_id as string,
+			row.cwd as string,
+			row.recap as string,
+			row.created_at as number,
+			typeof row.source_leaf_id === "string" ? row.source_leaf_id : null,
+		);
 	}
 	return { titles: titles.length, recaps: recaps.length };
 }
