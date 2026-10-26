@@ -9570,7 +9570,7 @@ export class AgentSession implements SettingsScope {
 		const attribution = options?.attribution ?? "user";
 		const timestamp = options?.timestamp;
 		const rawText = options?.rawText ?? text;
-		const preprocessed = options?.preprocessed;
+		let preprocessed = options?.preprocessed;
 		const prependMessages = options?.prependMessages ?? [];
 		const clientMessageId = options?.clientMessageId;
 		// Captured before any await below so the aside branch can detect a
@@ -9591,6 +9591,17 @@ export class AgentSession implements SettingsScope {
 		// vision-model request for the same attachment.
 		const attachmentSourceNotices = this.#createAttachmentSourceNotices(images, timestamp ?? Date.now());
 		if (mode !== "aside") {
+			// ACP admission must finish preparation before deciding whether its client turn is still live.
+			if (options?.requireActiveRun && !preprocessed) {
+				const normalized = await this.#normalizeImagesForModel(images);
+				preprocessed = {
+					images: normalized,
+					descriptionNotice: normalized?.length ? await this.#buildImageDescriptionNotice(normalized) : undefined,
+				};
+			}
+			if (options?.promptGeneration !== undefined && this.#promptGeneration !== options.promptGeneration) return false;
+			if (options?.requireActiveRun &&
+				(this.#abortInProgress || !this.isStreaming || this.#clientPromptInFlightCount === 0)) return false;
 			const message: AgentMessage = {
 				role: "user",
 				content: [{ type: "text", text }, ...(images ?? [])],
@@ -9627,9 +9638,12 @@ export class AgentSession implements SettingsScope {
 			};
 			this.#allowQueuedMessageDrainRetry();
 			if (mode === "followUp") this.agent.followUp(message, queueOptions);
-			else this.agent.steer(message, queueOptions);
+			else {
+				this.agent.steer(message, queueOptions);
+				this.#fireSteeringArrival([...queueOptions.companions, message]);
+			}
 			options?.onPromptAdmitted?.();
-			this.#scheduleIdleQueueDrain();
+			if (!options?.skipIdleDrain) this.#scheduleIdleQueueDrain();
 			return true;
 		}
 		const normalizedImages = preprocessed ? preprocessed.images : await this.#normalizeImagesForModel(images);
