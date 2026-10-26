@@ -10818,7 +10818,7 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 		const attribution = options?.attribution ?? "user";
 		const timestamp = options?.timestamp;
 		const rawText = options?.rawText ?? text;
-		const preprocessed = options?.preprocessed;
+		let preprocessed = options?.preprocessed;
 		const prependMessages = options?.prependMessages ?? [];
 		const clientMessageId = options?.clientMessageId;
 		// Captured before any await below so the aside branch can detect a
