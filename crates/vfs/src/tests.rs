@@ -623,6 +623,91 @@ fn fifo_opens_through_a_cancellable_view_wait_for_a_writer_and_observe_the_token
 	assert_eq!(late_writer.raw_os_error(), Some(libc::ENXIO), "a reader was left open");
 }
 
+/// Darwin's poll reports a named FIFO's buffered data, but not its EOF.
+/// Cancellable reads must finish for both an empty writer and one with data,
+/// rather than waiting for cancellation after the writer has closed.
+#[cfg(unix)]
+#[test]
+fn cancellable_fifo_reads_finish_when_the_writer_closes() {
+	let dir = TempDir::new("fifo-eof");
+	let fifo = dir.0.join("fifo");
+	BlockingFs::native()
+		.make_node(&fifo, crate::NodeKind::Fifo, 0o600)
+		.unwrap();
+
+	for payload in ["", "hi\n"] {
+		let path = fifo.clone();
+		let writer = std::thread::spawn(move || std::fs::write(path, payload).unwrap());
+		let token = CancellationToken::new();
+		let mut reader = BlockingFs::native()
+			.with_cancellation(token.clone())
+			.open(&fifo)
+			.unwrap();
+		writer.join().unwrap();
+
+		let (finished, done) = std::sync::mpsc::channel();
+		let deadline = std::thread::spawn(move || {
+			if done.recv_timeout(Duration::from_secs(2)).is_err() {
+				token.cancel();
+			}
+		});
+		let mut text = String::new();
+		let result = reader.read_to_string(&mut text);
+		let _ = finished.send(());
+		deadline.join().unwrap();
+		assert!(result.is_ok(), "payload={payload:?}: {result:?}");
+		assert_eq!(text, payload);
+	}
+}
+
+/// Darwin select must not impose FD_SETSIZE on an embedded shell's descriptors.
+/// Exercise cancellation, data and EOF above the inline descriptor bitmap.
+#[cfg(target_vendor = "apple")]
+#[test]
+fn readiness_above_fd_setsize_observes_cancellation_data_and_eof() {
+	use std::os::fd::{AsFd, AsRawFd, FromRawFd, OwnedFd};
+
+	let mut limit = std::mem::MaybeUninit::<libc::rlimit>::uninit();
+	// SAFETY: limit has room for the complete rlimit result.
+	assert_eq!(unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, limit.as_mut_ptr()) }, 0);
+	// SAFETY: getrlimit initialized the result.
+	let mut limit = unsafe { limit.assume_init() };
+	let needed = libc::FD_SETSIZE as libc::rlim_t + 1;
+	if limit.rlim_cur < needed {
+		limit.rlim_cur = needed;
+		// SAFETY: only raises this test process's soft limit; the hard limit is
+		// unchanged.
+		assert_eq!(unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &limit) }, 0);
+	}
+
+	let (reader, mut writer) = std::io::pipe().unwrap();
+	// SAFETY: reader stays live; fcntl returns a new descriptor owned below.
+	let fd = unsafe {
+		libc::fcntl(reader.as_raw_fd(), libc::F_DUPFD_CLOEXEC, libc::FD_SETSIZE as libc::c_int)
+	};
+	assert!(fd >= libc::FD_SETSIZE as libc::c_int, "{}", io::Error::last_os_error());
+	// SAFETY: the successful fcntl returned a fresh owned descriptor.
+	let mut reader = std::fs::File::from(unsafe { OwnedFd::from_raw_fd(fd) });
+
+	let started = std::time::Instant::now();
+	let error =
+		crate::wait_readable(reader.as_fd(), || started.elapsed() >= Duration::from_millis(200))
+			.unwrap_err();
+	assert!(is_cancelled(&error), "{error}");
+
+	writer.write_all(b"hi").unwrap();
+	let started = std::time::Instant::now();
+	crate::wait_readable(reader.as_fd(), || started.elapsed() >= Duration::from_secs(2)).unwrap();
+	let mut data = [0; 2];
+	reader.read_exact(&mut data).unwrap();
+	assert_eq!(&data, b"hi");
+
+	drop(writer);
+	let started = std::time::Instant::now();
+	crate::wait_readable(reader.as_fd(), || started.elapsed() >= Duration::from_secs(2)).unwrap();
+	assert_eq!(reader.read(&mut data).unwrap(), 0);
+}
+
 /// A cancel releases a waiting FIFO open by opening the FIFO for writing,
 /// which this process may not do to a FIFO it can only read. Such an open
 /// must still return as a blocking open does: as soon as a writer connects,
