@@ -168,6 +168,7 @@ pub fn wait_readable(
 	fd: std::os::fd::BorrowedFd<'_>,
 	is_cancelled: impl Fn() -> bool,
 ) -> io::Result<()> {
+
 	loop {
 		if is_cancelled() {
 			return Err(crate::cancelled());
