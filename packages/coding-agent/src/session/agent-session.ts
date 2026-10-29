@@ -2955,6 +2955,7 @@ export class AgentSession implements SettingsScope {
 	 */
 	refreshIdleMaintenance(): void {
 		this.#idleMaintenance?.refresh();
+		this.#idleRecaps?.refresh();
 	}
 
 	/**
@@ -6000,7 +6001,10 @@ export class AgentSession implements SettingsScope {
 	/** Explicit host activation; SDK and nested AgentSessions never enable this implicitly. */
 	enableIdleRecaps(host: IdleRecapHost = {}): () => void {
 		this.#idleRecaps ??= new SessionRecapController(this);
-		return this.#idleRecaps.enable(host);
+		return this.#idleRecaps.enable({
+			...host,
+			canGenerate: () => !this.#idleMaintenance?.blocksRecap() && (host.canGenerate?.() ?? true),
+		});
 	}
 
 	/** Persisted read only: constructing the passive owner does not arm a timer. */
@@ -9599,9 +9603,13 @@ export class AgentSession implements SettingsScope {
 					descriptionNotice: normalized?.length ? await this.#buildImageDescriptionNotice(normalized) : undefined,
 				};
 			}
-			if (options?.promptGeneration !== undefined && this.#promptGeneration !== options.promptGeneration) return false;
-			if (options?.requireActiveRun &&
-				(this.#abortInProgress || !this.isStreaming || this.#clientPromptInFlightCount === 0)) return false;
+			if (options?.promptGeneration !== undefined && this.#promptGeneration !== options.promptGeneration)
+				return false;
+			if (
+				options?.requireActiveRun &&
+				(this.#abortInProgress || !this.isStreaming || this.#clientPromptInFlightCount === 0)
+			)
+				return false;
 			const message: AgentMessage = {
 				role: "user",
 				content: [{ type: "text", text }, ...(images ?? [])],
@@ -10135,7 +10143,7 @@ export class AgentSession implements SettingsScope {
 		} else {
 			this.agent.steer(normalizedAppMessage, { companions: allCompanions });
 		}
-		onPromptQueued?.([...prependMessages, ...(descriptionNotice ? [descriptionNotice] : []), normalizedAppMessage]);
+		onPromptQueued?.([...allCompanions, normalizedAppMessage]);
 		onPromptAdmitted?.();
 		this.#scheduleIdleQueueDrain();
 	}

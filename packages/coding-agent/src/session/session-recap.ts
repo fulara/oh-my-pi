@@ -88,6 +88,18 @@ export class SessionRecapController {
 		this.#error = undefined;
 	}
 
+	/** Re-check a changed host blocker without turning passive reads into inference. */
+	refresh(): void {
+		if (!this.#settled) return;
+		if (!this.#idle()) {
+			if (this.#attempted === this.#request?.source) this.#attempted = undefined;
+			this.invalidate();
+			this.#settled = true;
+			return;
+		}
+		this.#schedule();
+	}
+
 	dispose(): void {
 		this.#host = undefined;
 		this.#unsubscribeSettings?.();

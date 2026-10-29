@@ -1849,6 +1849,8 @@ export class InteractiveMode implements InteractiveModeContext {
 		activity.target = target;
 		activity.isComposing = this.editor.getText().trim() !== "";
 		target.enableIdleMaintenance({
+			// Main keeps the fork's source-pinned RPC/TUI recap owner; focused workers use upstream.
+			recaps: target !== this.session,
 			isBlocked: () => !activity.ready || activity.target !== target || activity.isComposing,
 			scheduledTurn: () => activity.scheduledTurn?.(target) === true,
 			// Delivered only while unblocked, so `target` is the session on screen.
