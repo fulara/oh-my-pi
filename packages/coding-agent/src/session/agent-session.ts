@@ -3351,6 +3351,7 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 	 */
 	refreshIdleMaintenance(): void {
 		this.#idleMaintenance?.refresh();
+		this.#idleRecaps?.refresh();
 	}
 
 	/**
@@ -6765,7 +6766,10 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 	/** Explicit host activation; SDK and nested AgentSessions never enable this implicitly. */
 	enableIdleRecaps(host: IdleRecapHost = {}): () => void {
 		this.#idleRecaps ??= new SessionRecapController(this);
-		return this.#idleRecaps.enable(host);
+		return this.#idleRecaps.enable({
+			...host,
+			canGenerate: () => !this.#idleMaintenance?.blocksRecap() && (host.canGenerate?.() ?? true),
+		});
 	}
 
 	/** Persisted read only: constructing the passive owner does not arm a timer. */
@@ -11541,7 +11545,7 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 		} else {
 			this.agent.steer(normalizedAppMessage, { companions: allCompanions });
 		}
-		onPromptQueued?.([...prependMessages, ...(descriptionNotice ? [descriptionNotice] : []), normalizedAppMessage]);
+		onPromptQueued?.([...allCompanions, normalizedAppMessage]);
 		onPromptAdmitted?.();
 		this.#scheduleIdleQueueDrain();
 	}

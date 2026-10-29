@@ -27,6 +27,8 @@ import { isSessionSettled, type SessionSettleState } from "./session-settle";
 
 /** Probes the owner of the session supplies. Both are re-read whenever work could start. */
 export interface IdleMaintenanceOptions {
+	/** A host with its own recap lifecycle can retain only this scheduler's idle compaction. */
+	recaps?: boolean;
 	/** True while the owner does not want autonomous work (a draft being composed, the view left, startup unfinished). */
 	isBlocked?: () => boolean;
 	/** True while the owner has decided to start a turn it has not yet admitted (for example a scheduled goal continuation). */
@@ -170,7 +172,12 @@ export class IdleMaintenance {
 	}
 
 	#recapWanted(): boolean {
-		return cfgRecap.get(this.#session.settings).enabled && !this.#isBlocked() && this.#isSettled();
+		return (
+			this.#options.recaps !== false &&
+			cfgRecap.get(this.#session.settings).enabled &&
+			!this.#isBlocked() &&
+			this.#isSettled()
+		);
 	}
 
 	#contextTokens(): number {
@@ -205,9 +212,14 @@ export class IdleMaintenance {
 		this.#armCompaction();
 	}
 
+	/** Share the TUI owner's blockers with its source-pinned recap lifecycle. */
+	blocksRecap(): boolean {
+		return this.#isBlocked() || !this.#isSettled();
+	}
+
 	/** Start the recap delay, if this quiet stretch still owes a recap. */
 	#armRecap(): void {
-		if (!this.#pending?.recap || this.#recapRun) return;
+		if (this.#options.recaps === false || !this.#pending?.recap || this.#recapRun) return;
 		const recap = cfgRecap.get(this.#session.settings);
 		if (!recap.enabled) return;
 		const seconds = Math.max(RECAP_MIN_SECONDS, Math.min(RECAP_MAX_SECONDS, recap.idleSeconds));
@@ -321,6 +333,7 @@ export class IdleMaintenance {
 				goal: this.#goalText() ?? "",
 				task: nextActionableTask(session.getTodoPhases())?.content ?? "",
 			});
+			const sourceLeafId = session.sessionManager.getLeafId();
 			const { replyText } = await session.runEphemeralTurn({ promptText, purpose: "recap", signal: run.signal });
 			if (this.#recapRun !== run || run.signal.aborted) return;
 			if (this.#isBlocked()) return;
@@ -331,7 +344,7 @@ export class IdleMaintenance {
 			}
 			this.#complete(pending, "recap");
 			if (!replyText.trim()) return;
-			session.sessionManager.recordRecap(replyText);
+			session.sessionManager.recordRecap(replyText, sourceLeafId);
 			this.#options.onRecap?.(replyText);
 		} catch (error) {
 			if (run.signal.aborted) return;
