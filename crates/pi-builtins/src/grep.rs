@@ -1187,12 +1187,14 @@ impl<M: Matcher + Send + Sync + 'static> DirSearch<M> {
 			display,
 			opts: &self.opts,
 			match_count: 0,
+			after_limit_left: 0,
 			any_match: false,
 			binary: false,
 		};
 		let mut search = searcher.search_push(&self.matcher, &mut sink);
+		let mut more = search.push(&[])?;
 		let mut run = 0;
-		loop {
+		while more {
 			if self.halt.raised() {
 				return Err(pi_vfs::cancelled());
 			}
@@ -1201,9 +1203,7 @@ impl<M: Matcher + Send + Sync + 'static> DirSearch<M> {
 				break;
 			}
 			check_run(terminator, &mut run, &buf[..read])?;
-			if !search.push(&buf[..read])? {
-				break;
-			}
+			more = search.push(&buf[..read])?;
 		}
 		search.finish()?;
 		Ok(sink.any_match)
@@ -1589,23 +1589,22 @@ async fn search_stdin<M: Matcher + Clone + Send + Sync + 'static>(
 		display: &display,
 		opts,
 		match_count: 0,
+		after_limit_left: 0,
 		any_match: false,
 		binary: false,
 	};
 	let mut search = searcher.search_push(matcher, &mut sink);
+	let mut more = search.push(&[])?;
 	let mut buf = vec![0u8; READ_CHUNK];
 	let mut run = 0;
-	loop {
+	while more {
 		let read = host.read_stdin(&mut buf).await?;
 		if read == 0 {
 			break;
 		}
 		check_run(terminator, &mut run, &buf[..read])?;
-		let more = search.push(&buf[..read])?;
+		more = search.push(&buf[..read])?;
 		host.flush_output().await?;
-		if !more {
-			break;
-		}
 	}
 	search.finish()?;
 	host.flush_output().await?;

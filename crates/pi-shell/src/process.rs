@@ -33,10 +33,10 @@ mod platform {
 	/// Stable Linux process reference backed by a pidfd.
 	#[derive(Clone)]
 	pub struct Process {
-		pid: i32,
-		pidfd: Arc<OwnedFd>,
+		pid:        i32,
+		pidfd:      Arc<OwnedFd>,
 		start_time: u64,
-		boot_id: &'static str,
+		boot_id:    &'static str,
 	}
 
 	impl Process {
@@ -270,8 +270,8 @@ mod platform {
 	/// original target.
 	#[derive(Clone)]
 	pub struct Process {
-		pid: i32,
-		start_tvsec: u64,
+		pid:          i32,
+		start_tvsec:  u64,
 		start_tvusec: u64,
 	}
 
@@ -423,12 +423,12 @@ mod platform {
 			// before the await below; holding it would make this future `!Send`.
 			let registered = {
 				let change = libc::kevent {
-					ident: self.pid as libc::uintptr_t,
+					ident:  self.pid as libc::uintptr_t,
 					filter: libc::EVFILT_PROC,
-					flags: libc::EV_ADD | libc::EV_ONESHOT,
+					flags:  libc::EV_ADD | libc::EV_ONESHOT,
 					fflags: libc::NOTE_EXIT,
-					data: 0,
-					udata: ptr::null_mut(),
+					data:   0,
+					udata:  ptr::null_mut(),
 				};
 				// SAFETY: `change` is one initialized change record; with no event
 				// buffer the call only registers it and the null timeout is unused.
@@ -530,7 +530,6 @@ mod platform {
 
 	use super::ProcessStatus;
 
-
 	const PROCESS_REFERENCE_ACCESS: u32 =
 		sys::PROCESS_TERMINATE | sys::PROCESS_QUERY_LIMITED_INFORMATION | sys::SYNCHRONIZE;
 
@@ -539,8 +538,8 @@ mod platform {
 	/// the kernel-reported creation time, which pins identity even if the PID is
 	/// recycled while we hold the handle.
 	pub struct Process {
-		pid: i32,
-		handle: Arc<OwnedHandle>,
+		pid:           i32,
+		handle:        Arc<OwnedHandle>,
 		creation_time: u64,
 	}
 
@@ -910,13 +909,15 @@ impl Process {
 			return Ok(true);
 		}
 
-		// A root may authorize only its own group, never a group it merely joined.
+		// A root may authorize only its own group, never a group it merely
+		// joined.
 		let process_group = if group {
 			self.group_id().filter(|pgid| *pgid == self.pid())
 		} else {
 			None
 		};
-		// Capture ownership before TERM can reap the root and reparent its children.
+		// Capture ownership before TERM can reap the root and reparent its
+		// children.
 		let mut descendants = self.signalable_descendants(&protected);
 
 		// Polite wave: SIGTERM the group, every live descendant, then the root.
@@ -948,7 +949,8 @@ impl Process {
 			}
 		}
 
-		// Retain pinned survivors even if TERM reparented them away from the root.
+		// Retain pinned survivors even if TERM reparented them away from the
+		// root.
 		descendants.retain(|child| child.status() == ProcessStatus::Running);
 		let mut seen: HashSet<i32> = descendants.iter().map(Self::pid).collect();
 		descendants.extend(
@@ -957,7 +959,8 @@ impl Process {
 				.into_iter()
 				.filter(|child| seen.insert(child.pid())),
 		);
-		// A cached PGID alone is not ownership: a pinned member must still anchor it.
+		// A cached PGID alone is not ownership: a pinned member must still anchor
+		// it.
 		if let Some(pgid) = process_group
 			&& std::iter::once(self)
 				.chain(&descendants)
@@ -980,7 +983,7 @@ impl Process {
 /// Shared signal guard. Unix parentage is live and revalidated; Windows PPIDs
 /// can refer to recycled processes, so only the host itself is protected there.
 struct HostProtection {
-	pids: HashSet<i32>,
+	pids:   HashSet<i32>,
 	#[cfg(unix)]
 	groups: HashSet<i32>,
 }
@@ -1246,8 +1249,8 @@ impl TerminationTargets {
 /// that happened to acquire the recycled pid between the child exiting and
 /// the run being cancelled (issue #4605).
 struct SpawnedProcess {
-	process: Option<Process>,
-	pgid: Option<i32>,
+	process:     Option<Process>,
+	pgid:        Option<i32>,
 	group_owned: bool,
 	descendants: Vec<Process>,
 }
@@ -1304,7 +1307,7 @@ impl SpawnedProcess {
 /// explicit — only processes this run actually spawned are ever signalled.
 #[derive(Default)]
 struct RegistryState {
-	spawned: Vec<Arc<Mutex<SpawnedProcess>>>,
+	spawned:       Vec<Arc<Mutex<SpawnedProcess>>>,
 	/// The next `spawned.len()` at which `record` runs a sweep. Bounds sweep
 	/// frequency when the live set stabilizes above the initial threshold:
 	/// without this watermark, every subsequent `record` would find
@@ -1722,7 +1725,7 @@ mod tests {
 	#[cfg(unix)]
 	fn terminate_probe(process: &Process, group: bool) -> bool {
 		tokio::runtime::Builder::new_current_thread()
-			.enable_time()
+			.enable_all()
 			.build()
 			.expect("runtime")
 			.block_on(process.terminate_tree(group, -1, 1000, CancelToken::default()))
@@ -1753,8 +1756,8 @@ mod tests {
 
 		if mode == "detached-tree-root" {
 			use std::{os::unix::process::CommandExt, process::Command};
-			// SAFETY: scalar, read-only query; only our disposable controller may launch
-			// this.
+			// SAFETY: scalar, read-only query; only our disposable controller may
+			// launch this.
 			assert_eq!(unsafe { libc::getppid() }, sid);
 			assert_ne!(pid, sid, "tree fixture must stay inside the disposable session");
 			let _worker = DisposableChild(
@@ -1947,7 +1950,8 @@ mod tests {
 				let group = pinned.group_id().expect("owned group");
 				assert_eq!(group, pinned.pid());
 				assert_ne!(group, pgid);
-				// This member is not a descendant and is never pinned in the registry.
+				// This member is not a descendant and is never pinned in the
+				// registry.
 				let mut peer = DisposableChild(
 					Command::new("sh")
 						.args(["-c", "trap '' TERM; echo READY; while read ignored; do echo ALIVE; done"])
@@ -2042,7 +2046,7 @@ mod tests {
 					targets.signal(KILL_SIGNAL);
 				}
 				let exited = tokio::runtime::Builder::new_current_thread()
-					.enable_time()
+					.enable_all()
 					.build()
 					.expect("runtime")
 					.block_on(child.wait_for_exit(Some(Duration::from_secs(1)), CancelToken::default()))
@@ -2084,7 +2088,7 @@ mod tests {
 				let _root_stdin = target.0.stdin.take().expect("retain root stdin");
 				let reaper = std::thread::spawn(move || target.0.wait().expect("reap root"));
 				let terminated = tokio::runtime::Builder::new_current_thread()
-					.enable_time()
+					.enable_all()
 					.build()
 					.expect("runtime")
 					.block_on(pinned.terminate_tree(true, 100, 1000, CancelToken::default()))

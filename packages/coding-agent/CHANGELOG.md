@@ -8,6 +8,8 @@
 
 ### Fixed
 
+- Fura's source-pinned idle recap owner remains the only generator for the main TUI session while upstream idle compaction keeps its queue and background-work barriers.
+- Fixed cancellable FIFO readers hanging at EOF on Darwin, including background shell redirects and readers resumed after a timeout; high-numbered descriptors retain cancellation support.
 - Startup prewalk now arms a later fallback candidate of the role named by prewalk.into when its first candidate is unavailable, matching /prewalk and /new ([#17373](https://github.com/can1357/oh-my-pi/pull/17373)).
 
 ## [18.14.0] - 2026-10-29
@@ -83,8 +85,6 @@
 - Fixed unavailable configured default or dictation models being silently replaced; omp now warns and identifies the fallback model.
 - Fixed LSP references for files in sibling Git worktrees by adding those checkouts to the active workspace.
 - Improved macOS computer-use behavior for applications without windows by opening the app and inspecting its returned window in one operation.
-- Fura's source-pinned idle recap owner remains the only generator for the main TUI session while upstream idle compaction keeps its queue and background-work barriers.
-- Fixed cancellable FIFO readers hanging at EOF on Darwin, including background shell redirects and readers resumed after a timeout; high-numbered descriptors retain cancellation support.
 - Fixed Bash services failing to start with `ready.port must be an integer from 1 to 65535` when the model sent `port: 0` beside a `log` condition; a zero port now counts as unset
 - Fixed omp's title staying on the terminal tab after exit in terminals without a title stack; Windows consoles get their original title back ([#17321](https://github.com/can1357/oh-my-pi/pull/17321) by [@asuffield](https://github.com/asuffield))
 - Fixed cached approvals offering a directory grant that would not cover every target in the call ([#17309](https://github.com/can1357/oh-my-pi/pull/17309) by [@iliaal](https://github.com/iliaal)).
