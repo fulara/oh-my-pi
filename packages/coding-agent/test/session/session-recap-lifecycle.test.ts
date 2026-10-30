@@ -11,6 +11,11 @@ import { cfgRecapEnabled, cfgRecapIdleSeconds } from "@oh-my-pi/pi-coding-agent/
 import { AgentSession } from "@oh-my-pi/pi-coding-agent/session/agent-session";
 import type { AuthStorage } from "@oh-my-pi/pi-coding-agent/session/auth-storage";
 import { convertToLlm } from "@oh-my-pi/pi-coding-agent/session/messages";
+import {
+	cfgCompactionIdleEnabled,
+	cfgCompactionIdleThresholdTokens,
+	cfgCompactionIdleTimeoutSeconds,
+} from "@oh-my-pi/pi-coding-agent/session/context-settings";
 import { lookupLatestSessionRecap, closeSessionIndex } from "@oh-my-pi/pi-coding-agent/session/session-index";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
 import {
@@ -124,6 +129,40 @@ describe("shared idle recap lifecycle", () => {
 		requests[index].stream.push({ type: "done", reason: "stop", message });
 		await flushMicrotasks();
 	}
+
+	it("keeps one recap request with a dedicated recap owner while idle compaction still runs", async () => {
+		cfgCompactionIdleEnabled.override(session.settings, true);
+		cfgCompactionIdleThresholdTokens.override(session.settings, 1_000);
+		cfgCompactionIdleTimeoutSeconds.override(session.settings, 60);
+		vi.spyOn(session, "getContextUsage").mockReturnValue({
+			tokens: 1_000,
+			contextWindow: 200_000,
+			percent: 0.5,
+		});
+		const disableRecaps = session.enableIdleRecaps();
+		const compaction = vi.spyOn(session, "runIdleCompaction").mockResolvedValue(undefined);
+		const displayed: string[] = [];
+		session.enableIdleMaintenance({ recaps: false, onRecap: text => displayed.push(text) });
+		try {
+			await session.prompt("Finish the work");
+			await flushMicrotasks();
+			vi.advanceTimersByTime(1_000);
+			await flushMicrotasks();
+			expect(requests).toHaveLength(1);
+			await finishRecap();
+			expect(requests).toHaveLength(1);
+			expect(lookupLatestSessionRecap(session.sessionManager.getSessionId())?.text).toBe(
+				"The implementation is complete; verification remains.",
+			);
+			expect(displayed).toEqual([]);
+			vi.advanceTimersByTime(59_000);
+			await flushMicrotasks();
+			expect(requests).toHaveLength(1);
+			expect(compaction).toHaveBeenCalledTimes(1);
+		} finally {
+			disableRecaps();
+		}
+	});
 
 	it("keeps persisted recaps attached to the journal when provider routing identity changes", async () => {
 		await beginRecap();
