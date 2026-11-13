@@ -841,9 +841,11 @@ struct GrepSink<'a, M: Matcher, W: Write> {
 	matcher:     &'a M,
 	display:     &'a [u8],
 	opts:        &'a Options,
-	match_count: u64,
-	any_match:   bool,
-	binary:      bool,
+	match_count:      u64,
+	/// Trailing context still owed after the `-m` limit was reached.
+	after_limit_left: usize,
+	any_match:        bool,
+	binary:           bool,
 }
 
 impl<M: Matcher, W: Write> GrepSink<'_, M, W> {
@@ -919,7 +921,11 @@ impl<M: Matcher, W: Write> GrepSink<'_, M, W> {
 impl<M: Matcher, W: Write> Sink for GrepSink<'_, M, W> {
 	type Error = io::Error;
 
-	fn matched(&mut self, _searcher: &Searcher, mat: &SinkMatch<'_>) -> Result<bool, io::Error> {
+	fn begin(&mut self, searcher: &Searcher) -> io::Result<bool> {
+		Ok(searcher.max_matches() != Some(0))
+	}
+
+	fn matched(&mut self, searcher: &Searcher, mat: &SinkMatch<'_>) -> Result<bool, io::Error> {
 		if self.binary && self.opts.binary_files == BinaryFiles::WithoutMatch {
 			return Ok(false);
 		}
@@ -932,8 +938,15 @@ impl<M: Matcher, W: Write> Sink for GrepSink<'_, M, W> {
 		{
 			return Ok(false);
 		}
+		// The searcher may refill a buffer ending exactly at the limit before
+		// checking it again. Stop in the sink, after any requested context.
+		let reached_limit = searcher.max_matches().is_some_and(|limit| self.match_count >= limit);
+		if reached_limit {
+			self.after_limit_left = self.opts.after;
+		}
+		let keep_going = !reached_limit || self.after_limit_left > 0;
 		if self.opts.count {
-			return Ok(true);
+			return Ok(keep_going);
 		}
 		if self.opts.only_matching {
 			self.print_only_matching(mat.bytes(), mat.line_number(), mat.absolute_byte_offset())?;
@@ -941,7 +954,7 @@ impl<M: Matcher, W: Write> Sink for GrepSink<'_, M, W> {
 			self.write_prefix(mat.line_number(), mat.absolute_byte_offset(), b':')?;
 			self.write_record(mat.bytes())?;
 		}
-		Ok(true)
+		Ok(keep_going)
 	}
 
 	fn context(&mut self, _searcher: &Searcher, ctx: &SinkContext<'_>) -> Result<bool, io::Error> {
@@ -950,6 +963,10 @@ impl<M: Matcher, W: Write> Sink for GrepSink<'_, M, W> {
 		}
 		self.write_prefix(ctx.line_number(), ctx.absolute_byte_offset(), b'-')?;
 		self.write_record(ctx.bytes())?;
+		if self.after_limit_left > 0 {
+			self.after_limit_left -= 1;
+			return Ok(self.after_limit_left > 0);
+		}
 		Ok(true)
 	}
 
@@ -1194,12 +1211,15 @@ impl<M: Matcher + Send + Sync + 'static> DirSearch<M> {
 			display,
 			opts: &self.opts,
 			match_count: 0,
+			after_limit_left: 0,
 			any_match: false,
 			binary: false,
 		};
 		let mut search = searcher.search_push(&self.matcher, &mut sink);
+		// Priming with no input lets a zero limit stop before the first read.
+		let mut more = search.push(&[])?;
 		let mut run = 0;
-		loop {
+		while more {
 			if self.halt.raised() {
 				return Err(omp_vfs::cancelled());
 			}
@@ -1208,9 +1228,7 @@ impl<M: Matcher + Send + Sync + 'static> DirSearch<M> {
 				break;
 			}
 			check_run(terminator, &mut run, &buf[..read])?;
-			if !search.push(&buf[..read])? {
-				break;
-			}
+			more = search.push(&buf[..read])?;
 		}
 		search.finish()?;
 		Ok(sink.any_match)
@@ -1653,23 +1671,23 @@ async fn search_stdin<M: Matcher + Clone + Send + Sync + 'static>(
 		display: &display,
 		opts,
 		match_count: 0,
+		after_limit_left: 0,
 		any_match: false,
 		binary: false,
 	};
 	let mut search = searcher.search_push(matcher, &mut sink);
+	// Priming with no input lets a zero limit stop before the first read.
+	let mut more = search.push(&[])?;
 	let mut buf = vec![0u8; READ_CHUNK];
 	let mut run = 0;
-	loop {
+	while more {
 		let read = host.read_stdin(&mut buf).await?;
 		if read == 0 {
 			break;
 		}
 		check_run(terminator, &mut run, &buf[..read])?;
-		let more = search.push(&buf[..read])?;
+		more = search.push(&buf[..read])?;
 		host.flush_output().await?;
-		if !more {
-			break;
-		}
 	}
 	search.finish()?;
 	host.flush_output().await?;
@@ -2023,21 +2041,27 @@ mod tests {
 	}
 
 	struct SnapshottingStdin {
-		pos:      usize,
-		snapped:  bool,
-		stdout:   Arc<Mutex<Option<Arc<Mutex<Vec<u8>>>>>>,
-		snapshot: Arc<Mutex<Vec<u8>>>,
+		pos:          usize,
+		snapped:      bool,
+		stdout:       Arc<Mutex<Option<Arc<Mutex<Vec<u8>>>>>>,
+		snapshot:     Arc<Mutex<Vec<u8>>>,
+		input:        &'static [u8],
+		/// Models a live pipe: reading past `input` fails instead of returning EOF.
+		error_at_eof: bool,
 	}
 
 	const SNAPSHOT_INPUT: &[u8] = b"hit\nmiss\n";
 
 	impl Read for SnapshottingStdin {
 		fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-			if self.pos < SNAPSHOT_INPUT.len() {
-				let n = buf.len().min(SNAPSHOT_INPUT.len() - self.pos);
-				buf[..n].copy_from_slice(&SNAPSHOT_INPUT[self.pos..self.pos + n]);
+			if self.pos < self.input.len() {
+				let n = buf.len().min(self.input.len() - self.pos);
+				buf[..n].copy_from_slice(&self.input[self.pos..self.pos + n]);
 				self.pos += n;
 				return Ok(n);
+			}
+			if self.error_at_eof {
+				return Err(io::Error::new(io::ErrorKind::WouldBlock, "input remains open"));
 			}
 			// Input exhausted: grep is back asking for more. Whatever it has
 			// already flushed to stdout is what a live consumer would see now.
@@ -2076,6 +2100,8 @@ mod tests {
 			snapped: false,
 			stdout: Arc::clone(&stdout),
 			snapshot: Arc::clone(&snapshot),
+			input: SNAPSHOT_INPUT,
+			error_at_eof: false,
 		});
 		let (mut host, capture) = Host::for_test_with_stdin("grep", stdin, "/");
 		*stdout.lock() = Some(capture.stdout_buffer());
@@ -2085,6 +2111,33 @@ mod tests {
 
 		// A regression re-buffering grep's output makes matches invisible until EOF.
 		assert_eq!(snapshot.lock().as_slice(), b"hit\n");
+	}
+
+	/// A satisfied `-m` limit (after its trailing context) must finish without
+	/// reading again: on a live pipe the next read would block or fail.
+	#[tokio::test(flavor = "multi_thread")]
+	async fn max_count_finishes_without_waiting_for_more_input() {
+		let cases: &[(&[&str], &[u8], i32, &str)] = &[
+			(&["grep", "-m1", "^hit$"], b"hit\n", 0, "hit\n"),
+			(&["grep", "-m1", "-A1", "^hit$"], b"hit\nmiss\n", 0, "hit\nmiss\n"),
+			(&["grep", "-vm1", "hit"], b"miss\n", 0, "miss\n"),
+			(&["grep", "-cm1", "^hit$"], b"hit\n", 0, "1\n"),
+			(&["grep", "-m0", "hit"], b"", 1, ""),
+		];
+		for &(args, input, expected_code, expected_output) in cases {
+			let stdin = Box::new(SnapshottingStdin {
+				pos: 0,
+				snapped: false,
+				stdout: Arc::new(Mutex::new(None)),
+				snapshot: Arc::new(Mutex::new(Vec::new())),
+				input,
+				error_at_eof: true,
+			});
+			let (mut host, capture) = Host::for_test_with_stdin("grep", stdin, "/");
+			let parsed = Grep::try_parse_from(args.iter().copied()).unwrap();
+			assert_eq!(parsed.run(&mut host).await, expected_code, "{args:?}: {}", capture.err());
+			assert_eq!(capture.out(), expected_output, "{args:?}");
+		}
 	}
 
 	#[tokio::test(flavor = "multi_thread")]

@@ -482,6 +482,7 @@
 - Removed `task.file` and the task tool's `taskFile` field; subagent instructions are always inline
 - Todo tasks can no longer be blocked: the `blocked` status and `blocker` note are gone from the `todo` tool, `/todo edit` (`[!]` is now an unknown marker), the HUD, ACP plans, goal continuation (which no longer pauses on a blocked-only list) and the RPC `TodoStatus`/`TodoItem` wire types and SDKs (Go, Python, Rust). A saved todo list that still holds a blocked task reads back with it pending on resume
 - Fura fork: on OMP 18.20, headless-browser close timeouts and the WebKit host kill only the process identity pinned at spawn, `ptree` cleanup reports instead of retrying by PID/group when that identity is missing or refused, and the isolated process-safety regression probe runs under its renamed `proctree` module.
+- Fura fork: native `grep -m` again finishes on a live pipe once its limit and trailing context are met, and `-m0` exits without reading, on the reworked upstream push search.
 
 ## [18.20.0] - 2026-11-12
 
