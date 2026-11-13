@@ -235,6 +235,10 @@ export class SessionSkills {
 		if (this.applying) throw new Error("Session skills Apply is in progress");
 		this.#epoch = Bun.randomUUIDv7();
 	}
+	/** Drop the cached leaf entry so a disposed session does not pin its transcript. */
+	releaseRetainedEntries(): void {
+		this.#leaf = undefined;
+	}
 
 	#ancestry(boundary: SessionEntry | undefined): {
 		latest: SessionEntry | undefined;

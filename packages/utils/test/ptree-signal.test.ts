@@ -2,10 +2,19 @@ import { describe, expect, it } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { Process } from "@oh-my-pi/pi-natives";
+import { Process, ProcessStatus } from "@oh-my-pi/pi-natives";
 import { AbortError, type ExecResult, exec, spawn } from "@oh-my-pi/pi-utils/ptree";
 
 const BLOCK_FOREVER = `${JSON.stringify(process.execPath)} -e 'Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0)'`;
+
+/**
+ * Fura fork: once a detached root exits, its PGID no longer proves ownership, so the abort
+ * reports a refused cleanup instead of signalling that group; the descendant keeps running.
+ */
+function expectRefusedGroupCleanup(result: ExecResult, orphan: Process): void {
+	expect(result.exitError?.message).toContain("cleanup refused");
+	expect(orphan.status(), "an unproven process group must not be signalled").toBe(ProcessStatus.Running);
+}
 
 describe("ptree signal abort handling", () => {
 	it("does not trigger unhandledRejection when spawned with a pre-aborted signal", async () => {
@@ -116,7 +125,7 @@ describe("ptree signal abort handling", () => {
 				expect(result.exitError).toBeInstanceOf(AbortError);
 				expect(result.stdout).toBe("token\n");
 				if (detached) {
-					expect(await orphan.waitForExit(), "the detached descendant must be terminated").toBe(true);
+					expectRefusedGroupCleanup(result, orphan);
 				}
 			} finally {
 				if (orphan) {
@@ -156,7 +165,7 @@ describe("ptree signal abort handling", () => {
 
 				const result = await outcome;
 				expect(result.exitError).toBeInstanceOf(AbortError);
-				expect(await orphan.waitForExit(), "the detached descendant must be terminated").toBe(true);
+				expectRefusedGroupCleanup(result, orphan);
 			} finally {
 				if (orphan) {
 					orphan.killTree(9);
@@ -231,7 +240,7 @@ describe("ptree signal abort handling", () => {
 
 				const result = await outcome;
 				expect(result.exitError).toBeInstanceOf(AbortError);
-				expect(await orphan.waitForExit(), "the detached descendant must be terminated").toBe(true);
+				expectRefusedGroupCleanup(result, orphan);
 			} finally {
 				if (orphan) {
 					orphan.killTree(9);

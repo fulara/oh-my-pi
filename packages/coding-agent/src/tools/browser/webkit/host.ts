@@ -75,7 +75,12 @@ class HostProcessTransport implements TernTransport {
 		// A host nobody closed must not hold omp open; it exits with omp's end of its stdin.
 		child.unref();
 		this.#child = child;
-		this.#owned = Process.fromPid(child.pid);
+		try {
+			this.#owned = Process.fromPid(child.pid);
+		} catch (error) {
+			// close() then refuses a forced kill and reports it; the host still ends with omp's stdin.
+			logger.warn("Cannot pin WebKit host for cleanup", { pid: child.pid, error: String(error) });
+		}
 		const drained = (async () => {
 			let failure: string | undefined;
 			try {
@@ -169,7 +174,10 @@ export class WebKitHost {
 			if (signal?.aborted) abandon();
 			await host.client.connect();
 		} catch (error) {
-			await host.close();
+			// A refused cleanup is already reported; it must not hide the Chromium fallback signal below.
+			await host
+				.close()
+				.catch(closeError => logger.warn("WebKit host cleanup failed", { error: String(closeError) }));
 			if (signal?.aborted) throw new ToolAbortError("Browser open aborted");
 			throw new WebKitUnavailableError(error instanceof Error ? error.message : String(error));
 		} finally {

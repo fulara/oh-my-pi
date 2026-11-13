@@ -581,6 +581,8 @@ describe("IRC", () => {
 					stopReason: "stop",
 				}),
 				deliverIrcMessage: (msg: IrcMessage) => bridge.deliver(msg),
+				// Fura fork: wake-turn lifecycle frames carry the child's sessionId.
+				sessionManager: { getSessionId: () => `${id}-session` },
 				asyncJobManager: opts.jobManager,
 			} as unknown as AgentSession;
 			registry.register({ id, displayName: "task", kind: "sub", status: "idle", session, parentId: opts.parentId });

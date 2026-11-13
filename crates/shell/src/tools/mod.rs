@@ -165,51 +165,71 @@ impl ToolConfig {
 	}
 }
 
-/// The externals spawned in labeled subshell trees: `(label, pid)`.
+/// The externals spawned in labeled subshell trees: `(label, pid, start)`.
 ///
 /// The host records each spawn whose [`Lineage::label`] is set
 /// ([`SpawnLog::record`]); `timeout` waits for and escalates on its own. Cheap
 /// to clone; clones share the log.
+///
+/// `start` is the kernel start time read while the spawner still holds the
+/// child unreaped, pinning its identity: a pid reused after the reap never
+/// matches it, so escalation cannot reach an unrelated process.
 #[derive(Clone, Default)]
-pub struct SpawnLog(Arc<Mutex<Vec<(u32, u32)>>>);
+pub struct SpawnLog(Arc<Mutex<Vec<(u32, u32, Option<u64>)>>>);
 
 impl SpawnLog {
 	/// `pid` was spawned with `lineage`.
 	pub fn record(&self, lineage: Lineage, pid: u32) {
 		if lineage.label != 0 {
-			self.0.lock().push((lineage.label, pid));
+			self.0.lock().push((lineage.label, pid, start_time(pid)));
 		}
 	}
 
-	/// The recorded externals of `labels` that are still running.
+	/// The recorded externals of `labels` that are still running as the very
+	/// process spawned; one whose identity was never pinned is refused.
 	fn live(&self, labels: &[u32]) -> Vec<u32> {
 		self
 			.0
 			.lock()
 			.iter()
-			.filter(|&&(label, pid)| labels.contains(&label) && running(pid))
-			.map(|&(_, pid)| pid)
+			.filter(|&&(label, pid, start)| labels.contains(&label) && running(pid, start))
+			.map(|&(_, pid, _)| pid)
 			.collect()
 	}
 
 	fn forget(&self, labels: &[u32]) {
-		self.0.lock().retain(|(label, _)| !labels.contains(label));
+		self.0.lock().retain(|(label, ..)| !labels.contains(label));
 	}
 }
 
-/// Whether `pid` runs (exited but unreaped counts as gone).
+/// `pid`'s kernel start time, read while its spawner holds it unreaped.
 #[cfg(unix)]
-fn running(pid: u32) -> bool {
+fn start_time(pid: u32) -> Option<u64> {
+	crate::sys::proc::info(i32::try_from(pid).ok()?).map(|p| p.start)
+}
+
+#[cfg(not(unix))]
+const fn start_time(_pid: u32) -> Option<u64> {
+	None
+}
+
+/// Whether `pid` still runs as the process pinned at spawn (exited but
+/// unreaped counts as gone; a reused pid has another start time).
+#[cfg(unix)]
+fn running(pid: u32, start: Option<u64>) -> bool {
+	let Some(start) = start else {
+		return false;
+	};
 	i32::try_from(pid)
 		.ok()
 		.and_then(crate::sys::proc::info)
-		.is_some_and(|p| p.state != crate::sys::proc::ProcState::Zombie)
+		.is_some_and(|p| p.state != crate::sys::proc::ProcState::Zombie && p.start == start)
 }
 
 /// Externals off Unix are not watched: their process tree is the Job
 /// Object's, which the spawner ends with the subshell.
 #[cfg(not(unix))]
-const fn running(_pid: u32) -> bool {
+const fn running(_pid: u32, _start: Option<u64>) -> bool {
 	false
 }
 
@@ -565,6 +585,29 @@ fn nanos(d: Duration) -> u64 {
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	/// `timeout -k` escalates only to the very external it spawned: an entry
+	/// whose start time no longer matches (a reused pid) or was never pinned is
+	/// not live, so no KILL can reach an unrelated process.
+	#[cfg(unix)]
+	#[test]
+	fn spawn_log_escalates_only_to_the_pinned_external() {
+		let mut child = std::process::Command::new("sleep")
+			.arg("30")
+			.spawn()
+			.expect("spawn disposable external");
+		let pid = child.id();
+		let log = SpawnLog::default();
+		log.record(Lineage { label: 7, ..Lineage::default() }, pid);
+		assert_eq!(log.live(&[7]), vec![pid], "a pinned, running external is live");
+		let start = log.0.lock()[0].2.expect("start pinned while unreaped");
+		*log.0.lock() = vec![(7, pid, Some(start.wrapping_add(1))), (7, pid, None)];
+		assert!(log.live(&[7]).is_empty(), "a mismatched or unpinned identity is refused");
+		child.kill().expect("end disposable external");
+		child.wait().expect("reap disposable external");
+		*log.0.lock() = vec![(7, pid, Some(start))];
+		assert!(log.live(&[7]).is_empty(), "a reaped external is gone");
+	}
 
 	#[test]
 	fn labels_group_their_nested_trees() {

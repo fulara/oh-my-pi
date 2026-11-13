@@ -89,6 +89,9 @@ function stubChromium() {
 	);
 	spyOn(supervisor, "acquireTab").mockImplementation(async (name, browser, opts) => {
 		if (browser !== chromium) return await acquireTab(name, browser, opts);
+		// Fura fork: a tab holds its browser like the real `acquireTab`, so `browser.open` releasing its own
+		// lease does not dispose the stand-in — headless disposal refuses a handle without a birth-pinned process.
+		registry.holdBrowser(browser);
 		const tab = {
 			name,
 			browser,

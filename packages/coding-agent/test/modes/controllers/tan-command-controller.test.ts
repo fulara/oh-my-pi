@@ -318,6 +318,8 @@ describe("TanCommandController", () => {
 		);
 		expect(harness.register).toHaveBeenCalledWith("task", "/tan write the release note", expect.any(Function), {
 			ownerId: MAIN_AGENT_ID,
+			// Fura fork: background jobs are scoped to the session that started them.
+			ownerSessionId: "parent-local-session",
 			agentId: expect.any(String) as unknown as string,
 			request: "write the release note",
 		});

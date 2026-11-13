@@ -216,6 +216,8 @@ describe("libkitty end-to-end", () => {
 		// A short viewport forces the oldest finalized blocks into immutable
 		// terminal history, which is where the regression hid (a plain viewport
 		// repaint leaves retired rows untouched).
+		// Fura fork: the session admits one idle-recap host; release the beforeEach mode's before replacing it.
+		mode.stop();
 		term = new VirtualTerminal(120, 10);
 		const composer = new Composer({ terminal: term });
 		mode = new InteractiveMode(session, "test", () => {}, undefined, undefined, undefined, composer);
@@ -295,6 +297,8 @@ describe("libkitty end-to-end", () => {
 			timestamp: 3,
 		});
 
+		// Fura fork: the session admits one idle-recap host; release the beforeEach mode's before replacing it.
+		mode.stop();
 		term = new VirtualTerminal(120, 10);
 		const composer = new Composer({ terminal: term });
 		mode = new InteractiveMode(session, "test", () => {}, undefined, undefined, undefined, composer);

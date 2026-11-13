@@ -444,17 +444,19 @@ export class ChildProcess<In extends InMask = InMask> {
 	}
 
 	/**
-	 * SIGTERM the child (its group when it leads one), then SIGKILL if it
-	 * outlives `gracefulMs`. Signals go out only while Bun still reports the
-	 * child unreaped: a live or zombie leader keeps its PID and process group
-	 * reserved, so neither number can name a recycled process.
+	 * Last-resort stop for a subreaper whose pinned handle failed part-way:
+	 * SIGTERM, then SIGKILL if it outlives `gracefulMs`, through Bun's own
+	 * spawn handle only — never a numeric process group. Signals go out only
+	 * while Bun still reports the child unreaped, so its PID names no other process.
 	 */
 	async #signalChild(gracefulMs: number): Promise<void> {
+		logger.warn("Subreaper stop failed through its pinned handle; signalling the spawned child directly", {
+			pid: this.proc.pid,
+		});
 		const signal = (name: NodeJS.Signals) => {
 			if (this.proc.exitCode !== null || this.proc.signalCode !== null) return;
 			try {
-				if (this.#terminateGroup && process.platform !== "win32") process.kill(-this.proc.pid, name);
-				else this.proc.kill(name);
+				this.proc.kill(name);
 			} catch {}
 		};
 		if (gracefulMs >= 0) {

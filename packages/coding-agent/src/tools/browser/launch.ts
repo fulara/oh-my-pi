@@ -767,15 +767,23 @@ export async function launchHeadlessBrowser(opts: LaunchHeadlessOptions): Promis
  * timeout plus the SIGTERM grace on every close. A caller-supplied profile
  * (`userDataDir` undefined) gets `browser.close()` first, force-killing the
  * tree when that hangs. Kills go only through the identity pinned here, while
- * Node still holds the child unreaped, so the PID cannot name another process.
+ * Node still holds this host's child unreaped, so the PID cannot name another process.
  */
 export async function closeLaunchedBrowser({
 	browser,
 	userDataDir,
 }: Pick<LaunchHeadlessResult, "browser" | "userDataDir">): Promise<void> {
 	const proc = browser.process();
-	const owned =
-		proc?.pid !== undefined && proc.exitCode === null && proc.signalCode === null ? Process.fromPid(proc.pid) : null;
+	let owned: Process | null = null;
+	if (proc?.pid !== undefined && proc.exitCode === null && proc.signalCode === null) {
+		try {
+			const pinned = Process.fromPid(proc.pid);
+			owned = pinned?.ppid === process.pid ? pinned : null;
+		} catch (error) {
+			// Still close through Puppeteer; only the forced kill needs the pinned identity.
+			logger.warn("Cannot pin headless browser for cleanup", { pid: proc.pid, error: toError(error).message });
+		}
+	}
 	if (userDataDir !== undefined && owned) {
 		await killTreeOnce(owned).catch(() => undefined);
 		return;

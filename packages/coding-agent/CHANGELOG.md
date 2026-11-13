@@ -482,6 +482,10 @@
 - Removed `task.file` and the task tool's `taskFile` field; subagent instructions are always inline
 - Todo tasks can no longer be blocked: the `blocked` status and `blocker` note are gone from the `todo` tool, `/todo edit` (`[!]` is now an unknown marker), the HUD, ACP plans, goal continuation (which no longer pauses on a blocked-only list) and the RPC `TodoStatus`/`TodoItem` wire types and SDKs (Go, Python, Rust). A saved todo list that still holds a blocked task reads back with it pending on resume
 - Fura fork: on OMP 18.20, headless-browser close timeouts and the WebKit host kill only the process identity pinned at spawn, `ptree` cleanup reports instead of retrying by PID/group when that identity is missing or refused, and the isolated process-safety regression probe runs under its renamed `proctree` module.
+- Fura fork: on OMP 18.20, the WebKit host kill uses the process identity pinned at spawn and a headless-browser close timeout uses one pinned before closing (only for this host's own child); the `ptree` subreaper fallback signals only through its own child handle, the ovnfs daemon is not signalled once reaped, `ptree` cleanup reports instead of retrying by PID/group when that identity is missing or refused, and the isolated process-safety regression probe runs under its renamed `proctree` module.
+- Fura fork: `timeout -k` escalates only to externals whose start time still matches the one pinned at spawn, so a reused PID is never killed.
+- Fura fork: a queued extension message that waits for preprocessing now reports itself to `onPromptQueued`, so a failed post-compaction flush that restores its batch also takes it back out of the session queue instead of sending it twice.
+- Fura fork: disposing a session also drops the leaf entry cached by session skills, so a disposed session no longer keeps its last reply (and transcript) in memory.
 - Fura fork: native `grep -m` again finishes on a live pipe once its limit and trailing context are met, and `-m0` exits without reading, on the reworked upstream push search.
 
 ## [18.20.0] - 2026-11-12

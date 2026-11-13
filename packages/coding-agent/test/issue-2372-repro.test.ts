@@ -2,7 +2,6 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { Agent } from "@oh-my-pi/pi-agent-core";
 import { ModelRegistry } from "@oh-my-pi/pi-coding-agent/config/model-registry";
 import { resetSettingsForTest, Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
-import { EventController } from "@oh-my-pi/pi-coding-agent/modes/controllers/event-controller";
 import { InteractiveMode } from "@oh-my-pi/pi-coding-agent/modes/interactive-mode";
 import { initTheme } from "@oh-my-pi/pi-tui/theme";
 import { AgentSession } from "@oh-my-pi/pi-coding-agent/session/agent-session";
@@ -121,7 +120,8 @@ describe("issue #2372 pre-streaming chat rebuild preserves optimistic submission
 
 	it("replaces raw slash optimistic text when message_start carries expanded content", async () => {
 		mode.isInitialized = true;
-		const controller = new EventController(mode);
+		// Fura fork: the session admits one idle-recap host, already held by the mode's own controller.
+		const controller = mode.eventController;
 		const addMessageSpy = vi.spyOn(mode, "addMessageToChat");
 
 		mode.startPendingSubmission({ text: "/jira-task" });
@@ -153,7 +153,7 @@ describe("issue #2372 pre-streaming chat rebuild preserves optimistic submission
 
 	it("does not replace a pending optimistic prompt with another local user event", async () => {
 		mode.isInitialized = true;
-		const controller = new EventController(mode);
+		const controller = mode.eventController;
 		const addMessageSpy = vi.spyOn(mode, "addMessageToChat");
 
 		mode.startPendingSubmission({ text: "/jira-task" });

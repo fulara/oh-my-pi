@@ -66,7 +66,8 @@ function createYieldingSession(
 		model: model("primary", "bad-runtime-model"),
 		servingModel: { selector: "primary/bad-runtime-model", isFallback: false } as ServingModel | undefined,
 		extensionRunner: undefined,
-		sessionManager: { appendSessionInit: () => {} },
+		// Fura fork: subagent lifecycle frames carry the child sessionId.
+		sessionManager: { appendSessionInit: () => {}, getSessionId: () => "test-session" },
 		getActiveToolNames: () => ["yield"],
 		getEnabledToolNames: () => ["yield"],
 		subscribe: (listener: (event: { type: string; [key: string]: unknown }) => void) => {

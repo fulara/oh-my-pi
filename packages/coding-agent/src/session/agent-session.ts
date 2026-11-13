@@ -7456,6 +7456,7 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 		this.agent.setAppendOnlyContext(undefined);
 		this.rawSseDebugBuffer.clear();
 		this.sessionManager.releaseRetainedEntries();
+		this.#sessionSkills.releaseRetainedEntries();
 	}
 
 	/** Releases deferred TTSR deliveries discarded by a session reset. */
@@ -10956,13 +10957,12 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 		attribution: MessageAttribution,
 		timestamp: number,
 		rawText: string,
-		clientMessageId?: string,
 	): AgentMessage[] {
 		this.#allowQueuedMessageDrainRetry();
 		const userMessage: AgentMessage =
 			mode === "followUp"
-				? { role: "user", content, clientMessageId, attribution, timestamp }
-				: { role: "user", content, clientMessageId, steering: true, attribution, timestamp };
+				? { role: "user", content, attribution, timestamp }
+				: { role: "user", content, steering: true, attribution, timestamp };
 		this.#queuedMessageRawText.set(userMessage, rawText);
 		const group = [...companions, userMessage];
 		if (mode === "followUp") {
@@ -11513,6 +11513,7 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 			this.#allowQueuedMessageDrainRetry();
 			if (deliverAs === "followUp") this.agent.followUp(appMessage, queueOptions);
 			else this.agent.steer(appMessage, queueOptions);
+			onPromptQueued?.([...companions, appMessage]);
 			onPromptAdmitted?.();
 			this.#scheduleIdleQueueDrain();
 			return;
