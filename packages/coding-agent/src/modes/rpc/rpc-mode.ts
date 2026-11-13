@@ -12,7 +12,6 @@
  * - Extension UI: Extension UI requests are emitted, client responds with extension_ui_response
  */
 import { createWriteStream } from "node:fs";
-import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { ThinkingLevel } from "@oh-my-pi/pi-agent-core";
 import type { Model } from "@oh-my-pi/pi-ai";
@@ -50,12 +49,7 @@ import {
 	wordCompletionQuery,
 } from "@oh-my-pi/pi-tui/prompt/word-completion";
 import { requestTextPrediction, textPredictionBackend } from "../../predict/client";
-import {
-	type AgentSession,
-	type AgentSessionEvent,
-	type NavigateTreeResult,
-	SessionBusyError,
-} from "../../session/agent-session";
+import { type AgentSession, type NavigateTreeResult, SessionBusyError } from "../../session/agent-session";
 import type { AgentSessionHandle } from "../../session/agent-session-handle";
 import type { MCPManager } from "../../mcp/manager";
 import { reconnectMcpManagerServer } from "../../mcp/oauth-reauth";

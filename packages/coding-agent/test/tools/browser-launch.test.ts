@@ -3,6 +3,7 @@ import { describe, expect, it, onTestFinished } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { Process } from "@oh-my-pi/pi-natives";
 import { findFreeCdpPort, gracefulKillTreeOnce } from "@oh-my-pi/pi-coding-agent/tools/browser/attach";
 import {
 	chromiumExecutableProbeForTest,
@@ -106,19 +107,21 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("process-local headless launch", () => {
 				stdout: "pipe",
 				stderr: "inherit",
 			});
-			const started: { observer?: Browser; report?: OwnerReport } = {};
+			const started: { observer?: Browser; report?: OwnerReport; pinned?: Process } = {};
 			// Runs when the case times out too: a Chrome that survived its owner is the failure under test.
 			onTestFinished(async () => {
 				owner.kill("SIGKILL");
 				await owner.exited;
 				started.observer?.disconnect();
-				if (started.report?.pid !== undefined) await gracefulKillTreeOnce(started.report.pid);
+				if (started.pinned) await gracefulKillTreeOnce(started.pinned).catch(() => undefined);
 				if (started.report) await removeUserDataDir(started.report.userDataDir);
 			});
 			const first = await readJsonl<OwnerReport>(owner.stdout).next();
 			if (first.done) throw new Error("The owner exited before reporting its browser");
 			const launched = first.value;
 			started.report = launched;
+			// Pin while its live owner still holds the browser unreaped.
+			if (launched.pid !== undefined) started.pinned = Process.fromPid(launched.pid) ?? undefined;
 			const puppeteer = await loadPuppeteer();
 			const observer = await puppeteer.connect({ browserWSEndpoint: launched.wsEndpoint });
 			started.observer = observer;

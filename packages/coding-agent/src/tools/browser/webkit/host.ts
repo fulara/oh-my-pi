@@ -12,6 +12,7 @@
  * visible, focused window either way.
  */
 import * as path from "node:path";
+import { Process } from "@oh-my-pi/pi-natives";
 import { ToolError } from "@oh-my-pi/pi-tui/tools/tool-errors";
 import { logger, readLines } from "@oh-my-pi/pi-utils";
 import type { Subprocess } from "bun";
@@ -46,6 +47,7 @@ class HostProcessTransport implements TernTransport {
 	readonly greetingTimeoutMs = GREETING_TIMEOUT_MS;
 	readonly #executable: string;
 	#child: Subprocess<"pipe", "pipe", "pipe"> | undefined;
+	#owned: Process | null = null;
 	#ended = false;
 
 	constructor(executable: string) {
@@ -58,6 +60,11 @@ class HostProcessTransport implements TernTransport {
 		return this.#child;
 	}
 
+	/** The host process identity pinned at spawn; cleanup never reopens its PID. */
+	get owned(): Process | null {
+		return this.#owned;
+	}
+
 	start(events: TernTransportEvents): void {
 		const child = Bun.spawn([this.#executable], {
 			cwd: path.dirname(this.#executable),
@@ -68,6 +75,7 @@ class HostProcessTransport implements TernTransport {
 		// A host nobody closed must not hold omp open; it exits with omp's end of its stdin.
 		child.unref();
 		this.#child = child;
+		this.#owned = Process.fromPid(child.pid);
 		const drained = (async () => {
 			let failure: string | undefined;
 			try {
@@ -323,7 +331,14 @@ export class WebKitHost {
 		clearTimeout(timer);
 		if (exited) return;
 		logger.debug("WebKit host did not exit after its input closed; killing it", { pid: child.pid });
-		await gracefulKillTreeOnce(child.pid);
+		const owned = this.#transport.owned;
+		if (!owned) {
+			logger.warn("WebKit host cleanup refused: missing pinned identity; it may still be running", {
+				pid: child.pid,
+			});
+			return;
+		}
+		await gracefulKillTreeOnce(owned);
 		// Signal delivery is not exit/reaping; callers may start a replacement immediately.
 		await child.exited;
 	}

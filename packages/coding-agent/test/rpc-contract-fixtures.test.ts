@@ -274,8 +274,7 @@ describe("RPC contract fixtures", () => {
 				tasks: [
 					{
 						content: "Wait for release approval",
-						status: "blocked",
-						blocker: "Release manager approval is pending",
+						status: "pending",
 					},
 				],
 			},

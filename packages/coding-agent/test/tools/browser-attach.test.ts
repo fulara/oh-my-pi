@@ -409,6 +409,7 @@ describe("pickElectronTarget", () => {
 				],
 				{ stdin: "ignore", stdout: "ignore", stderr: "ignore" },
 			);
+			const owned = Process.fromPid(child.pid)!;
 			const session = makeSession();
 			const prelude = createBrowserPrelude(session);
 			const context = { session, toolCallId: "attach-page-readiness" };
@@ -442,7 +443,7 @@ describe("pickElectronTarget", () => {
 				controller.abort();
 				await prelude.invoke({ action: "close", name }, context).catch(() => {});
 				if (attached) await releaseBrowser(attached, { kill: false });
-				await gracefulKillTreeOnce(child.pid);
+				await gracefulKillTreeOnce(owned);
 				await child.exited;
 				await fs.rm(root, { recursive: true, force: true });
 			}
@@ -700,6 +701,7 @@ describe("pickElectronTarget", () => {
 				[exe, ...flags, `--user-data-dir=${borrowedProfile}`, `--remote-debugging-port=${port}`],
 				{ stdin: "ignore", stdout: "ignore", stderr: "ignore" },
 			);
+			const owned = Process.fromPid(child.pid)!;
 			const session = makeSession();
 			const prelude = createBrowserPrelude(session);
 			const invoke = (parameters: unknown) =>
@@ -747,7 +749,7 @@ describe("pickElectronTarget", () => {
 			} finally {
 				await invoke({ action: "close", name: ownedName, kill: true }).catch(() => {});
 				await invoke({ action: "close", name: borrowedName, kill: true }).catch(() => {});
-				await gracefulKillTreeOnce(child.pid);
+				await gracefulKillTreeOnce(owned);
 				await child.exited;
 				await fs.rm(root, { recursive: true, force: true });
 			}
@@ -827,6 +829,7 @@ describe("pickElectronTarget", () => {
 				],
 				{ stdin: "ignore", stdout: "ignore", stderr: "ignore" },
 			);
+			const owned = Process.fromPid(child.pid)!;
 			const session = makeSession();
 			const prelude = createBrowserPrelude(session);
 			const invoke = (parameters: unknown) =>
@@ -881,7 +884,7 @@ describe("pickElectronTarget", () => {
 				});
 			} finally {
 				await invoke({ action: "close", name }).catch(() => {});
-				await gracefulKillTreeOnce(child.pid);
+				await gracefulKillTreeOnce(owned);
 				await child.exited;
 				await fs.rm(root, { recursive: true, force: true });
 			}

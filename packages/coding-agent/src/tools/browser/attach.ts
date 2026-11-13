@@ -886,8 +886,7 @@ export async function waitForBrowserProcessExit(ownedProcess: Process, exited: P
 }
 
 /** SIGKILL the process tree at once, for our own child whose graceful shutdown has nothing worth keeping. */
-export async function killTreeOnce(pid: number): Promise<void> {
-	const process = Process.fromPid(pid);
-	if (!process) return;
-	await process.terminate({ gracefulMs: -1, timeoutMs: 500 });
+export async function killTreeOnce(ownedProcess: Process): Promise<void> {
+	// Fura fork: only the identity pinned while the child was unreaped, never a reopened PID.
+	await gracefulKillTreeOnce(ownedProcess, -1);
 }

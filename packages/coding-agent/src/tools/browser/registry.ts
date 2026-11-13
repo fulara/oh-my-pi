@@ -18,9 +18,9 @@ import { type CmuxKind, CmuxUnavailableError } from "./cmux/rpc";
 import { CmuxSocketClient } from "./cmux/socket-client";
 import {
 	BROWSER_PROTOCOL_TIMEOUT_MS,
-	closeLaunchedBrowser,
 	connectPuppeteer,
 	DEFAULT_VIEWPORT,
+	HEADLESS_CLOSE_TIMEOUT_MS,
 	launchHeadlessBrowser,
 	loadPuppeteer,
 	removeUserDataDir,

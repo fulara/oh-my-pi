@@ -1,7 +1,7 @@
 import type { DaemonSnapshot } from "@oh-my-pi/pi-tui/tools/daemon";
 import { truncateTail } from "@oh-my-pi/pi-tui/tools/streaming-output";
 import { sanitizeText } from "@oh-my-pi/pi-utils";
-import type { AsyncJob, AsyncJobManager } from "../../async/job-manager";
+import { type AsyncJob, AsyncJobManager, type AsyncJobManagerApi } from "../../async/job-manager";
 import { inspectSessionServiceLogs, inspectSessionServices } from "../../launch/services";
 import type { RpcSubagentRegistry } from "./rpc-subagents";
 import type {
@@ -27,10 +27,19 @@ const TERMINAL: Partial<Record<ActivityStatus, true>> = {
 
 export interface RpcActivitySession {
 	readonly sessionId: string;
-	readonly asyncJobManager: AsyncJobManager | undefined;
+	readonly asyncJobManager: AsyncJobManagerApi | undefined;
 	sessionManager: { getCwd(): string; getSessionId(): string };
 	getAgentId(): string | undefined;
 	subscribeSessionTransition(listener: (phase: "begin" | "end") => void): () => void;
+}
+
+/**
+ * Live observation and owner binding need the root thread's manager; a
+ * subagent worker's remote manager mirrors rows only.
+ */
+function rootJobManager(session: RpcActivitySession): AsyncJobManager | undefined {
+	const manager = session.asyncJobManager;
+	return manager instanceof AsyncJobManager ? manager : undefined;
 }
 
 interface BoundedText {
@@ -88,9 +97,8 @@ export class RpcActivity {
 		this.#sessionId = session.sessionId;
 		this.#journalSessionId = session.sessionManager.getSessionId();
 		this.#bindOwner();
-		if (session.asyncJobManager) {
-			this.#unsubscribers.push(session.asyncJobManager.subscribe(job => this.#observeJob(job)));
-		}
+		const manager = rootJobManager(session);
+		if (manager) this.#unsubscribers.push(manager.subscribe(job => this.#observeJob(job)));
 		if (subagents) this.#unsubscribers.push(subagents.subscribe(snapshot => this.#observeAgent(snapshot)));
 		this.#unsubscribers.push(
 			session.subscribeSessionTransition(phase => {
@@ -114,7 +122,7 @@ export class RpcActivity {
 
 	#bindOwner(): void {
 		const ownerId = this.#session.getAgentId();
-		if (ownerId) this.#unbindOwner = this.#session.asyncJobManager?.bindOwnerSession(ownerId, this.#journalSessionId);
+		if (ownerId) this.#unbindOwner = rootJobManager(this.#session)?.bindOwnerSession(ownerId, this.#journalSessionId);
 	}
 
 	dispose(): void {

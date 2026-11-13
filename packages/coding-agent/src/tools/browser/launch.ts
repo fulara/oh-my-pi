@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { Process } from "@oh-my-pi/pi-natives";
 import {
 	$which,
 	getPuppeteerDir,
@@ -122,7 +123,7 @@ const USER_AGENT_TARGET_TYPES = new Set(["page", "webview", "background_page"]);
 /** How long a pipe-launched Chromium may take to publish its DevTools port after launch. */
 const DEVTOOLS_ACTIVE_PORT_TIMEOUT_MS = 10_000;
 /** Upper bound on `browser.close()`, which resolves only once Chromium exits; a wedged one never does (issue #5260). */
-const HEADLESS_CLOSE_TIMEOUT_MS = 5_000;
+export const HEADLESS_CLOSE_TIMEOUT_MS = 5_000;
 
 /**
  * Lazy-import puppeteer while hiding the user's cwd from cosmiconfig. The
@@ -765,22 +766,25 @@ export async function launchHeadlessBrowser(opts: LaunchHeadlessOptions): Promis
  * Testing 150 on macOS 27 outlives both `Browser.close` and SIGTERM) the close
  * timeout plus the SIGTERM grace on every close. A caller-supplied profile
  * (`userDataDir` undefined) gets `browser.close()` first, force-killing the
- * tree when that hangs.
+ * tree when that hangs. Kills go only through the identity pinned here, while
+ * Node still holds the child unreaped, so the PID cannot name another process.
  */
 export async function closeLaunchedBrowser({
 	browser,
 	userDataDir,
 }: Pick<LaunchHeadlessResult, "browser" | "userDataDir">): Promise<void> {
-	const pid = browser.process()?.pid;
-	if (userDataDir !== undefined && pid !== undefined) {
-		await killTreeOnce(pid).catch(() => undefined);
+	const proc = browser.process();
+	const owned =
+		proc?.pid !== undefined && proc.exitCode === null && proc.signalCode === null ? Process.fromPid(proc.pid) : null;
+	if (userDataDir !== undefined && owned) {
+		await killTreeOnce(owned).catch(() => undefined);
 		return;
 	}
 	try {
 		await withTimeout(browser.close(), HEADLESS_CLOSE_TIMEOUT_MS, "Timed out closing headless browser");
 	} catch (err) {
 		logger.debug("Failed to close headless browser; force-killing", { error: toError(err).message });
-		if (pid !== undefined) await gracefulKillTreeOnce(pid).catch(() => undefined);
+		if (owned) await gracefulKillTreeOnce(owned).catch(() => undefined);
 	}
 }
 

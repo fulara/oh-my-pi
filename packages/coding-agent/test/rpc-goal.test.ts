@@ -69,16 +69,13 @@ describe("RPC goal command", () => {
 
 	test("removed browser mode commands return ordinary unsupported-command failures", async () => {
 		directory = await fs.mkdtemp(path.join(os.tmpdir(), "omp-rpc-no-browser-modes-"));
-		const child = Bun.spawn(
-			[process.execPath, path.join(import.meta.dir, "fixtures", "goal-rpc-agent.ts")],
-			{
-				cwd: directory,
-				env: { ...Bun.env, PI_CODING_AGENT_DIR: directory, PI_NO_TITLE: "1", GOAL_RPC_PLAN: "0" },
-				stdin: "pipe",
-				stdout: "pipe",
-				stderr: "pipe",
-			},
-		);
+		const child = Bun.spawn([process.execPath, path.join(import.meta.dir, "fixtures", "goal-rpc-agent.ts")], {
+			cwd: directory,
+			env: { ...Bun.env, PI_CODING_AGENT_DIR: directory, PI_NO_TITLE: "1", GOAL_RPC_PLAN: "0" },
+			stdin: "pipe",
+			stdout: "pipe",
+			stderr: "pipe",
+		});
 		const stderr = new Response(child.stderr).text();
 		const commands = [
 			{ id: "removed-enable", type: "set_plan_mode", enabled: true },

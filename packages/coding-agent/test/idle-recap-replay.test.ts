@@ -55,8 +55,8 @@ function sessionWithRecaps(): { sessionManager: SessionManager; firstId: string;
 	} finally {
 		setSystemTime();
 	}
-	recordSessionRecap(sessionManager.getSessionId(), root, "first recap");
-	recordSessionRecap(sessionManager.getSessionId(), root, "latest recap");
+	recordSessionRecap(sessionManager.getSessionId(), root, "first recap", lastId);
+	recordSessionRecap(sessionManager.getSessionId(), root, "latest recap", lastId);
 	return { sessionManager, firstId, lastId };
 }
 

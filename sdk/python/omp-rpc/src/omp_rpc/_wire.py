@@ -1921,23 +1921,6 @@ class NegotiateProtocolResult:
 
 
 @dataclass(slots=True, frozen=True, kw_only=True)
-class LiveConnectResult:
-    voice: str
-    sdp_answer: str
-
-
-@dataclass(slots=True, frozen=True, kw_only=True)
-class GetSessionLeaseResult:
-    held: tuple[str, ...]
-    unknown: tuple[str, ...]
-
-
-@dataclass(slots=True, frozen=True, kw_only=True)
-class LogoutResult:
-    remaining_source: str | None = None
-
-
-@dataclass(slots=True, frozen=True, kw_only=True)
 class BtwStartResult:
     btw_id: str
 
@@ -1966,6 +1949,12 @@ class BtwPromoteResult:
 class LiveConnectResult:
     voice: str
     sdp_answer: str
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
+class GetSessionLeaseResult:
+    held: tuple[str, ...]
+    unknown: tuple[str, ...]
 
 
 @dataclass(slots=True, frozen=True, kw_only=True)
@@ -3720,27 +3709,6 @@ def parse_negotiate_protocol_result(value: object, path: str = "NegotiateProtoco
     )
 
 
-def parse_live_connect_result(value: object, path: str = "LiveConnectResult") -> LiveConnectResult:
-    payload = expect_object(value, path)
-    return LiveConnectResult(
-        voice=required(payload, "voice", decode_str, path),
-        sdp_answer=required(payload, "sdpAnswer", decode_str, path),
-    )
-
-
-def parse_get_session_lease_result(value: object, path: str = "GetSessionLeaseResult") -> GetSessionLeaseResult:
-    payload = expect_object(value, path)
-    return GetSessionLeaseResult(
-        held=required(payload, "held", array(decode_str), path),
-        unknown=required(payload, "unknown", array(decode_str), path),
-    )
-
-
-def parse_logout_result(value: object, path: str = "LogoutResult") -> LogoutResult:
-    payload = expect_object(value, path)
-    return LogoutResult(
-        remaining_source=optional(payload, "remainingSource", decode_str, path),
-    )
 def parse_btw_start_result(value: object, path: str = "BtwStartResult") -> BtwStartResult:
     payload = expect_object(value, path)
     return BtwStartResult(
@@ -3777,6 +3745,14 @@ def parse_live_connect_result(value: object, path: str = "LiveConnectResult") ->
     return LiveConnectResult(
         voice=required(payload, "voice", decode_str, path),
         sdp_answer=required(payload, "sdpAnswer", decode_str, path),
+    )
+
+
+def parse_get_session_lease_result(value: object, path: str = "GetSessionLeaseResult") -> GetSessionLeaseResult:
+    payload = expect_object(value, path)
+    return GetSessionLeaseResult(
+        held=required(payload, "held", array(decode_str), path),
+        unknown=required(payload, "unknown", array(decode_str), path),
     )
 
 
@@ -4826,6 +4802,10 @@ __all__ = [
     "OpenSessionResult",
     "OpenUrlUiRequest",
     "ParentIrc",
+    "PendingMessage",
+    "PendingMessageRemovalResult",
+    "PendingMessagesRemoval",
+    "PendingMessagesSnapshot",
     "PromoteQueuedMessageResult",
     "PromptAck",
     "PromptError",
@@ -5034,6 +5014,10 @@ __all__ = [
     "parse_open_session_result",
     "parse_open_url_ui_request",
     "parse_parent_irc",
+    "parse_pending_message",
+    "parse_pending_message_removal_result",
+    "parse_pending_messages_removal",
+    "parse_pending_messages_snapshot",
     "parse_promote_queued_message_result",
     "parse_prompt_ack",
     "parse_prompt_error",

@@ -1340,8 +1340,6 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 		sessionEnv: Record<string, string>;
 		/** The model's `i` intent on the call, for the job's widget author. */
 		intent?: string;
-		/** The call that started the job. */
-		toolCallId: string;
 		/** Output lines to report while the job runs; see {@link BashToolInput.notify}. */
 		notify?: NotifyPattern;
 	}): ManagedBashJobHandle {
@@ -1849,7 +1847,6 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 				sessionId,
 				sessionEnv,
 				intent: this.session.getToolCallIntent?.(toolCallId),
-				toolCallId,
 				notify,
 			});
 			return this.#buildBackgroundStartResult(job.jobId, "", timeoutSec, {
@@ -1896,7 +1893,6 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 				sessionId,
 				sessionEnv,
 				intent: this.session.getToolCallIntent?.(toolCallId),
-				toolCallId,
 			});
 			if (startBackgrounded) {
 				return this.#buildBackgroundStartResult(job.jobId, "", timeoutSec, {

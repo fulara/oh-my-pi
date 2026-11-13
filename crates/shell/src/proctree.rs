@@ -421,12 +421,12 @@ mod platform {
 			// before the await below; holding it would make this future `!Send`.
 			let registered = {
 				let change = libc::kevent {
-					ident: self.pid as libc::uintptr_t,
+					ident:  self.pid as libc::uintptr_t,
 					filter: libc::EVFILT_PROC,
-					flags: libc::EV_ADD | libc::EV_ONESHOT,
+					flags:  libc::EV_ADD | libc::EV_ONESHOT,
 					fflags: libc::NOTE_EXIT,
-					data: 0,
-					udata: ptr::null_mut(),
+					data:   0,
+					udata:  ptr::null_mut(),
 				};
 				// SAFETY: `change` is one initialized change record; with no event
 				// buffer the call only registers it and the null timeout is unused.
@@ -907,13 +907,15 @@ impl Process {
 			return Ok(true);
 		}
 
-		// A root may authorize only its own group, never a group it merely joined.
+		// A root may authorize only its own group, never a group it merely
+		// joined.
 		let process_group = if group {
 			self.group_id().filter(|pgid| *pgid == self.pid())
 		} else {
 			None
 		};
-		// Capture ownership before TERM can reap the root and reparent its children.
+		// Capture ownership before TERM can reap the root and reparent its
+		// children.
 		let mut descendants = self.signalable_descendants(&protected);
 
 		// Polite wave: SIGTERM the group, every live descendant, then the root.
@@ -945,7 +947,8 @@ impl Process {
 			}
 		}
 
-		// Retain pinned survivors even if TERM reparented them away from the root.
+		// Retain pinned survivors even if TERM reparented them away from the
+		// root.
 		descendants.retain(|child| child.status() == ProcessStatus::Running);
 		let mut seen: HashSet<i32> = descendants.iter().map(Self::pid).collect();
 		descendants.extend(
@@ -954,7 +957,8 @@ impl Process {
 				.into_iter()
 				.filter(|child| seen.insert(child.pid())),
 		);
-		// A cached PGID alone is not ownership: a pinned member must still anchor it.
+		// A cached PGID alone is not ownership: a pinned member must still anchor
+		// it.
 		if let Some(pgid) = process_group
 			&& std::iter::once(self)
 				.chain(&descendants)
@@ -1239,7 +1243,6 @@ impl TerminationTargets {
 	}
 }
 
-
 #[cfg(test)]
 mod tests {
 	use super::*;
@@ -1384,7 +1387,7 @@ mod tests {
 		};
 		let mut command = Command::new(std::env::current_exe().expect("test executable"));
 		command
-			.args(["--exact", "process::tests::process_safety_probe", "--ignored", "--nocapture"])
+			.args(["--exact", "proctree::tests::process_safety_probe", "--ignored", "--nocapture"])
 			.env("OMP_PROCESS_SAFETY_MODE", mode)
 			.env("OMP_PROCESS_SAFETY_TARGET", target.unwrap_or(0).to_string())
 			.stdin(Stdio::piped())

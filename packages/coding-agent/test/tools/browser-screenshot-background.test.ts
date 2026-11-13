@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import { Process } from "@oh-my-pi/pi-natives";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import { findFreeCdpPort, gracefulKillTreeOnce, waitForCdp } from "@oh-my-pi/pi-coding-agent/tools/browser/attach";
 import { ensureChromiumExecutable, RENDERER_PRIORITY_ARGS } from "@oh-my-pi/pi-coding-agent/tools/browser/launch";
@@ -74,8 +75,9 @@ async function connectedBrowser(): Promise<PuppeteerBrowserHandle> {
 		],
 		{ stdin: "ignore", stdout: "ignore", stderr: "ignore" },
 	);
+	const owned = Process.fromPid(child.pid)!;
 	cleanups.push(async () => {
-		await gracefulKillTreeOnce(child.pid);
+		await gracefulKillTreeOnce(owned);
 		await child.exited;
 		await fs.rm(root, { recursive: true, force: true });
 	});

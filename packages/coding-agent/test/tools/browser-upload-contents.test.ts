@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import { Process } from "@oh-my-pi/pi-natives";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import { disposeAllVmContexts } from "@oh-my-pi/pi-coding-agent/eval/js/context-manager";
 import { createBrowserPrelude } from "@oh-my-pi/pi-coding-agent/tools/browser";
@@ -200,6 +201,7 @@ async function openConnectedTab(toolCallId: string, options: { page?: string; pr
 		],
 		{ stdin: "ignore", stdout: "ignore", stderr: "ignore" },
 	);
+	const owned = Process.fromPid(child.pid)!;
 	const proxy = startCdpProxy(port, options.proxy ?? {});
 	const session = makeSession();
 	const prelude = createBrowserPrelude(session);
@@ -208,7 +210,7 @@ async function openConnectedTab(toolCallId: string, options: { page?: string; pr
 	const close = async () => {
 		await prelude.invoke({ action: "close", name }, context).catch(() => undefined);
 		proxy.stop();
-		await gracefulKillTreeOnce(child.pid);
+		await gracefulKillTreeOnce(owned);
 		await child.exited;
 		await fs.rm(root, { recursive: true, force: true });
 	};

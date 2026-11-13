@@ -21,7 +21,12 @@ import { expandPath } from "../path-utils";
 import { CELL_BUDGET_SLACK_MS } from "../run-scope";
 import { ToolAbortError, toWorkerErrorPayload } from "../tool-errors";
 import { ToolError } from "@oh-my-pi/pi-tui/tools/tool-errors";
-import { gracefulKillTreeOnce, isChromiumBrowserExecutable, pickElectronTarget, waitForBrowserProcessExit } from "./attach";
+import {
+	gracefulKillTreeOnce,
+	isChromiumBrowserExecutable,
+	pickElectronTarget,
+	waitForBrowserProcessExit,
+} from "./attach";
 import type * as Cmux from "./cmux/cmux-tab";
 import { CmuxUnavailableError, mapWaitUntil } from "./cmux/rpc";
 import { browserConnection, DEFAULT_VIEWPORT, privateTargetId } from "./launch";
