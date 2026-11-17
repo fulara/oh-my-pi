@@ -1,13 +1,6 @@
 # Changelog
 
 ## [Unreleased]
-### Added
-
-- Added `Process.identity()` for comparing pinned operating-system process instances across daemon recovery.
-
-### Fixed
-
-- Process-tree termination now protects Unix host ancestors and their groups, and revalidates pinned group ownership before escalation.
 
 ### Fixed
 

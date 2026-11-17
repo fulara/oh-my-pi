@@ -440,9 +440,6 @@
 ### Fixed
 
 - Fixed log rotation near local-day boundaries so dated log files are consistently assigned to the correct local date.
-### Fixed
-
-- Subprocess cleanup retains the original native process handle instead of reopening its PID. Unix timeouts refuse an unproven process-group signal after the root exits, report the remaining pipe-holding resources, and still finish output collection at the deadline.
 
 ## [18.2.7] - 2026-09-21
 

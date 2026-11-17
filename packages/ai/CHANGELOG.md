@@ -1103,9 +1103,6 @@
 - Added deprecated `getApiKey` and `reload` methods for backward compatibility.
 
 ## [18.2.11] - 2026-09-23
-### Added
-
-- User messages support optional `clientMessageId` metadata for persistent client submission correlation without changing provider prompt text.
 
 ### Fixed
 
