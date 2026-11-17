@@ -540,10 +540,12 @@ impl Pty {
 	/// [`Spawn::zle_sync`] and the shell to have sourced
 	/// [`ZLE_SYNC_SCRIPT`]).
 	///
-	/// Once the shell has read the keys, a request goes to the FIFO. ZLE
+	/// Once the shell has read the keys, two requests go to the FIFO. ZLE
 	/// serves `zle -F` handlers only while it waits for a key and none is
-	/// typed, so the answer comes after the work the keys started (a
-	/// completion function, a command line) and its output.
+	/// typed, so the first answer comes after the work the keys started (a
+	/// completion function, a command line) and its output, and the second
+	/// after whatever the editor does once the first handler returns (a
+	/// redraw).
 	///
 	/// # Errors
 	///
@@ -568,7 +570,7 @@ impl Pty {
 			thread::sleep(Duration::from_millis(5));
 		}
 		drop(term);
-		self.syncs += 1;
+		self.syncs += 2;
 		let mut request = fs::OpenOptions::new()
 			.write(true)
 			.custom_flags(libc::O_NONBLOCK)
@@ -579,7 +581,7 @@ impl Pty {
 					format!("{}: {e} (is ~/{ZLE_SYNC_SCRIPT} sourced?)", fifo.display()),
 				)
 			})?;
-		request.write_all(format!("{}\n", self.syncs).as_bytes())?;
+		request.write_all(format!("{}\n{}\n", self.syncs - 1, self.syncs).as_bytes())?;
 		drop(request);
 		let answer = format!("\x1b{ZLE_SYNC_TAG}{}\x07", self.syncs);
 		self.read_until(answer, deadline.saturating_duration_since(Instant::now()))?;

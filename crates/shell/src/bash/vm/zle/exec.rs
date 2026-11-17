@@ -1334,10 +1334,17 @@ fn key_step(zw: &mut Zw<'_, '_>, mut t: KeyTask) -> Next {
 		return named_done(zw);
 	}
 	if t.watched {
-		// A `zle -F` handler returned: the display may need redoing.
+		// A `zle -F` handler or a sched event returned: zsh `raw_getbyte`
+		// redraws only a display it gave up (`zle -I`, `sched -o`), and
+		// leaves alone what the editor shows meanwhile (a menu selection's
+		// status line). A message (`zle -M`, which zsh's `showmsg` prints
+		// at once) or a bell the handler left is shown now too: here both
+		// wait for a refresh.
 		t.watched = false;
 		let _ = zw.ed.got.take();
-		refresh(zw);
+		if zw.zle.display.resetneeded || zw.ed.msg.is_some() || zw.ed.feep {
+			refresh(zw);
+		}
 	}
 	loop {
 		let wait_rest = t.rest > 0;
@@ -1363,8 +1370,8 @@ fn key_step(zw: &mut Zw<'_, '_>, mut t: KeyTask) -> Next {
 			Byte::Pending(key) => return Next::Wait(Task::Key(t), key),
 			Byte::Sched => {
 				// zsh `checksched` from ZLE: each due event runs with `$?`
-				// kept (the display given up first for `sched -o`); the line
-				// is drawn again after it.
+				// kept (the display given up first for `sched -o`, and drawn
+				// again after it).
 				let now = zw.cx.host.wall().secs;
 				let ev = crate::bash::vm::builtins::zsh_mod_sched::take_due(
 					&mut zw.k.root,

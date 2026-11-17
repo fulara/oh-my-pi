@@ -472,53 +472,76 @@ mod unix {
 		}
 	}
 
-	fn redrive_pty_open(mut open: impl FnMut() -> io::Result<()>) -> io::Result<()> {
-		#[cfg(target_os = "macos")]
-		{
-			// XNU bsd/sys/errno.h defines EREDRIVEOPEN as -6. In tty_ptmx.c
-			// concurrent ptmx clones can select the same minor; tty_dev.c asks
-			// the kernel to redrive the open, but the sentinel can leak to
-			// userspace. Redrive only that condition, with a finite bound.
-			const EREDRIVEOPEN: i32 = -6;
-			for _ in 0..7 {
-				match open() {
-					Err(e) if e.raw_os_error() == Some(EREDRIVEOPEN) => {},
-					result => return result,
-				}
+	/// macOS's `EREDRIVEOPEN` (XNU's kernel-private `sys/errno.h`): two opens
+	/// of `/dev/ptmx` cloned the same minor and this one lost
+	/// (`ptmx_get_ioctl`: "we've been raced"), so the open has to be done
+	/// again. Opens from several threads at once get it now and then.
+	const EREDRIVEOPEN: i32 = -6;
+
+	#[cfg(target_vendor = "apple")]
+	unsafe extern "C" {
+		/// `ptsname_r(3)`: macOS has it (10.13.4 and later), `libc` binds it
+		/// only for other systems.
+		fn ptsname_r(fd: libc::c_int, buf: *mut libc::c_char, buflen: libc::size_t) -> libc::c_int;
+	}
+	#[cfg(not(target_vendor = "apple"))]
+	use libc::ptsname_r;
+
+	/// The descriptor `open` (a call of it) returns; on macOS opened again
+	/// while the open lost the tty allocation race (`EREDRIVEOPEN`).
+	fn open_device(open: impl Fn() -> libc::c_int) -> io::Result<OwnedFd> {
+		// Bounded: each redrive follows an open another thread won.
+		for _ in 0..8 {
+			let fd = open();
+			if fd != -1 {
+				// SAFETY: `fd` was just created and nothing else owns it.
+				return Ok(unsafe { OwnedFd::from_raw_fd(fd) });
+			}
+			let err = io::Error::last_os_error();
+			if !(cfg!(target_vendor = "apple") && err.raw_os_error() == Some(EREDRIVEOPEN)) {
+				return Err(err);
 			}
 		}
-		open()
+		Err(io::Error::from_raw_os_error(EREDRIVEOPEN))
 	}
 
 	/// A new pty pair, close-on-exec, with window size `size` if given:
 	/// `(master, slave, slave name)`.
+	///
+	/// Callable from several threads at once, which `openpty` and
+	/// `ttyname_r` are not on macOS: `openpty` fails with `EREDRIVEOPEN`, its
+	/// descriptors become close-on-exec only after a process another thread
+	/// spawns may have inherited them, and `ttyname_r` fails (`ERANGE`) while
+	/// other threads open ptys. Here the opens are redriven, both descriptors
+	/// opened close-on-exec, and the master names its slave (`ptsname_r`).
 	pub fn open_pty(size: Option<TtyInfo>) -> io::Result<(OwnedFd, OwnedFd, BString)> {
-		let (mut m, mut s) = (-1, -1);
-		let ws = size.map(|z| libc::winsize {
-			ws_row:    z.rows,
-			ws_col:    z.cols,
-			ws_xpixel: 0,
-			ws_ypixel: 0,
-		});
-		let wsp = ws
-			.as_ref()
-			.map_or(ptr::null_mut(), |w| ptr::from_ref(w).cast_mut());
-		let open = || {
-			// SAFETY: both out pointers are valid; a null name and termios are
-			// allowed; `wsp` is null or points at a live winsize.
-			check(unsafe {
-				libc::openpty(&raw mut m, &raw mut s, ptr::null_mut(), ptr::null_mut(), wsp.cast())
-			})
-		};
-		redrive_pty_open(open)?;
-		// SAFETY: openpty created both descriptors; nothing else owns them.
-		let (m, s) = unsafe { (OwnedFd::from_raw_fd(m), OwnedFd::from_raw_fd(s)) };
-		for fd in [m.as_raw_fd(), s.as_raw_fd()] {
-			// SAFETY: F_SETFD only changes the descriptor flags.
-			unsafe { libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC) };
+		let master = open_device(|| {
+			// SAFETY: plain call; a new descriptor or -1.
+			unsafe { libc::posix_openpt(libc::O_RDWR | libc::O_NOCTTY | libc::O_CLOEXEC) }
+		})?;
+		let m = master.as_raw_fd();
+		// SAFETY: plain calls on the master just opened.
+		check(unsafe { libc::grantpt(m) })?;
+		// SAFETY: as above.
+		check(unsafe { libc::unlockpt(m) })?;
+		let mut buf = [0u8; 128];
+		// SAFETY: the buffer is valid for its length; ptsname_r
+		// NUL-terminates on success.
+		match unsafe { ptsname_r(m, buf.as_mut_ptr().cast(), buf.len()) } {
+			0 => {},
+			// macOS: -1 and `errno`; glibc and musl: the error number.
+			-1 => return Err(io::Error::last_os_error()),
+			e => return Err(io::Error::from_raw_os_error(e)),
 		}
-		let name = self::name(s.as_raw_fd())?;
-		Ok((m, s, name))
+		let path = CStr::from_bytes_until_nul(&buf).map_err(|_| io::ErrorKind::InvalidData)?;
+		let slave = open_device(|| {
+			// SAFETY: a NUL-terminated path; a new descriptor or -1.
+			unsafe { libc::open(path.as_ptr(), libc::O_RDWR | libc::O_NOCTTY | libc::O_CLOEXEC) }
+		})?;
+		if let Some(size) = size {
+			set_window_size(slave.as_raw_fd(), size)?;
+		}
+		Ok((master, slave, BString::from(path.to_bytes())))
 	}
 
 	/// A terminal's modes, put back when dropped (unless [disarmed]).
@@ -689,6 +712,35 @@ mod unix {
 			before.set(TermFlag::Pendin, false);
 			assert_eq!(encode(&to_os(&after)), encode(&to_os(&before)));
 			assert!(dup_high(s.as_raw_fd()).unwrap().as_raw_fd() >= 10);
+		}
+
+		/// Several threads opening ptys at once (shells of one process
+		/// running `zpty`, the pty tests) each get a pair, close-on-exec,
+		/// named after its slave.
+		#[test]
+		fn ptys_open_from_several_threads_at_once() {
+			use std::os::unix::fs::MetadataExt;
+
+			let threads: Vec<_> = (0..16)
+				.map(|_| {
+					std::thread::spawn(|| {
+						for _ in 0..100 {
+							let (m, s, name) = open_pty(None).unwrap();
+							let path = std::str::from_utf8(&name).unwrap();
+							for fd in [m.as_raw_fd(), s.as_raw_fd()] {
+								// SAFETY: F_GETFD only reads the descriptor flags.
+								let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+								assert_ne!(flags & libc::FD_CLOEXEC, 0, "{path}");
+							}
+							let slave = std::fs::File::from(s).metadata().unwrap().rdev();
+							assert_eq!(std::fs::metadata(path).unwrap().rdev(), slave, "{path}");
+						}
+					})
+				})
+				.collect();
+			for t in threads {
+				t.join().unwrap();
+			}
 		}
 	}
 }
