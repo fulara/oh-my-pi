@@ -630,6 +630,8 @@ export interface SessionState {
 	followUpMode?: QueueMode;
 	interruptMode?: InterruptMode;
 	sessionFile?: string;
+	/** Runtime working directory; differs from the session header's cwd when that directory is missing. */
+	cwd?: string;
 	sessionName?: string;
 	autoCompactionEnabled?: boolean;
 	fastModeEnabled?: boolean;

@@ -602,6 +602,11 @@ may also report `allowanceLeftPercent`, while wrap-up reports whether
 field is absent outside both stages. No event carries it, so re-read
 `get_state` while a run is active, after `agent_end`, and after slash commands.
 
+`cwd` is the session's runtime working directory. It differs from the session
+header's `cwd` when a resumed session's recorded directory is missing or cannot
+be entered: the session then continues in the launch directory (runtime-only;
+the header is not rewritten).
+
 ```json
 {
 	"model": { "provider": "...", "id": "..." },
@@ -613,6 +618,7 @@ field is absent outside both stages. No event carries it, so re-read
 	"interruptMode": "immediate|wait",
 	"sessionFile": "...",
 	"sessionId": "...",
+	"cwd": "/path/to/project",
 	"sessionName": "...",
 	"fastModeEnabled": false,
 	"tokensPerSecond": null,

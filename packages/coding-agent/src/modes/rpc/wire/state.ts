@@ -194,6 +194,10 @@ export const stateDefs = {
 		interruptMode: absentAs("InterruptMode", "immediate"),
 		"sessionFile?": "string",
 		sessionId: "string",
+		"cwd?": doc(
+			"string",
+			"Runtime working directory; differs from the session header's cwd when that directory is missing.",
+		),
 		"sessionName?": "string",
 		autoCompactionEnabled: absentAs("boolean", false),
 		fastModeEnabled: absentAs("boolean", false),

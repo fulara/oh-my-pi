@@ -3280,6 +3280,10 @@
 				"sessionFile": {
 					"type": "string"
 				},
+				"cwd": {
+					"type": "string",
+					"description": "Runtime working directory; differs from the session header's cwd when that directory is missing."
+				},
 				"sessionName": {
 					"type": "string"
 				},

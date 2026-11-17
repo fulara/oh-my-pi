@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import * as fs from "node:fs";
 import * as path from "node:path";
 import { isRecord, readJsonl, TempDir } from "@oh-my-pi/pi-utils";
 import { selectRpcEntries } from "@oh-my-pi/pi-coding-agent/modes/rpc/rpc-compat";
@@ -125,6 +126,8 @@ type RpcFrame = Record<string, unknown>;
  * state, etc.) are dropped so they cannot steal another command's correlation slot.
  */
 interface RpcServer {
+	/** Launch directory of the RPC child. */
+	cwd: string;
 	send: (frame: object) => void;
 	sendRaw: (line: string) => void;
 	/** Resolves with the next command response in arrival order, as soon as it is read. */
@@ -132,7 +135,8 @@ interface RpcServer {
 	close: () => Promise<void>;
 }
 
-async function startRpcServer(): Promise<RpcServer> {
+/** `sessionArgs` builds the session flags inside the server's temp dir; defaults to `--no-session`. */
+async function startRpcServer(sessionArgs?: (temp: TempDir) => Promise<string[]>): Promise<RpcServer> {
 	const temp = await TempDir.create("@rpc-compatible-primitives-");
 	const child = Bun.spawn(
 		[
@@ -143,7 +147,7 @@ async function startRpcServer(): Promise<RpcServer> {
 			"--no-extensions",
 			"--no-skills",
 			"--no-tools",
-			"--no-session",
+			...(sessionArgs ? await sessionArgs(temp) : ["--no-session"]),
 			"--provider",
 			"anthropic",
 			"--model",
@@ -190,6 +194,7 @@ async function startRpcServer(): Promise<RpcServer> {
 		void child.stdin.flush();
 	};
 	return {
+		cwd: temp.path(),
 		send: frame => writeLine(JSON.stringify(frame)),
 		sendRaw: writeLine,
 		next: () => {
@@ -420,5 +425,33 @@ describe("RPC Pi-compatible primitives (live server)", () => {
 		});
 		const badFeedback = await next();
 		expect(badFeedback).toMatchObject({ id: "fb-bad", command: "predict_word_feedback", success: false });
+	}, 60000);
+});
+
+describe("RPC resume of a session whose recorded directory is missing", () => {
+	test("get_state reports the launch directory as the runtime cwd and the header stays untouched", async () => {
+		let sessionFile = "";
+		let header = "";
+		const server = await startRpcServer(async temp => {
+			sessionFile = temp.join("sessions", "stranded.jsonl");
+			header = JSON.stringify({
+				type: "session",
+				version: 3,
+				id: "stranded-session",
+				timestamp: "2026-01-01T00:00:00.000Z",
+				cwd: temp.join("moved-away"),
+			});
+			await Bun.write(sessionFile, `${header}\n`);
+			return ["--resume", sessionFile];
+		});
+		try {
+			server.send({ type: "get_state", id: "stranded-state" });
+			const state = (await server.next()).data as { sessionId: string; cwd: string };
+			expect(state.sessionId).toBe("stranded-session");
+			expect(fs.realpathSync(state.cwd)).toBe(fs.realpathSync(server.cwd));
+			expect((await Bun.file(sessionFile).text()).split("\n")[0]).toBe(header);
+		} finally {
+			await server.close();
+		}
 	}, 60000);
 });

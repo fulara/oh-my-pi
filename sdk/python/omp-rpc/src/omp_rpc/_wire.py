@@ -810,6 +810,8 @@ class SessionState:
     follow_up_mode: QueueMode = "one-at-a-time"
     interrupt_mode: InterruptMode = "immediate"
     session_file: str | None = None
+    cwd: str | None = None
+    """Runtime working directory; differs from the session header's cwd when that directory is missing."""
     session_name: str | None = None
     auto_compaction_enabled: bool = False
     fast_mode_enabled: bool = False
@@ -2477,6 +2479,7 @@ def parse_session_state(value: object, path: str = "SessionState") -> SessionSta
         follow_up_mode=defaulted(payload, "followUpMode", _decode_queue_mode, path, "one-at-a-time"),
         interrupt_mode=defaulted(payload, "interruptMode", _decode_interrupt_mode, path, "immediate"),
         session_file=optional(payload, "sessionFile", decode_str, path),
+        cwd=optional(payload, "cwd", decode_str, path),
         session_name=optional(payload, "sessionName", decode_str, path),
         auto_compaction_enabled=defaulted(payload, "autoCompactionEnabled", decode_bool, path, False),
         fast_mode_enabled=defaulted(payload, "fastModeEnabled", decode_bool, path, False),

@@ -2607,6 +2607,7 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 					interruptMode: session.interruptMode,
 					sessionFile: session.sessionFile,
 					sessionId: session.sessionId,
+					cwd: session.sessionManager.getCwd(),
 					sessionName: session.sessionName,
 					autoCompactionEnabled: session.autoCompactionEnabled,
 					queuedMessageCount: session.queuedMessageCount,

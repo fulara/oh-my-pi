@@ -3409,6 +3409,9 @@ pub struct SessionState {
 	pub interrupt_mode: InterruptMode,
 	#[serde(rename = "sessionFile", default, skip_serializing_if = "Option::is_none")]
 	pub session_file: Option<String>,
+	/// Runtime working directory; differs from the session header's cwd when that directory is missing.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub cwd: Option<String>,
 	#[serde(rename = "sessionName", default, skip_serializing_if = "Option::is_none")]
 	pub session_name: Option<String>,
 	#[serde(rename = "autoCompactionEnabled", default = "default_session_state_auto_compaction_enabled")]
