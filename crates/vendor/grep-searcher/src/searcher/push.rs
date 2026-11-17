@@ -166,7 +166,12 @@ impl<'s, M: Matcher, S: Sink> Engine<'s, M, S> {
     fn start(&mut self) -> Result<bool, S::Error> {
         match self {
             Engine::Lines(lines) => lines.start(),
-            Engine::Multi(multi) => multi.start().map(|()| true),
+            Engine::Multi(multi) => {
+                multi.start()?;
+                // A zero limit admits no match: the input need not be read.
+                let config = &multi.searcher.config;
+                Ok(config.max_matches != Some(0) || config.passthru)
+            }
         }
     }
 
@@ -211,7 +216,10 @@ struct Lines<'s, M, S> {
 impl<'s, M: Matcher, S: Sink> Lines<'s, M, S> {
     fn start(&mut self) -> Result<bool, S::Error> {
         if self.phase == Phase::Fresh {
-            if self.core.begin()? {
+            // Unlike `ReadByLine`, which reads before it finds out, a search
+            // whose limit leaves nothing to report ends here: on a live pipe
+            // that read would wait for input that is never needed.
+            if self.core.begin()? && !self.core.is_done() {
                 self.begin_fill();
                 self.phase = Phase::Filling;
             } else {
@@ -247,6 +255,14 @@ impl<'s, M: Matcher, S: Sink> Lines<'s, M, S> {
                 return Ok(false);
             }
             if !self.core.match_by_line(self.buf.buffer())? {
+                let consumed = self.core.pos();
+                self.buf.consume(consumed);
+                self.phase = Phase::Over;
+                return Ok(false);
+            }
+            // The limit can be met (with its trailing context) exactly at the
+            // end of the buffer; stop now rather than ask for more input.
+            if self.core.is_done() {
                 let consumed = self.core.pos();
                 self.buf.consume(consumed);
                 self.phase = Phase::Over;

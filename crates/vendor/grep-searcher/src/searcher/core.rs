@@ -708,6 +708,14 @@ impl<'s, M: Matcher, S: Sink> Core<'s, M, S> {
         false
     }
 
+    /// Whether the match limit is reached and its trailing context emitted,
+    /// so no further line can be reported.
+    pub(crate) fn is_done(&self) -> bool {
+        self.has_exceeded_match_limit()
+            && !self.config.passthru
+            && self.after_context_left == 0
+    }
+
     fn has_exceeded_match_limit(&self) -> bool {
         self.config.max_matches.map_or(false, |limit| self.count() >= limit)
     }

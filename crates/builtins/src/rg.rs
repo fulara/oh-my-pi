@@ -1507,7 +1507,9 @@ async fn push_all<M: Matcher, S: Sink<Error = io::Error>>(
 	let terminator = bound_terminator(searcher, matcher);
 	let mut run = 0;
 	let mut search = searcher.search_push(matcher, sink);
-	loop {
+	// Priming with no input lets a zero limit stop before the first read.
+	let mut more = search.push(&[])?;
+	while more {
 		if let Some(halt) = halt {
 			check_halt(halt)?;
 		}
@@ -1516,10 +1518,10 @@ async fn push_all<M: Matcher, S: Sink<Error = io::Error>>(
 			break;
 		}
 		check_run(terminator, &mut run, &buf[..read])?;
-		if !search.push(&buf[..read])? {
-			input.abandon().await;
-			break;
-		}
+		more = search.push(&buf[..read])?;
+	}
+	if !more {
+		input.abandon().await;
 	}
 	search.finish()
 }
@@ -2327,6 +2329,77 @@ mod tests {
 		let (code, out, err) = run(&["-m1", "hit", "-"], "hit\nmiss\nhit\n").await;
 		assert_eq!(code, 0, "{err}");
 		assert_eq!(out, "hit\n");
+	}
+
+	/// Stdin that serves `input` and then, like a pipe whose writer stays
+	/// open, fails any further read instead of reporting EOF.
+	struct LivePipe {
+		input: &'static [u8],
+		pos:   usize,
+	}
+
+	impl io::Read for LivePipe {
+		fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+			if self.pos == self.input.len() {
+				return Err(io::Error::new(io::ErrorKind::WouldBlock, "input remains open"));
+			}
+			let n = buf.len().min(self.input.len() - self.pos);
+			buf[..n].copy_from_slice(&self.input[self.pos..self.pos + n]);
+			self.pos += n;
+			Ok(n)
+		}
+	}
+
+	impl Write for LivePipe {
+		fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+			Ok(buf.len())
+		}
+
+		fn flush(&mut self) -> io::Result<()> {
+			Ok(())
+		}
+	}
+
+	impl crate::openfile::Stream for LivePipe {}
+
+	/// A satisfied `-m` limit (after its trailing context) must finish without
+	/// reading again: on a live pipe (`yes | rg -m1 y`) the next read blocks
+	/// forever. `-m0` must not read at all.
+	#[tokio::test(flavor = "multi_thread")]
+	async fn max_count_finishes_without_waiting_for_more_input() {
+		let cases: &[(&[&str], &[u8], i32, &str)] = &[
+			(&["rg", "-m1", "^hit$", "-"], b"hit\n", 0, "hit\n"),
+			(&["rg", "-m2", "hit", "-"], b"hit\nmiss\nhit\n", 0, "hit\nhit\n"),
+			(&["rg", "-n", "-m1", "hit", "-"], b"hit\n", 0, "1:hit\n"),
+			(&["rg", "-m1", "-A1", "^hit$", "-"], b"hit\nmiss\n", 0, "hit\nmiss\n"),
+			(&["rg", "-m1", "-A2", "^hit$", "-"], b"hit\nhit\nmiss\n", 0, "hit\nhit\nmiss\n"),
+			(&["rg", "-vm1", "hit", "-"], b"miss\n", 0, "miss\n"),
+			(&["rg", "-cm1", "^hit$", "-"], b"hit\n", 0, "1\n"),
+			// PCRE2 matchers take the searcher's line-by-line slow path.
+			(&["rg", "-P", "-m1", "hit", "-"], b"hit\n", 0, "hit\n"),
+			(&["rg", "-P", "-m1", "-A1", "hit", "-"], b"hit\nmiss\n", 0, "hit\nmiss\n"),
+			(&["rg", "-P", "-vm1", "hit", "-"], b"miss\n", 0, "miss\n"),
+			(&["rg", "-m0", "hit", "-"], b"", 1, ""),
+			(&["rg", "-U", "-m0", "hit", "-"], b"", 1, ""),
+		];
+		for &(args, input, expected_code, expected_output) in cases {
+			let stdin = Box::new(LivePipe { input, pos: 0 });
+			let (mut host, capture) = Host::for_test_with_stdin("rg", stdin, "/");
+			let parsed = Rg::try_parse_from(args.iter().copied()).unwrap();
+			assert_eq!(parsed.run(&mut host).await, expected_code, "{args:?}: {}", capture.err());
+			assert_eq!(capture.out(), expected_output, "{args:?}");
+		}
+	}
+
+	/// The JSON printer's sink stops at the limit the same way.
+	#[tokio::test(flavor = "multi_thread")]
+	async fn json_max_count_finishes_without_waiting_for_more_input() {
+		let stdin = Box::new(LivePipe { input: b"hit\n", pos: 0 });
+		let (mut host, capture) = Host::for_test_with_stdin("rg", stdin, "/");
+		let parsed = Rg::try_parse_from(["rg", "--json", "-m1", "hit", "-"]).unwrap();
+		assert_eq!(parsed.run(&mut host).await, 0, "{}", capture.err());
+		let out = capture.out();
+		assert_eq!(out.matches(r#""type":"match""#).count(), 1, "{out}");
 	}
 
 	/// `-e` exists so a pattern may start with `-` (ripgrep); clap used to
