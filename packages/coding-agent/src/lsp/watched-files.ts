@@ -654,7 +654,7 @@ export class WatchedFilesForwarder {
 			let watcher: fs.FSWatcher;
 			try {
 				watcher = fs.watch(dir, { persistent: false }, (eventType, filename) => {
-					const known = filename !== null && watchers.has(foldCase(path.join(dir, filename.toString())));
+					const known = filename != null && watchers.has(foldCase(path.join(dir, filename.toString())));
 					this.#fsEvent(watch, root, true, dir, eventType, filename, known);
 				});
 			} catch (error) {
@@ -707,12 +707,14 @@ export class WatchedFilesForwarder {
 		recursive: boolean,
 		dir: string,
 		eventType: string,
-		filename: string | Buffer | null,
+		// Typed `| null`, but Bun also delivers `undefined` (seen while a watched directory is removed).
+		filename: string | Buffer | null | undefined,
 		known: boolean,
 	): void {
 		if (this.#closed || watch.closed) return;
-		// A missing name means the watcher lost changes.
-		if (filename === null) return this.#lost(watch, root, recursive);
+		// A missing name means the watcher lost changes. An exception here is uncaught (it runs
+		// in the `fs.watch` listener) and would end the session.
+		if (filename == null) return this.#lost(watch, root, recursive);
 		watch.seenAt = Date.now();
 		const target = path.join(dir, filename.toString());
 		if (eventType === "change") return this.#record(target, true, true);

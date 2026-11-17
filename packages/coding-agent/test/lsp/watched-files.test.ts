@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, setDefaultTimeout } from "bun:test";
+import { afterEach, describe, expect, it, setDefaultTimeout, spyOn } from "bun:test";
 import * as fsSync from "node:fs";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
@@ -114,6 +114,36 @@ describe("WatchedFilesForwarder", () => {
 
 		expect(sent.some(change => change.type === FileChangeType.Changed)).toBe(false);
 		expect(sent.some(change => change.uri.endsWith("notes.txt"))).toBe(false);
+	});
+
+	it("treats an fs.watch event without a filename as lost changes instead of throwing", async () => {
+		type Listener = (eventType: string, filename?: string | null) => void;
+		const listeners: Listener[] = [];
+		const realWatch = fsSync.watch as (
+			dir: fsSync.PathLike,
+			options: fsSync.WatchOptions,
+			listener: Listener,
+		) => fsSync.FSWatcher;
+		// Record each listener, then watch for real; the forwarder keeps its own behavior.
+		const spy = spyOn(fsSync, "watch").mockImplementation(((
+			dir: fsSync.PathLike,
+			options: fsSync.WatchOptions,
+			listener: Listener,
+		) => {
+			listeners.push(listener);
+			return realWatch(dir, options, listener);
+		}) as unknown as typeof fsSync.watch);
+		cleanups.push(() => spy.mockRestore());
+		const { root, sent, forwarder } = setup();
+		await forwarder.register("ts", { watchers: [{ globPattern: `${root.replaceAll("\\", "/")}/**/*.ts`, kind: 7 }] });
+		await untilWatching(sent, path.join(root, "ready.ts"));
+		// Bun delivers `undefined` (not the typed `null`) e.g. while a watched directory is deleted; the
+		// listener runs outside any caller, so a throw there is an uncaught exception that ends the session.
+		expect(listeners.length).toBeGreaterThan(0);
+		for (const listener of listeners) expect(() => listener("rename", undefined)).not.toThrow();
+		const file = path.join(root, "after.ts");
+		await Bun.write(file, "export {};\n");
+		await waitForEvent(sent, { uri: fileToUri(file), type: FileChangeType.Created });
 	});
 
 	it("reports files written right after a base directory is created", async () => {
