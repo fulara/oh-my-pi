@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it, setDefaultTimeout } from "bun:test";
 import * as fsSync from "node:fs";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
@@ -17,6 +17,10 @@ const EVENT_TIMEOUT_MS = 15_000;
  * window. The events come from the OS watcher, so fake timers cannot stand in for this wait.
  */
 const QUIET_MS = 600;
+
+// Fura fork: a test makes up to three waits of EVENT_TIMEOUT_MS; Bun's 5 s default cut them short
+// whenever fseventsd lagged, failing with a bare timeout instead of the wait's diagnosis.
+setDefaultTimeout(4 * EVENT_TIMEOUT_MS);
 
 describe("WatchedFilesForwarder", () => {
 	const cleanups: Array<() => void> = [];
@@ -61,7 +65,7 @@ describe("WatchedFilesForwarder", () => {
 
 	/**
 	 * Waits until the OS watcher is live: macOS starts its FSEvents stream after `fs.watch` returns, so a
-	 * change made right after `register` can be lost. Rewrites `sentinel`, which a registered glob must
+	 * change made right after `register` can be lost. Recreates `sentinel`, which a registered glob must
 	 * match, until it is reported, then forgets the reports; late repeats of the sentinel may still follow.
 	 */
 	async function untilWatching(sent: FileEvent[], sentinel: string): Promise<void> {
@@ -69,6 +73,9 @@ describe("WatchedFilesForwarder", () => {
 		const uri = fileToUri(sentinel);
 		for (let write = 0; !sent.some(change => change.uri === uri); write++) {
 			if (Date.now() > deadline) throw new Error(`the watcher never reported ${sentinel}`);
+			// Fura fork: once its creation is missed, rewrites of an existing file are only changes, which a
+			// create/delete-only watcher never reports; each attempt must create the file anew.
+			fsSync.rmSync(sentinel, { force: true });
 			fsSync.writeFileSync(sentinel, `// ${write}\n`);
 			await Bun.sleep(100);
 		}
@@ -197,7 +204,7 @@ describe("WatchedFilesForwarder", () => {
 		const created = () => new Set(sent.filter(change => change.type === FileChangeType.Created).map(c => c.uri));
 		while (created().size < expected.size && Date.now() < deadline) await Bun.sleep(50);
 		expect([...expected].filter(uri => !created().has(uri))).toEqual([]);
-	}, 30_000);
+	});
 
 	it("reports the files of a directory moved into the watched tree, and the directory when moved out", async () => {
 		const { root, sent, forwarder } = setup();

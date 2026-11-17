@@ -1,5 +1,6 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { visibleWidth } from "../src/index";
+import { setKeyHintPlatform } from "../src/key-hint-format";
 import type { NativeChild, NativeNode } from "../src/native/node";
 import { getThemeByName } from "../src/theme";
 import {
@@ -69,6 +70,11 @@ function options(expanded: boolean): RenderResultOptions {
 }
 
 describe("GitHub run-watch renderer", () => {
+	// Key hints follow the host platform and the process-global active theme (`⌃O` on macOS once
+	// another file loads a unicode theme); pin the words form so the expand hint reads `Ctrl+O`.
+	beforeEach(() => setKeyHintPlatform("linux"));
+	afterEach(() => setKeyHintPlatform(undefined));
+
 	it("keeps collapsed progress compact and expands ordered, sanitized steps within the viewport", async () => {
 		const theme = await getThemeByName("dark");
 		if (!theme) throw new Error("theme unavailable");
