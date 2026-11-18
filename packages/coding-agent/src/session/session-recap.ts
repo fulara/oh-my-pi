@@ -116,8 +116,9 @@ export class SessionRecapController {
 			case "model_changed":
 				this.invalidate();
 				break;
+			// `agent_end` now fires once per run, when nothing can resume it; mid-run
+			// loop stops arrive as `agent_pause` and never arm a recap.
 			case "agent_end": {
-				if (event.isTerminal === false) break;
 				if (!this.#host) break;
 				if (!this.session.hasAdmittedSubmission) {
 					this.#settled = true;

@@ -9,6 +9,7 @@ import {
 	findFreeCdpPort,
 	findReusableCdp,
 	gracefulKillTreeOnce,
+	killTreeOnce,
 	resolveSpawnArgs,
 	spawnBrowserApplication,
 	waitForCdp,
@@ -538,7 +539,11 @@ async function disposeBrowserHandle(handle: BrowserHandle, opts: ReleaseBrowserO
 				`Headless browser cleanup refused (PID ${handle.pid ?? "unavailable"}): missing birth-pinned identity or original child exit notification; the resource may still be running. Profile retained at ${handle.userDataDir ?? "(caller-owned)"}.`,
 			);
 		}
-		if (handle.browser.connected) {
+		if (handle.userDataDir) {
+			// An omp-owned profile is deleted next, so a graceful shutdown saves nothing; some
+			// builds never finish one (Chrome for Testing 150 on macOS 27). Kill the pinned tree.
+			await killTreeOnce(ownedProcess);
+		} else if (handle.browser.connected) {
 			// Bound Puppeteer's close, then use only the identity retained at acquisition.
 			try {
 				await withTimeout(handle.browser.close(), HEADLESS_CLOSE_TIMEOUT_MS, "Timed out closing headless browser");

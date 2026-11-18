@@ -329,35 +329,6 @@
 - Fixed conflict-region resolution when a selected side is empty or shares edge lines with surrounding code.
 - MCP stdio server failures before a response now report the process exit code or terminating signal instead of only reporting closed stdout.
 - Fixed prewalk handoffs so model and reasoning-effort changes are preserved, and automatic handoffs return to the planning model when automatic prewalk is changed or disabled.
-### Fixed
-
-- Fura fork: on OMP 18.20, the WebKit host kill uses the process identity pinned at spawn and a headless-browser close timeout uses one pinned before closing (only for this host's own child); the `ptree` subreaper fallback signals only through its own child handle, `ptree` cleanup reports instead of retrying by PID/group when that identity is missing or refused, and the isolated process-safety regression probe runs under its renamed `proctree` module.
-- Fura fork: `timeout -k` escalates only to externals whose start time still matches the one pinned at spawn, so a reused PID is never killed.
-- Fura fork: a queued extension message that waits for preprocessing now reports itself to `onPromptQueued`, so a failed post-compaction flush that restores its batch also takes it back out of the session queue instead of sending it twice.
-- Fura fork: disposing a session also drops the leaf entry cached by session skills, so a disposed session no longer keeps its last reply (and transcript) in memory.
-- Fura fork: native `grep -m` again finishes on a live pipe once its limit and trailing context are met, and `-m0` exits without reading, on the reworked upstream push search.
-- Fura's source-pinned idle recap owner remains the only generator for the main TUI session while upstream idle compaction keeps its queue and background-work barriers.
-- Fixed cancellable FIFO readers hanging at EOF on Darwin, including background shell redirects and readers resumed after a timeout; high-numbered descriptors retain cancellation support.
-- Fura fork: added `get_pending_messages` and `remove_pending_messages` RPC/SDK operations with generation guards, original text/image previews and exact-input removal receipts that do not abort or settle an active turn.
-- Preserved Fura's RPC extensions in the generated wire schema and Python/Rust/Go clients, including lossless branch images and guarded pending-input removal.
-- Fura fork: retain spawn-pinned ownership for background shell jobs across runs while preserving TERM cleanup grace; keep queued session-agent notices attached to their removable prompt.
-- RPC `prompt`, `steer`, and `follow_up` accept optional `clientMessageId` metadata that survives queued consumption, skill expansion, and persisted replay.
-- Added durable session-skill selection through `get_session_skills` / `set_session_skills`: pinned definitions, revision-checked Apply, captured main/BTW request context, and branch-aware restore without extra transcript messages or model calls on selection.
-- Fura fork: retained durable RPC prompt identity, session skills, BTW transition ownership and session activity/recaps on OMP 18.3.3, alongside upstream's batched rewind results and MCP structured-result persistence.
-- RPC now emits `session_settled` when an async-wait delivery drains without waking the agent; an older drain cannot settle a newer continuation.
-- Fura fork: shared TUI/RPC idle recaps react to settings changes after a terminal settle without duplicating a delivered recap; pending/in-flight work remains guarded against queues, compaction, drafts and stale session provenance.
-- Generated Python, Go and Rust `btw_cancel` APIs now accept optional `btwId`/`recordId` selectors and return the selected response envelope rather than an unwrapped upstream boolean. Python callers use keyword selectors; Go/Rust callers use optional fields and inspect `cancelled` or `btwId`.
-- Kept Fura's isolated BTW cancellation and upstream persisted-topic cancellation distinct by selector, including queued cancellation during maintenance; ambiguous selectors fail without cancelling a pending snapshot.
-- Kept ACP mid-turn steering admission, permission-dialog wakeups and explicit pending-input removal compatible after the Fura fork refresh.
-- Supervised process launch refuses a native addon without the fork's process-identity API before starting a child, avoiding untracked processes when source and addon builds differ.
-- Distinct correlated user submissions with identical timestamps and content remain separate in persisted history.
-- Daemon recovery requires the persisted native process identity before adopting or stopping a process. Unverifiable resources remain visible and unmanaged across broker restarts; lifecycle commands refuse to control them.
-- Eval kernel shutdown retains process identities before polite exit and cleans up owned descendants without signalling stale process groups; interpreter probes use the same guarded process utility.
-- Isolated explicitly launched browser applications from the caller's process group; browser and sign-in cleanup now retain startup native ownership and original child exit proof, refuse missing ownership, and never recapture a PID or terminate a borrowed browser.
-- Preserved pinned process ownership during broken-pipe retirement; kernel regressions now exercise disposable real children without PID/group cleanup fallbacks.
-- Preserve removable image-bearing skill prompts and atomically remove their hidden vision companions across queued preprocessing.
-- Resume sessions through symlink aliases of the current project without treating them as cross-project cwd changes; explicit adoption is still required for a different project.
-- Preserve task parent-session ownership before concurrency waits in the upstream speculative-launch path.
 
 ## [18.20.3] - 2026-11-16
 

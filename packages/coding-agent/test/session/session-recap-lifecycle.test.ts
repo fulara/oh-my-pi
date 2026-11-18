@@ -221,16 +221,16 @@ describe("shared idle recap lifecycle", () => {
 		const disable = owner.enable({});
 		try {
 			owner.read();
-			owner.handleEvent({ type: "agent_end", messages: [], isTerminal: false });
+			owner.handleEvent({ type: "agent_pause", messages: [], yielded: true, awaiting: true });
 			vi.advanceTimersByTime(1_000);
 			await flushMicrotasks();
 			expect(requests).toHaveLength(0);
-			owner.handleEvent({ type: "agent_end", messages: [], isTerminal: true });
-			owner.handleEvent({ type: "agent_end", messages: [], isTerminal: true });
+			owner.handleEvent({ type: "agent_end", messages: [] });
+			owner.handleEvent({ type: "agent_end", messages: [] });
 			vi.advanceTimersByTime(1_000);
 			await flushMicrotasks();
 			await finishRecap();
-			owner.handleEvent({ type: "agent_end", messages: [], isTerminal: true });
+			owner.handleEvent({ type: "agent_end", messages: [] });
 			vi.advanceTimersByTime(1_000);
 			await flushMicrotasks();
 			expect(requests).toHaveLength(1);
