@@ -4186,7 +4186,8 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 	/** Emit an event to all listeners */
 	#emit(event: AgentSessionEvent): void {
 		this.#idleRecaps?.handleEvent(event);
-		if (event.type === "agent_end") {
+		// A loop stop settles a pending skill apply whether the run ends or pauses for outside work.
+		if (event.type === "agent_end" || event.type === "agent_pause") {
 			this.#emit({ type: "session_skills_updated", sessionSkills: this.getSessionSkillsState() });
 		}
 		// Listener array is copy-on-write (see `subscribe`), so iterating the

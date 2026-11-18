@@ -634,51 +634,61 @@ mod unix {
 
 		use super::*;
 
-		#[cfg(target_os = "macos")]
+		/// An `open` that fails with `errno` until its call `succeed_on`,
+		/// counting calls in `attempts`.
+		fn failing_open(
+			attempts: &std::cell::Cell<u32>,
+			errno: i32,
+			succeed_on: u32,
+		) -> impl Fn() -> libc::c_int + '_ {
+			move || {
+				attempts.set(attempts.get() + 1);
+				if attempts.get() >= succeed_on {
+					// SAFETY: a valid NUL-terminated path; the descriptor goes to an
+					// `OwnedFd`.
+					return unsafe {
+						libc::open(c"/dev/null".as_ptr(), libc::O_RDONLY | libc::O_CLOEXEC)
+					};
+				}
+				// SAFETY: the calling thread's errno slot.
+				#[cfg(target_vendor = "apple")]
+				unsafe {
+					*libc::__error() = errno;
+				}
+				// SAFETY: the calling thread's errno slot.
+				#[cfg(not(target_vendor = "apple"))]
+				unsafe {
+					*libc::__errno_location() = errno;
+				}
+				-1
+			}
+		}
+
+		#[cfg(target_vendor = "apple")]
 		#[test]
 		fn pty_open_redrives_only_the_kernel_clone_race() {
-			let mut attempts = 0;
-			redrive_pty_open(|| {
-				attempts += 1;
-				if attempts < 3 {
-					Err(io::Error::from_raw_os_error(-6))
-				} else {
-					Ok(())
-				}
-			})
-			.unwrap();
-			assert_eq!(attempts, 3);
+			let attempts = std::cell::Cell::new(0);
+			open_device(failing_open(&attempts, EREDRIVEOPEN, 3)).unwrap();
+			assert_eq!(attempts.get(), 3);
 
-			let mut attempts = 0;
-			let err = redrive_pty_open(|| {
-				attempts += 1;
-				Err(io::Error::from_raw_os_error(-6))
-			})
-			.unwrap_err();
-			assert_eq!(attempts, 8);
-			assert_eq!(err.raw_os_error(), Some(-6));
+			let attempts = std::cell::Cell::new(0);
+			let err = open_device(failing_open(&attempts, EREDRIVEOPEN, u32::MAX)).unwrap_err();
+			assert_eq!(attempts.get(), 8);
+			assert_eq!(err.raw_os_error(), Some(EREDRIVEOPEN));
 
-			let mut attempts = 0;
-			let err = redrive_pty_open(|| {
-				attempts += 1;
-				Err(io::Error::from_raw_os_error(libc::ENOENT))
-			})
-			.unwrap_err();
-			assert_eq!(attempts, 1);
+			let attempts = std::cell::Cell::new(0);
+			let err = open_device(failing_open(&attempts, libc::ENOENT, u32::MAX)).unwrap_err();
+			assert_eq!(attempts.get(), 1);
 			assert_eq!(err.raw_os_error(), Some(libc::ENOENT));
 		}
 
-		#[cfg(not(target_os = "macos"))]
+		#[cfg(not(target_vendor = "apple"))]
 		#[test]
 		fn pty_open_does_not_redrive_errors_on_other_platforms() {
-			let mut attempts = 0;
-			let err = redrive_pty_open(|| {
-				attempts += 1;
-				Err(io::Error::from_raw_os_error(-6))
-			})
-			.unwrap_err();
-			assert_eq!(attempts, 1);
-			assert_eq!(err.raw_os_error(), Some(-6));
+			let attempts = std::cell::Cell::new(0);
+			let err = open_device(failing_open(&attempts, EREDRIVEOPEN, u32::MAX)).unwrap_err();
+			assert_eq!(attempts.get(), 1);
+			assert_eq!(err.raw_os_error(), Some(EREDRIVEOPEN));
 		}
 
 		#[test]
