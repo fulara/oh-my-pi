@@ -1900,7 +1900,7 @@ class AskAnswer:
 
 @dataclass(slots=True, frozen=True, kw_only=True)
 class HostJobCancelEvent:
-    """A host background job was cancelled by the agent or a session abort/shutdown; a later `host_job_settle` for it fails."""
+    """A host background job was cancelled by the agent's job tools, or a session switch, reset or shutdown, or could not be registered; a later `host_job_settle` for it fails."""
     type: Literal["host_job_cancel"] = "host_job_cancel"
     job_id: str
 
@@ -4554,7 +4554,7 @@ class WireClient:
         return self._listen("rpc_frame_error", listener)
 
     def on_host_job_cancel(self, listener: Callable[[HostJobCancelEvent], None]) -> Callable[[], None]:
-        """Subscribe to `host_job_cancel`: A host background job was cancelled by the agent or a session abort/shutdown; a later `host_job_settle` for it fails."""
+        """Subscribe to `host_job_cancel`: A host background job was cancelled by the agent's job tools, or a session switch, reset or shutdown, or could not be registered; a later `host_job_settle` for it fails."""
         return self._listen("host_job_cancel", listener)
 
     def on_agent_start(self, listener: Callable[[AgentStartEvent], None]) -> Callable[[], None]:

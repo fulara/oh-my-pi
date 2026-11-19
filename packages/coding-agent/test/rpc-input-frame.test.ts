@@ -499,9 +499,14 @@ describe("RpcInputDispatcher", () => {
 	test("drain after EOF rejects active and queued host tool requests without emitting new calls", async () => {
 		const disconnectMessage = "RPC client disconnected before host tool execution completed";
 		const hostToolFrames: Array<RpcHostToolCallRequest | RpcHostToolCancelRequest> = [];
-		const bridge = new RpcHostToolBridge(frame => {
-			hostToolFrames.push(frame);
-		});
+		const bridge = new RpcHostToolBridge(
+			frame => {
+				hostToolFrames.push(frame);
+			},
+			() => {
+				throw new Error("Host background jobs are not used by this test");
+			},
+		);
 		const [tool] = bridge.setTools([
 			{
 				name: "host_wait",

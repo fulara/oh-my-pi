@@ -2,8 +2,9 @@
  * Host background jobs: work an RPC host runs for the agent after a host tool
  * call returned. The call's `host_tool_result.background` registers a `host`
  * job owned by the calling agent; `host_job_settle` completes it through the
- * normal async-result delivery. A cancel by the agent's job tools or a session
- * abort/shutdown tells the host with `host_job_cancel`.
+ * normal async-result delivery. A cancel by the agent's job tools, or a session
+ * switch, reset or shutdown tells the host with `host_job_cancel`, as does a
+ * job that could not be registered (no job manager, job limit reached).
  */
 import { isRecord } from "@oh-my-pi/pi-utils";
 import type { AsyncJobManagerApi } from "../../async/job-manager";
@@ -41,38 +42,50 @@ export class RpcHostJobs {
 		this.#output = output;
 	}
 
-	/** Register a running `host` job for the agent that made tool call `toolCallId`; throws when it cannot. */
+	/**
+	 * Register a running `host` job for the agent that made tool call `toolCallId`.
+	 * Throws when it cannot; unless the id names a live job, the host is first told
+	 * with `host_job_cancel` so it does not run work nobody owns.
+	 */
 	start(background: RpcHostToolBackground, toolCallId: string): void {
-		const manager = this.#session.asyncJobManager;
-		if (!manager) throw new Error("Background jobs are unavailable in this session");
 		const { jobId, label } = background;
+		const manager = this.#session.asyncJobManager;
+		if (!manager) {
+			this.#output({ type: "host_job_cancel", jobId });
+			throw new Error("Background jobs are unavailable in this session");
+		}
 		if (this.#pending.has(jobId) || manager.getJob(jobId)) {
 			throw new Error(`Background job id "${jobId}" is already registered`);
 		}
-		manager.register(
-			"host",
-			label,
-			({ signal }) => {
-				const { promise, resolve, reject } = Promise.withResolvers<string>();
-				const entry: PendingHostJob = { resolve, reject };
-				const onAbort = () => {
-					if (this.#pending.get(jobId) !== entry) return;
-					this.#pending.delete(jobId);
-					this.#output({ type: "host_job_cancel", jobId });
-					reject(new Error(`Host job ${jobId} was cancelled`));
-				};
-				this.#pending.set(jobId, entry);
-				signal.addEventListener("abort", onAbort, { once: true });
-				if (signal.aborted) onAbort();
-				return promise.finally(() => signal.removeEventListener("abort", onAbort));
-			},
-			{
-				id: jobId,
-				ownerId: this.#session.getAgentId(),
-				ownerSessionId: this.#session.sessionManager.getSessionId(),
-				toolCallId,
-			},
-		);
+		try {
+			manager.register(
+				"host",
+				label,
+				({ signal }) => {
+					const { promise, resolve, reject } = Promise.withResolvers<string>();
+					const entry: PendingHostJob = { resolve, reject };
+					const onAbort = () => {
+						if (this.#pending.get(jobId) !== entry) return;
+						this.#pending.delete(jobId);
+						this.#output({ type: "host_job_cancel", jobId });
+						reject(new Error(`Host job ${jobId} was cancelled`));
+					};
+					this.#pending.set(jobId, entry);
+					signal.addEventListener("abort", onAbort, { once: true });
+					if (signal.aborted) onAbort();
+					return promise.finally(() => signal.removeEventListener("abort", onAbort));
+				},
+				{
+					id: jobId,
+					ownerId: this.#session.getAgentId(),
+					ownerSessionId: this.#session.sessionManager.getSessionId(),
+					toolCallId,
+				},
+			);
+		} catch (error) {
+			this.#output({ type: "host_job_cancel", jobId });
+			throw error;
+		}
 	}
 
 	/** Complete a running host job; throws for an unknown, cancelled or already settled job. */

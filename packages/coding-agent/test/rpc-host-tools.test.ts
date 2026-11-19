@@ -24,12 +24,17 @@ afterEach(async () => {
 	);
 });
 
+/** These bridges never see a `background` result. */
+function noBackgroundJobs(): never {
+	throw new Error("Host background jobs are not used by this test");
+}
+
 describe("RpcHostToolBridge", () => {
 	it("forwards host tool updates and results to the pending execution", async () => {
 		const frames: Array<RpcHostToolCallRequest | RpcHostToolCancelRequest> = [];
 		const bridge = new RpcHostToolBridge(frame => {
 			frames.push(frame);
-		});
+		}, noBackgroundJobs);
 		const [tool] = bridge.setTools([
 			{
 				name: "host_sum",
@@ -85,7 +90,7 @@ describe("RpcHostToolBridge", () => {
 		const frames: Array<RpcHostToolCallRequest | RpcHostToolCancelRequest> = [];
 		const bridge = new RpcHostToolBridge(frame => {
 			frames.push(frame);
-		});
+		}, noBackgroundJobs);
 		const [tool] = bridge.setTools([
 			{
 				name: "host_wait",
@@ -115,7 +120,7 @@ describe("RpcHostToolBridge", () => {
 	});
 
 	it("exposes skill URI readability declared by the host tool", async () => {
-		const bridge = new RpcHostToolBridge(() => {});
+		const bridge = new RpcHostToolBridge(() => {}, noBackgroundJobs);
 		const [tool] = bridge.setTools([
 			{
 				name: "host_read",

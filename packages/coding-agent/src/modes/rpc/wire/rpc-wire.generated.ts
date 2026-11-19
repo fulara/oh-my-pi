@@ -1686,7 +1686,7 @@ export interface HostToolResult {
 	background?: HostToolBackground;
 }
 
-/** A host background job was cancelled by the agent or a session abort/shutdown; a later `host_job_settle` for it fails. */
+/** A host background job was cancelled by the agent's job tools, or a session switch, reset or shutdown, or could not be registered; a later `host_job_settle` for it fails. */
 export interface HostJobCancelEvent {
 	type: "host_job_cancel";
 	jobId: string;

@@ -5311,7 +5311,7 @@ pub struct HostToolResult {
 	pub background: Option<HostToolBackground>,
 }
 
-/// A host background job was cancelled by the agent or a session abort/shutdown; a later `host_job_settle` for it fails.
+/// A host background job was cancelled by the agent's job tools, or a session switch, reset or shutdown, or could not be registered; a later `host_job_settle` for it fails.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HostJobCancelEvent {
 	#[serde(rename = "jobId")]
@@ -5569,7 +5569,7 @@ pub enum RpcNotification {
 	ConfigUpdate(ConfigUpdateEvent),
 	/// An event could not fit within the transport limits and was dropped.
 	RpcFrameError(RpcFrameErrorEvent),
-	/// A host background job was cancelled by the agent or a session abort/shutdown; a later `host_job_settle` for it fails.
+	/// A host background job was cancelled by the agent's job tools, or a session switch, reset or shutdown, or could not be registered; a later `host_job_settle` for it fails.
 	HostJobCancel(HostJobCancelEvent),
 	/// A session event, discriminated by `type`; `set_event_filter` selects which are sent.
 	RpcAgentEvent(RpcAgentEvent),

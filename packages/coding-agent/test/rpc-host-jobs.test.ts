@@ -46,7 +46,7 @@ interface Harness {
 	cancels: RpcHostJobCancelFrame[];
 }
 
-async function harness(): Promise<Harness> {
+async function harness(options: { maxRunningJobs?: number } = {}): Promise<Harness> {
 	const model = getBundledModel("anthropic", "claude-sonnet-4-5")!;
 	const mock = createMockModel({ handler: () => ({ content: ["Noted"] }) });
 	const agent = new Agent({
@@ -58,7 +58,7 @@ async function harness(): Promise<Harness> {
 	const authStorage = await AuthStorage.create(":memory:");
 	cleanups.push(() => authStorage.close());
 	authStorage.keys.setRuntime("anthropic", "test-key");
-	const manager = new AsyncJobManager({ retentionMs: 60_000 });
+	const manager = new AsyncJobManager({ retentionMs: 60_000, maxRunningJobs: options.maxRunningJobs });
 	cleanups.push(async () => {
 		await manager.dispose();
 	});
@@ -240,6 +240,52 @@ describe("RPC host background jobs", () => {
 			label: "Session Reviewer",
 			toolCallId: "toolu_first",
 		});
+		// The id belongs to the live job: the host must keep running it.
+		expect(h.cancels).toEqual([]);
+	});
+
+	it("emits host_job_cancel when the job limit refuses a valid background request", async () => {
+		const h = await harness({ maxRunningJobs: 1 });
+		h.manager.register(
+			"bash",
+			"occupies the only slot",
+			({ signal }) => {
+				const { promise, reject } = Promise.withResolvers<string>();
+				signal.addEventListener("abort", () => reject(new Error("cancelled")), { once: true });
+				return promise;
+			},
+			{ id: "slot", ownerId: "Main" },
+		);
+
+		await expect(startHostJob(h, "toolu_send", "fura-session-1")).rejects.toThrow("Background job limit reached (1)");
+		expect(h.cancels).toEqual([{ type: "host_job_cancel", jobId: "fura-session-1" }]);
+		expect(h.manager.getJob("fura-session-1")).toBeUndefined();
+		expect(() => h.hostJobs.settle("fura-session-1", "late", false)).toThrow('No running host job "fura-session-1"');
+	});
+
+	it("emits host_job_cancel when the job manager is disposed", async () => {
+		const h = await harness();
+		await h.manager.dispose();
+
+		await expect(startHostJob(h, "toolu_send", "fura-session-1")).rejects.toThrow("Async job manager is disposed");
+		expect(h.cancels).toEqual([{ type: "host_job_cancel", jobId: "fura-session-1" }]);
+	});
+
+	it("emits host_job_cancel when the session has no job manager", () => {
+		const cancels: RpcHostJobCancelFrame[] = [];
+		const hostJobs = new RpcHostJobs(
+			{
+				asyncJobManager: undefined,
+				sessionManager: { getSessionId: () => "session-a" },
+				getAgentId: () => "Main",
+			},
+			frame => cancels.push(frame),
+		);
+
+		expect(() => hostJobs.start({ jobId: "fura-session-1", label: "Session Reviewer" }, "toolu_send")).toThrow(
+			"Background jobs are unavailable in this session",
+		);
+		expect(cancels).toEqual([{ type: "host_job_cancel", jobId: "fura-session-1" }]);
 	});
 
 	it("rejects a malformed background request without starting a job", async () => {

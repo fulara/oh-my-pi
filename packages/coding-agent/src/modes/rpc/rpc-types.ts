@@ -1071,7 +1071,11 @@ export interface RpcHostToolResult {
 	background?: RpcHostToolBackground;
 }
 
-/** Emitted when a host background job was cancelled by the agent or a session abort/shutdown. */
+/**
+ * Emitted when a host background job was cancelled by the agent's job tools, or a
+ * session switch, reset or shutdown, or when a valid `background` request could not
+ * be registered.
+ */
 export interface RpcHostJobCancelFrame {
 	type: "host_job_cancel";
 	jobId: string;

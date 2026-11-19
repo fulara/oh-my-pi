@@ -1634,7 +1634,10 @@ and resolves the tool call at once with `result`. The job appears in `get_activi
 `session_settled` follows once it ends), and is visible to the agent's own job
 wait/cancel/snapshot tools. A `background` whose `jobId` is empty, padded with whitespace or
 already registered fails the tool call instead (no job starts). `background` is ignored with
-`isError: true`.
+`isError: true`. If a valid `background` cannot be registered (the session has no job manager,
+or the background job limit is reached), the tool call fails and RPC mode also emits
+`host_job_cancel` for that `jobId`, so the host does not run work no job owns; a rejected
+duplicate id emits nothing, since that id belongs to a live job.
 
 The host completes the job with a command:
 
@@ -1648,8 +1651,8 @@ settles the job as failed with `text` as its error. The response is
 `{ "id": "settle_1", "type": "response", "command": "host_job_settle", "success": true }`; an
 unknown, cancelled or already settled job gets `success: false` with an `error`.
 
-When the job is cancelled — by the agent's job tools or a session abort/switch/shutdown path
-that cancels jobs — RPC mode marks it cancelled and emits:
+When the job is cancelled — by the agent's job tools, or a session switch, reset or shutdown —
+RPC mode marks it cancelled and emits:
 
 ```json
 { "type": "host_job_cancel", "jobId": "fura-session-1" }

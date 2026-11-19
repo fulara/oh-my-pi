@@ -16,7 +16,10 @@ import type {
 
 type RpcHostToolOutput = (frame: RpcHostToolCallRequest | RpcHostToolCancelRequest) => void;
 
-/** Registers the background job a host tool result asks for; throws when it cannot. */
+/**
+ * Registers the background job a host tool result asks for; throws when it cannot,
+ * after telling the host with `host_job_cancel` unless the id names a live job.
+ */
 type RpcHostBackgroundStarter = (background: RpcHostToolBackground, toolCallId: string) => void;
 
 type PendingHostToolCall = {
@@ -84,12 +87,12 @@ class RpcHostToolAdapter<TParams extends TSchema = TSchema, TTheme extends Theme
 
 export class RpcHostToolBridge {
 	#output: RpcHostToolOutput;
-	#startBackground: RpcHostBackgroundStarter | undefined;
+	#startBackground: RpcHostBackgroundStarter;
 	#definitions = new Map<string, RpcHostToolDefinition>();
 	#pendingCalls = new Map<string, PendingHostToolCall>();
 	#closedError: Error | undefined;
 
-	constructor(output: RpcHostToolOutput, startBackground?: RpcHostBackgroundStarter) {
+	constructor(output: RpcHostToolOutput, startBackground: RpcHostBackgroundStarter) {
 		this.#output = output;
 		this.#startBackground = startBackground;
 	}
@@ -122,10 +125,6 @@ export class RpcHostToolBridge {
 			const invalid = hostToolBackgroundError(frame.background);
 			if (invalid !== undefined) {
 				pending.reject(new Error(invalid));
-				return true;
-			}
-			if (!this.#startBackground) {
-				pending.reject(new Error("Host background jobs are not supported here"));
 				return true;
 			}
 			try {
