@@ -78,9 +78,7 @@ export interface UnitSnapshot {
 	restartCount: number;
 	outputBytes: number;
 	owner?: string;
-	/** Logical session captured at registration; absent on legacy or non-session services. */
-	readonly ownerSessionId?: string;
-	/** Originating tool call, when the service was started by a tool. */
+	/** Fura fork: originating tool call, when a tool started the service. */
 	readonly toolCallId?: string;
 	readyMatch?: string;
 	/** Readiness conditions still unmet while `state` is `starting`. */

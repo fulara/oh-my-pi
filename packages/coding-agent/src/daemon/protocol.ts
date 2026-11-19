@@ -72,6 +72,8 @@ export interface OpenRequest {
 	/** Overrides of the kind's default policy. */
 	policy?: Partial<UnitPolicy>;
 	owner?: string;
+	/** Fura fork: the tool call that started a `proc` unit, kept on its snapshot. */
+	toolCallId?: string;
 	/** Stop a live unit with this identity and start a new one. */
 	replace?: boolean;
 	/** `false` answers once the unit launches; follow with `wait`. Default true. */

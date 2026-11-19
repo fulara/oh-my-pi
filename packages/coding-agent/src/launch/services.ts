@@ -4,9 +4,10 @@ import * as path from "node:path";
 import { TERMINAL_STATES } from "@oh-my-pi/pi-tui/apps/ps-data";
 import { formatDuration, replaceTabs } from "@oh-my-pi/pi-tui/render/render-utils";
 import { ToolError } from "@oh-my-pi/pi-tui/tools/tool-errors";
+import { truncateTail } from "@oh-my-pi/pi-tui/tools/streaming-output";
 import { logger, sanitizeText } from "@oh-my-pi/pi-utils";
 import { compileNotifyPattern } from "../async/notify";
-import { canonicalProjectDir, DaemonTimeoutError, daemonClient } from "../daemon/client";
+import { canonicalProjectDir, DaemonTimeoutError, daemonClient, probeRunningDaemon } from "../daemon/client";
 import { daemonDir, unitLogDir } from "../daemon/paths";
 import {
 	DAEMON_OUTPUT_PATTERN_FLAGS,
@@ -250,28 +251,71 @@ export async function listServicesTolerant(
 	}
 }
 
-/** Inspect only this logical session without launching a broker or subscribing to delivery. */
-export async function inspectSessionServices(cwd: string, sessionId: string): Promise<DaemonSnapshot[]> {
-	const result = await inspectExistingDaemonBroker(cwd, { op: "inspect-list", ownerSessionId: sessionId });
-	if (result.op !== "inspect-list") throw new Error("Service inspection unavailable: unexpected list response");
-	return result.daemons;
+/** Exited services an activity inspection still reports, newest first. */
+const MAX_INSPECTION_TERMINAL_SERVICES = 20;
+const INSPECTION_TERMINAL_MAX_AGE_MS = 5 * 60_000;
+const INSPECTION_LOG_MAX_BYTES = 64 * 1024;
+const INSPECTION_LOG_MAX_LINES = 200;
+
+/**
+ * Run `operation` on an already-running daemon without starting, upgrading, or subscribing to it.
+ * No daemon at all means no daemon-held service exists: `undefined`. A daemon that is there but
+ * does not answer rejects, so callers report service state as unknown rather than empty.
+ */
+async function inspectDaemon<O extends DaemonOp>(operation: O): Promise<DaemonResult<O["op"]> | undefined> {
+	const client = await probeRunningDaemon();
+	if (!client) return undefined;
+	try {
+		return await client.request(operation);
+	} finally {
+		client.close();
+	}
 }
 
-/** Read bounded logs only if the broker still owns the exact listed service for this session. */
+/** Services of one logical session in `cwd`'s project, read without launching the daemon. */
+export async function inspectSessionServices(cwd: string, sessionId: string): Promise<UnitSnapshot[]> {
+	const scope = projectScope(await canonicalProjectDir(cwd));
+	const listed = await inspectDaemon({ op: "list", scope, kind: SERVICE_KIND });
+	if (!listed) return [];
+	const now = Date.now();
+	const owned = listed.units.filter(unit => unit.owner === sessionId);
+	const live = owned.filter(unit => !TERMINAL_STATES[unit.state]);
+	const recent = owned
+		.filter(
+			unit =>
+				TERMINAL_STATES[unit.state] && now - (unit.exitedAt ?? unit.startedAt) <= INSPECTION_TERMINAL_MAX_AGE_MS,
+		)
+		.sort((a, b) => (b.exitedAt ?? b.startedAt) - (a.exitedAt ?? a.startedAt))
+		.slice(0, MAX_INSPECTION_TERMINAL_SERVICES);
+	return [...live, ...recent];
+}
+
+/** Bounded logs of service `name`, only while it is still the listed unit `expectedId` of this session. */
 export async function inspectSessionServiceLogs(
 	cwd: string,
 	sessionId: string,
 	name: string,
 	expectedId: string,
 ): Promise<{ text: string; truncated: boolean }> {
-	const result = await inspectExistingDaemonBroker(cwd, {
-		op: "inspect-logs",
-		ownerSessionId: sessionId,
-		name,
-		expectedId,
+	const unit = { kind: SERVICE_KIND, scope: projectScope(await canonicalProjectDir(cwd)), key: name };
+	const output = await inspectDaemon({
+		op: "logs",
+		unit,
+		// One line past the bound, so a longer log is reported as truncated.
+		lines: INSPECTION_LOG_MAX_LINES + 1,
+		head: false,
+		follow: false,
+		timeoutMs: 1_000,
+	}).catch(() => undefined);
+	// The read names the unit it served, so a replacement started meanwhile is refused, not shown.
+	if (!output || output.unit.id !== expectedId || output.unit.owner !== sessionId) {
+		throw new Error("Service logs unavailable for this session and service identity");
+	}
+	const bounded = truncateTail(sanitizeText(output.terminalOutput || output.text), {
+		maxBytes: INSPECTION_LOG_MAX_BYTES,
+		maxLines: INSPECTION_LOG_MAX_LINES,
 	});
-	if (result.op !== "inspect-logs") throw new Error("Service inspection unavailable: unexpected logs response");
-	return { text: result.text, truncated: result.truncated };
+	return { text: bounded.content, truncated: bounded.truncated === true };
 }
 
 export async function findService(
@@ -408,7 +452,7 @@ export async function startService(
 			replace: true,
 			awaitReady: readyInterrupt === undefined,
 			lease: !persist,
-			ownerSessionId: session.getSessionId?.() ?? undefined,
+			// Fura fork: the call that started the service, for session activity.
 			toolCallId: params.toolCallId,
 		},
 		signal,

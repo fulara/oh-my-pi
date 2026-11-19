@@ -1,4 +1,4 @@
-import type { DaemonSnapshot } from "@oh-my-pi/pi-tui/tools/daemon";
+import type { UnitSnapshot } from "@oh-my-pi/pi-tui/tools/daemon";
 import { truncateTail } from "@oh-my-pi/pi-tui/tools/streaming-output";
 import { sanitizeText } from "@oh-my-pi/pi-utils";
 import { type AsyncJob, AsyncJobManager, type AsyncJobManagerApi } from "../../async/job-manager";
@@ -228,13 +228,13 @@ export class RpcActivity {
 		this.#prune();
 	}
 
-	#observeService(daemon: DaemonSnapshot): void {
-		if (daemon.ownerSessionId !== this.#journalSessionId) return;
+	#observeService(daemon: UnitSnapshot): void {
+		if (daemon.owner !== this.#journalSessionId) return;
 		this.#entries.set(`service:${daemon.id}`, {
 			item: {
 				id: daemon.id,
 				kind: "service",
-				label: label(daemon.name),
+				label: label(daemon.key),
 				status: daemon.state,
 				startedAt: daemon.startedAt,
 				endedAt: daemon.exitedAt,
@@ -242,7 +242,7 @@ export class RpcActivity {
 				exitCode: daemon.exitCode,
 				detailAvailable: true,
 			},
-			serviceName: daemon.name,
+			serviceName: daemon.key,
 		});
 	}
 

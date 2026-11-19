@@ -180,8 +180,9 @@ export class SessionRecapController {
 			!session.isBashRunning &&
 			!session.isEvalRunning &&
 			!session.isCompacting &&
+			// A handoff compacts in the background; its result replaces the leaf a recap would read.
+			!session.isBackgroundCompacting &&
 			!session.isRetrying &&
-			!session.isGeneratingHandoff &&
 			(this.#host.canGenerate?.() ?? true),
 		);
 	}

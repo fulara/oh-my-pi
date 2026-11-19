@@ -3,6 +3,7 @@
  * plain file descriptors, so a child keeps running and stays reachable across
  * an in-place `execReplace` of the daemon.
  */
+import * as os from "node:os";
 import { FdStream, Process, reapChild, spawnRaw } from "@oh-my-pi/pi-natives";
 import { logger } from "@oh-my-pi/pi-utils";
 import type { ChildExit, ChildSpawn, ManagedChild, ManagedChildState } from "./module";
@@ -25,6 +26,39 @@ export function isSameProcess(pid: number, startedAt: number | undefined): boole
 	if (startedAt === undefined) return true;
 	const observed = process.startTime();
 	return observed !== null && Math.abs(observed - startedAt) <= START_TIME_TOLERANCE_MS;
+}
+
+function openProcess(pid: number): Process | undefined {
+	try {
+		return Process.fromPid(pid) ?? undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/**
+ * Fura fork: pin `pid` as this process's own, still unreaped child. Call it only
+ * before anything can reap the child; the parent check refuses a pid that already
+ * names someone else's process.
+ */
+export function pinOwnChild(pid: number): Process | undefined {
+	const pinned = openProcess(pid);
+	return pinned && pinned.ppid === process.pid ? pinned : undefined;
+}
+
+/**
+ * Fura fork: pin `pid` only while its exact native identity (pid and full-precision
+ * start time) is still `identity`. Nothing unverifiable is ever signalled.
+ */
+export function pinIdentity(pid: number, identity: string | undefined): Process | undefined {
+	if (!identity) return undefined;
+	const pinned = openProcess(pid);
+	return pinned && pinned.identity() === identity ? pinned : undefined;
+}
+
+/** Signal number of `signal` on this platform. */
+export function signalNumber(signal: NodeJS.Signals): number {
+	return os.constants.signals[signal];
 }
 
 /** Output delivered to a sink, buffered until the sink is attached. */
@@ -67,10 +101,15 @@ class RawManagedChild implements ManagedChild {
 	readonly #stderr = new OutputChannel();
 	#done = false;
 	#inputClosed = false;
+	/** Fura fork: the only signal authority, pinned while the child was unreaped. */
+	readonly #pinned: Process | undefined;
+	/** Set the moment the child is reaped (or seen gone), before its pipes drain. */
+	#reaped = false;
 
-	constructor(state: ManagedChildState) {
+	constructor(state: ManagedChildState, pinned: Process | undefined) {
 		this.pid = state.pid;
 		this.#startedAt = state.startedAt;
+		this.#pinned = pinned;
 		this.#fds = { stdin: state.stdin, stdout: state.stdout, stderr: state.stderr };
 		const { pid, startedAt } = state;
 		const stdin = new FdStream(state.stdin);
@@ -93,6 +132,7 @@ class RawManagedChild implements ManagedChild {
 			let exit: ChildExit;
 			try {
 				const result = await reapChild(pid);
+				this.#reaped = true;
 				exit = { exitCode: result.exitCode ?? undefined, signal: result.signal ?? undefined };
 			} catch (error) {
 				logger.debug("reapChild failed; polling the process instead", {
@@ -100,6 +140,7 @@ class RawManagedChild implements ManagedChild {
 					error: error instanceof Error ? error.message : String(error),
 				});
 				while (isSameProcess(pid, startedAt)) await Bun.sleep(250);
+				this.#reaped = true;
 				exit = {};
 			}
 			// Output written right before exit is still in the pipes. The grace timer is cleared
@@ -152,38 +193,58 @@ class RawManagedChild implements ManagedChild {
 	}
 
 	kill(signal: NodeJS.Signals = "SIGTERM"): void {
-		if (this.#done) return;
-		try {
-			if (process.platform === "win32") Process.fromPid(this.pid)?.killTree();
-			else process.kill(-this.pid, signal);
-		} catch {
-			try {
-				process.kill(this.pid, signal);
-			} catch {
-				// Already gone.
-			}
+		if (this.#done || this.#reaped) return;
+		// Fura fork: never a numeric pid or process-group signal; without the pinned
+		// identity the child is reported, not signalled.
+		if (!this.#pinned) {
+			logger.warn("Daemon child has no pinned process identity; refusing to signal it", { pid: this.pid, signal });
+			return;
 		}
+		this.#pinned.killTree(signalNumber(signal));
+	}
+
+	get signalable(): boolean {
+		return this.#pinned !== undefined;
+	}
+
+	async terminate(gracefulMs: number): Promise<boolean> {
+		if (!this.#pinned) return false;
+		return this.#pinned.terminate({ group: true, gracefulMs, timeoutMs: gracefulMs + 1_000 });
 	}
 
 	state(): ManagedChildState {
-		return { pid: this.pid, startedAt: this.#startedAt, ...this.#fds };
+		return {
+			pid: this.pid,
+			startedAt: this.#startedAt,
+			...(this.#pinned ? { identity: this.#pinned.identity() } : {}),
+			...this.#fds,
+		};
 	}
 }
 
 /** Spawn `spec` in its own process group with three raw pipes. The env is used exactly as given. */
 export function spawnManagedChild(spec: ChildSpawn): ManagedChild {
 	const raw = spawnRaw({ application: spec.application, args: spec.args, env: spec.env, cwd: spec.cwd });
-	return new RawManagedChild({
-		pid: raw.pid,
-		startedAt: processStartTime(raw.pid) ?? Date.now(),
-		stdin: raw.stdin,
-		stdout: raw.stdout,
-		stderr: raw.stderr,
-	});
+	// Nothing has reaped the child yet: this pin is its identity for every later signal.
+	const pinned = pinOwnChild(raw.pid);
+	return new RawManagedChild(
+		{
+			pid: raw.pid,
+			startedAt: pinned?.startTime() ?? Date.now(),
+			stdin: raw.stdin,
+			stdout: raw.stdout,
+			stderr: raw.stderr,
+		},
+		pinned,
+	);
 }
 
-/** Re-attach to a child that survived a re-exec; undefined when the pid is gone or now names another process. */
+/**
+ * Re-attach to a child that survived a re-exec: still this process's child and
+ * still exactly the recorded identity (Fura fork), else undefined.
+ */
 export function adoptChild(state: ManagedChildState): ManagedChild | undefined {
-	if (!isSameProcess(state.pid, state.startedAt)) return undefined;
-	return new RawManagedChild(state);
+	const pinned = pinIdentity(state.pid, state.identity);
+	if (!pinned || pinned.ppid !== process.pid) return undefined;
+	return new RawManagedChild(state, pinned);
 }

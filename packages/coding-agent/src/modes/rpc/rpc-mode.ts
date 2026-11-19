@@ -624,8 +624,8 @@ export class RpcInputDispatcher {
 			const command = parsed as RpcCommand;
 			this.#acceptInput?.(command);
 			// Bash and predict_word retain their immediate side channel. Prompts,
-			// steers, follow-ups, steer_subagent and handoff start through the serial tail, but
-			// dispatchRpcInputFrame backgrounds their admission.
+			// steers, follow-ups, steer_subagent and handoff start through the serial tail,
+			// but dispatchRpcInputFrame doesn't await their responses.
 			if (BACKGROUND_COMMANDS.has(command.type) && !(command.type === "btw_cancel" && "btwId" in command)) {
 				dispatchRpcInputFrame(command, this.#deps);
 				return;

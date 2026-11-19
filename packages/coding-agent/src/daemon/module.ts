@@ -53,8 +53,18 @@ export interface ManagedChild {
 	onStdout(sink: (chunk: Uint8Array) => void): void;
 	onStderr(sink: (chunk: Uint8Array) => void): void;
 	readonly exited: Promise<ChildExit>;
-	/** Signal the process group. */
+	/**
+	 * Signal the process tree. Fura fork: only through the identity pinned at spawn; without one
+	 * ({@link signalable} false) the call is refused and logged, never sent by pid.
+	 */
 	kill(signal?: NodeJS.Signals): void;
+	/** Fura fork: whether {@link kill} has a pinned identity to signal through. */
+	readonly signalable: boolean;
+	/**
+	 * Fura fork: TERM the pinned process tree and its group, then KILL whatever of it is left after
+	 * `gracefulMs`, even descendants that outlive the root. Resolves false without a pinned identity.
+	 */
+	terminate(gracefulMs: number): Promise<boolean>;
 	/**
 	 * Stop reading stdout and stderr without closing them; resolves once every
 	 * chunk read so far reached its sink. Unread output stays in the pipes.
@@ -69,6 +79,8 @@ export interface ManagedChild {
 export interface ManagedChildState {
 	pid: number;
 	startedAt: number;
+	/** Fura fork: exact native identity pinned at spawn; adoption without a match is refused. */
+	identity?: string;
 	stdin: number;
 	stdout: number;
 	stderr: number;

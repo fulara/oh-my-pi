@@ -205,6 +205,8 @@ export function parseDisasmUnitParams(value: unknown): DisasmUnitParams {
 const workerStateSchema = type({
 	pid: "number",
 	startedAt: "number | null",
+	/** Fura fork: exact native identity pinned at spawn; adoption and kills require it. */
+	"identity?": "string",
 	endpoint: "string",
 	token: "string",
 	logPath: "string",

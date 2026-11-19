@@ -30,7 +30,8 @@ the patch is dropped or upstream supersedes it.
 - Kept ACP mid-turn steering admission, permission-dialog wakeups and explicit pending-input removal compatible after the Fura fork refresh.
 - Supervised process launch refuses a native addon without the fork's process-identity API before starting a child, avoiding untracked processes when source and addon builds differ.
 - Distinct correlated user submissions with identical timestamps and content remain separate in persisted history.
-- Daemon recovery requires the persisted native process identity before adopting or stopping a process. Unverifiable resources remain visible and unmanaged across broker restarts; lifecycle commands refuse to control them.
+- Fura fork: the per-user omp daemon (OMP 19) signals units only through identities pinned while they were its own unreaped children: pipe children through their spawn-pinned `Process` (no `-pid`/pid fallback, nothing after the reap; a stop TERMs the pinned tree and group, then KILLs whatever is left, even descendants that outlive the root), PTY units through `PtySession.signal`/`kill`, detached units through a handle pinned at spawn. The store keeps each unit's exact `Process.identity()` (`pid_identity`); after a re-exec or crash a process is adopted or stopped only on an exact match (not upstream's 1 s start-time tolerance). An unverifiable live process stays on the board as `failed` with its pid and reason, is never signalled, and the unit refuses replace and restart while it runs. Disassembler workers follow the same rule: pinned at spawn, re-adopted or killed only on an exact identity, interrupted through the pin.
+- Fura fork: session activity reads a session's named services (owner = logical session) from an already running daemon without starting it (a daemon that is there but does not answer reports service state as unknown, not empty), with bounded logs only for the exact listed unit; `proc` units keep the `toolCallId` that started them on their snapshot.
 - Eval kernel shutdown retains process identities before polite exit and cleans up owned descendants without signalling stale process groups; interpreter probes use the same guarded process utility.
 - Isolated explicitly launched browser applications from the caller's process group; browser and sign-in cleanup now retain startup native ownership and original child exit proof, refuse missing ownership, and never recapture a PID or terminate a borrowed browser.
 - Preserved pinned process ownership during broken-pipe retirement; kernel regressions now exercise disposable real children without PID/group cleanup fallbacks.
@@ -51,6 +52,7 @@ the patch is dropped or upstream supersedes it.
 ## natives
 
 - Added `Process.identity()` for comparing pinned operating-system process instances across daemon recovery.
+- Fura fork: `PtySession.signal(signal)` delivers one signal to the PTY child tree through the identity pinned at spawn or adoption; PTY runs pin that identity before `onStart` can observe the child and never target the terminal's foreground process group.
 - Process-tree termination now protects Unix host ancestors and their groups, and revalidates pinned group ownership before escalation.
 
 ## utils

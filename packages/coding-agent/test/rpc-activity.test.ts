@@ -22,6 +22,13 @@ afterEach(async () => {
 async function fixture(ownerId: string | null = "Main") {
 	const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "omp-rpc-activity-"));
 	cleanups.push(() => fs.rm(cwd, { recursive: true, force: true }));
+	// Fura fork: services come from the per-user daemon; point it at a private, never-started dir.
+	const previousDaemonDir = process.env.OMP_DAEMON_DIR;
+	process.env.OMP_DAEMON_DIR = path.join(cwd, "daemon");
+	cleanups.push(() => {
+		if (previousDaemonDir === undefined) delete process.env.OMP_DAEMON_DIR;
+		else process.env.OMP_DAEMON_DIR = previousDaemonDir;
+	});
 	const manager = new AsyncJobManager({ retentionMs: 300_000 });
 	cleanups.push(async () => {
 		await manager.dispose();
@@ -95,7 +102,8 @@ describe("passive RPC activity", () => {
 		expect((await activity.detail("session-a", snapshot.generation, "job", own)).text).toBe("built");
 		expect(manager.isJobResultConsumed(own)).toBe(false);
 		expect(manager.getDeliveryState({ ownerId: "Main" })).toEqual(before);
-		expect(snapshot.sources.services.available).toBe(false);
+		// No daemon is running, so no session service can exist: reported, not unknown.
+		expect(snapshot.sources.services.available).toBe(true);
 	});
 
 	test("missing owner fails closed instead of falling back to global jobs", async () => {

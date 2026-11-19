@@ -24,7 +24,7 @@ import { hostHasInheritableConsole } from "../eval/py/spawn-options";
 import { TextTap } from "../job-widgets/text-tap";
 import { resolveDaemonSpawnOptions } from "../launch/spawn-options";
 import { renderTerminalOutput } from "../launch/terminal-output";
-import { adoptChild, isSameProcess, processStartTime, spawnManagedChild } from "./children";
+import { adoptChild, isSameProcess, pinIdentity, pinOwnChild, processStartTime, spawnManagedChild } from "./children";
 import type { DaemonModule, ManagedChild, ModuleClient, ModuleContext, ModuleTunnel, ModuleUnit } from "./module";
 import { moduleStateDir, unitLogDir } from "./paths";
 import {
@@ -108,6 +108,11 @@ interface ProcRuntime {
 	pty?: PtySession;
 	/** Detached launch of this daemon image; absent for a re-adopted one. */
 	detached?: { exited: boolean };
+	/**
+	 * Fura fork: signal authority of a detached unit, pinned at spawn or re-adopted only on an
+	 * exact identity match. Pipe and PTY units signal through their own child handles.
+	 */
+	process?: Process;
 	stopRequested: boolean;
 	/** Why the pending stop was requested; becomes `exitReason` when the process exits without its own error. */
 	stopReason?: string;
@@ -146,6 +151,8 @@ interface UnitEntry {
 	/** The idle timer fires no earlier than this: a lease holder's connection dropped and it may reconnect. */
 	idleNotBefore?: number;
 	pidStartedAt?: number;
+	/** Fura fork: exact native identity of `pids[0]`, recorded when it was pinned. */
+	pidIdentity?: string;
 	outputOffset: number;
 	completion: StoredCompletionState;
 	pendingCompletions: DaemonCompletionEvent[];
@@ -764,12 +771,11 @@ export class UnitTable {
 			if (process.platform === "win32" && runtime.pty) {
 				if (operation.signal === "SIGINT") runtime.pty.write("\u0003");
 				else runtime.pty.kill();
-			} else {
-				const pid = entry.snapshot.pids[0];
-				const processRef = pid === undefined ? null : Process.fromPid(pid);
-				if (!processRef) throw new Error(`Unit ${entry.snapshot.key} process is unavailable`);
-				processRef.killTree(SIGNAL_NUMBER[operation.signal]);
-			}
+			} else if (runtime.pty) runtime.pty.signal(SIGNAL_NUMBER[operation.signal]);
+			else if (runtime.child?.signalable) runtime.child.kill(operation.signal);
+			else if (runtime.process) runtime.process.killTree(SIGNAL_NUMBER[operation.signal]);
+			// Fura fork: no pinned identity, no signal; never a lookup by pid.
+			else throw new Error(`Unit ${entry.snapshot.key} has no verified process identity; refusing to signal it`);
 		}
 		return { unit: copySnapshot(entry.snapshot) };
 	}
@@ -1207,6 +1213,7 @@ export class UnitTable {
 		policy: UnitPolicy;
 		now: number;
 		owner?: string;
+		toolCallId?: string;
 		supervised: boolean;
 		proc?: ProcSpec;
 	}): UnitEntry {
@@ -1225,6 +1232,7 @@ export class UnitTable {
 				restartCount: 0,
 				outputBytes: 0,
 				owner: init.owner,
+				...(init.toolCallId === undefined ? {} : { toolCallId: init.toolCallId }),
 				leases: 0,
 				policy: init.policy,
 				command: init.proc ? [init.proc.application, ...init.proc.args].join(" ") : undefined,
@@ -1362,10 +1370,12 @@ export class UnitTable {
 			throw new Error('Windows batch files require application "cmd.exe" with the batch path after "/c"');
 		}
 		if (existing) {
+			this.#refuseUnverified(existing);
 			await this.#refreshDetached(existing);
 			if (!isTerminal(existing.snapshot.state)) {
 				await this.#stopEntry(existing, 2_000, "replaced");
 				if (!isTerminal(existing.snapshot.state)) throw new Error(`Service ${request.key} did not stop`);
+				this.#refuseUnverified(existing);
 			}
 			if (existing.pendingCompletions.length > 0 && !request.replace) {
 				throw new Error(`Service ${request.key} has unacknowledged completion notifications`);
@@ -1401,6 +1411,7 @@ export class UnitTable {
 			policy,
 			now,
 			owner: request.owner,
+			toolCallId: request.toolCallId,
 			supervised: true,
 			proc,
 		});
@@ -1606,6 +1617,7 @@ export class UnitTable {
 		entry.outputOffset = 0;
 		entry.childFds = undefined;
 		entry.pidStartedAt = undefined;
+		entry.pidIdentity = undefined;
 		syncReadyPending(entry);
 		runtime.notify?.notifier.stop();
 		runtime.notify = this.#armNotify(entry);
@@ -1625,9 +1637,11 @@ export class UnitTable {
 		this.#onLivenessChange();
 	}
 
-	#setPid(entry: UnitEntry, pid: number): void {
+	/** Record the unit's main process; `pinned` is its identity, captured before anything could reap it. */
+	#setPid(entry: UnitEntry, pid: number, pinned: Process | undefined = pinOwnChild(pid)): void {
 		entry.snapshot.pids = [pid];
-		entry.pidStartedAt = processStartTime(pid);
+		entry.pidStartedAt = pinned?.startTime() ?? processStartTime(pid);
+		entry.pidIdentity = pinned?.identity();
 		this.#transition(entry);
 	}
 
@@ -1750,7 +1764,10 @@ export class UnitTable {
 			child.unref();
 			const state = { exited: false };
 			runtime.detached = state;
-			this.#setPid(entry, child.pid);
+			// Bun reaps only from the event loop, so the child is still unreaped here.
+			const pinned = child.exitCode === null && child.signalCode === null ? pinOwnChild(child.pid) : undefined;
+			runtime.process = pinned;
+			this.#setPid(entry, child.pid, pinned);
 			void child.exited.then(
 				exitCode => {
 					state.exited = true;
@@ -1939,6 +1956,7 @@ export class UnitTable {
 		runtime.child = undefined;
 		runtime.pty = undefined;
 		runtime.detached = undefined;
+		runtime.process = undefined;
 		const snapshot = entry.snapshot;
 		snapshot.pids = [];
 		snapshot.exitedAt = Date.now();
@@ -1947,6 +1965,7 @@ export class UnitTable {
 		snapshot.readyPending = undefined;
 		snapshot.idleAt = undefined;
 		entry.pidStartedAt = undefined;
+		entry.pidIdentity = undefined;
 		entry.childFds = undefined;
 		clearTimeout(entry.idleTimer);
 		entry.idleTimer = undefined;
@@ -2016,10 +2035,50 @@ export class UnitTable {
 					entry.procRuntime !== undefined &&
 					isTerminal(entry.snapshot.state) &&
 					entry.pendingCompletions.length === 0 &&
-					scopeKey(entry.snapshot.scope) === scopeText,
+					scopeKey(entry.snapshot.scope) === scopeText &&
+					// Fura fork: the board keeps a unit whose unverified process still runs.
+					!this.#unverifiedAlive(entry),
 			)
 			.sort((left, right) => (right.snapshot.exitedAt ?? 0) - (left.snapshot.exitedAt ?? 0));
 		for (const entry of terminal.slice(MAX_TERMINAL_UNITS_PER_SCOPE)) this.#removeEntry(entry);
+	}
+
+	/**
+	 * Fura fork: a unit whose process is still running but cannot be verified (no pinned handle,
+	 * or an identity that no longer matches after a restart) stays on the board as `failed` with
+	 * its pid kept. It is never signalled, and nothing replaces or restarts it while it runs.
+	 */
+	#markUnverified(entry: UnitEntry, why: string): void {
+		const snapshot = entry.snapshot;
+		snapshot.state = "failed";
+		snapshot.exitedAt = Date.now();
+		snapshot.exitReason = `process ${snapshot.pids[0]} left running: ${why}`;
+		snapshot.readyPending = undefined;
+		snapshot.idleAt = undefined;
+		if (entry.procRuntime) entry.procRuntime.stopRequested = true;
+		logger.warn("Daemon unit process left running and unmanaged", { id: snapshot.id, pid: snapshot.pids[0], why });
+		// Its owner learns the unit left management, as for any other exit it was told to expect.
+		const owner = snapshot.owner;
+		let completion: DaemonCompletionEvent | undefined;
+		if (owner !== undefined && entry.completion.capable && entry.pendingCompletions.length === 0) {
+			completion = { ev: "completed", completionId: crypto.randomUUID(), owner, unit: copySnapshot(snapshot) };
+			entry.pendingCompletions.push(completion);
+		}
+		this.#transition(entry);
+		if (completion) this.#ownerConnections.get(owner!)?.connection.send(completion);
+	}
+
+	/** Whether `entry` is a {@link #markUnverified} unit whose process still runs. */
+	#unverifiedAlive(entry: UnitEntry): boolean {
+		const pid = entry.snapshot.pids[0];
+		return entry.snapshot.state === "failed" && pid !== undefined && isSameProcess(pid, entry.pidStartedAt);
+	}
+
+	#refuseUnverified(entry: UnitEntry): void {
+		if (!this.#unverifiedAlive(entry)) return;
+		throw new Error(
+			`Unit ${entry.snapshot.key} still has an unverified process ${entry.snapshot.pids[0]} running; stop it outside omp first`,
+		);
 	}
 
 	async #stopEntry(entry: UnitEntry, timeoutMs: number, reason: string, flush = false): Promise<void> {
@@ -2070,10 +2129,19 @@ export class UnitTable {
 		}
 		entry.snapshot.state = "stopping";
 		this.#transition(entry);
-		const pid = entry.snapshot.pids[0];
-		const processRef = pid === undefined ? null : Process.fromPid(pid);
-		if (processRef) await processRef.terminate({ group: true, gracefulMs: timeoutMs, timeoutMs: timeoutMs + 1_000 });
-		else runtime.pty?.kill();
+		// Fura fork: stop only through the unit's own pinned handles; never a pid or group lookup.
+		const child = runtime.child;
+		if (runtime.pty) runtime.pty.kill();
+		else if (child?.signalable) await child.terminate(timeoutMs);
+		else if (child) {
+			this.#markUnverified(entry, "no pinned process identity to stop it with");
+			return;
+		} else if (runtime.process) {
+			await runtime.process.terminate({ group: true, gracefulMs: timeoutMs, timeoutMs: timeoutMs + 1_000 });
+		} else if (entry.snapshot.pids.length > 0) {
+			this.#markUnverified(entry, "no verified process identity to stop it with");
+			return;
+		}
 		const settled = await this.#waitFor(entry, () => isTerminal(entry.snapshot.state), timeoutMs + 1_000);
 		if (!settled && runtime.pty) runtime.pty.kill();
 		if (!settled && !isTerminal(entry.snapshot.state)) {
@@ -2087,7 +2155,9 @@ export class UnitTable {
 		if (moduleRuntime) throw new Error(`Module unit ${entry.snapshot.key} restarts by being opened again`);
 		const runtime = entry.procRuntime;
 		if (!runtime) throw new Error(`Unit ${entry.snapshot.key} cannot be restarted`);
+		this.#refuseUnverified(entry);
 		await this.#stopEntry(entry, 2_000, "restarting");
+		this.#refuseUnverified(entry);
 		await runtime.log?.close();
 		runtime.log =
 			entry.snapshot.policy.survive === "detached"
@@ -2141,6 +2211,7 @@ export class UnitTable {
 		});
 		entry.snapshot = { ...stored.snapshot, leases: 0, idleAt: undefined };
 		entry.pidStartedAt = stored.pidStartedAt;
+		entry.pidIdentity = stored.pidIdentity;
 		entry.outputOffset = stored.outputOffset;
 		entry.completion = stored.completion;
 		entry.pendingCompletions = stored.pendingCompletions;
@@ -2214,6 +2285,12 @@ export class UnitTable {
 				logger.warn("Failed to read recovered detached output", { id: stored.id, error: errorMessage(error) });
 			}
 			entry.snapshot.supervised = false;
+			// Fura fork: a detached process is re-adopted only on an exact identity match.
+			runtime.process = pinIdentity(pid, stored.pidIdentity);
+			if (!runtime.process) {
+				this.#markUnverified(entry, "its identity cannot be verified after a daemon restart");
+				return;
+			}
 			// Its clients' leases died with the last daemon: give them time to reconnect and retake them.
 			entry.idleNotBefore = Date.now() + DAEMON_RESUME_LEASE_GRACE_MS;
 			runtime.notify = this.#armNotify(entry);
@@ -2236,7 +2313,13 @@ export class UnitTable {
 			return;
 		}
 		if (wasLive && pid !== undefined && isSameProcess(pid, stored.pidStartedAt)) {
-			await Process.fromPid(pid)?.terminate({ group: true, gracefulMs: 500, timeoutMs: 2_000 });
+			// Fura fork: only the exact recorded identity is stopped; anything unverifiable is reported.
+			const pinned = pinIdentity(pid, stored.pidIdentity);
+			if (!pinned) {
+				this.#markUnverified(entry, "its identity cannot be verified after a daemon restart");
+				return;
+			}
+			await pinned.terminate({ group: true, gracefulMs: 500, timeoutMs: 2_000 });
 		}
 		if (wasLive) {
 			entry.snapshot.state = "exited";
@@ -2245,6 +2328,7 @@ export class UnitTable {
 			entry.snapshot.exitReason = "daemon exited";
 			entry.snapshot.readyPending = undefined;
 			entry.pidStartedAt = undefined;
+			entry.pidIdentity = undefined;
 			runtime.stopRequested = true;
 			const owner = stored.owner;
 			if (owner && entry.completion.capable && entry.pendingCompletions.length === 0) {
@@ -2274,6 +2358,7 @@ export class UnitTable {
 				const child = adoptChild({
 					pid,
 					startedAt: entry.pidStartedAt ?? processStartTime(pid) ?? Date.now(),
+					identity: entry.pidIdentity,
 					stdin: fds.stdin,
 					stdout: fds.stdout,
 					stderr: fds.stderr,
@@ -2286,6 +2371,12 @@ export class UnitTable {
 				this.#claimInherited(...owned);
 				this.#wirePipeChild(entry, launch, child);
 			} else {
+				// Fura fork: the PTY child must still be this image's own child with the recorded identity.
+				if (pinIdentity(pid, entry.pidIdentity)?.ppid !== process.pid) {
+					await runtime.log.close();
+					runtime.log = undefined;
+					return false;
+				}
 				const session = PtySession.adopt(fds.master, pid);
 				this.#claimInherited(...owned);
 				runtime.pty = session;
@@ -2458,6 +2549,7 @@ export class UnitTable {
 				snapshot: { ...snapshot, leases: 0, idleAt: undefined },
 				pid: snapshot.pids[0],
 				pidStartedAt: entry.pidStartedAt,
+				pidIdentity: entry.pidIdentity,
 				childFds: entry.childFds,
 				moduleState: entry.moduleRuntime?.state,
 				outputOffset: entry.outputOffset,

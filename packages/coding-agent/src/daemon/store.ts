@@ -17,7 +17,8 @@ import {
 	type UnitSnapshot,
 } from "./protocol";
 
-const SCHEMA_VERSION = 1;
+/** 2: Fura fork's `pid_identity`. */
+const SCHEMA_VERSION = 2;
 
 /** Daemon-owned fds a `survive: "exec"` unit needs after an in-place re-exec. */
 export type StoredChildFds =
@@ -43,6 +44,8 @@ export interface StoredUnit {
 	pid?: number;
 	/** `Process.startTime()` of `pid`; guards re-adoption against pid reuse. */
 	pidStartedAt?: number;
+	/** Fura fork: exact `Process.identity()` of `pid`, required before it is adopted or signalled. */
+	pidIdentity?: string;
 	childFds?: StoredChildFds;
 	/** `ModuleUnit.snapshot()` captured before a re-exec. */
 	moduleState?: unknown;
@@ -65,6 +68,7 @@ interface UnitRow {
 	snapshot: string;
 	pid: number | null;
 	pid_started_at: number | null;
+	pid_identity: string | null;
 	child_fds: string | null;
 	module_state: string | null;
 	output_offset: number;
@@ -108,6 +112,7 @@ function migrate(db: Database): void {
 			db.run(`CREATE INDEX IF NOT EXISTS units_identity ON units(kind, scope_key, key)`);
 			db.run(`CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`);
 		}
+		if (version < 2) db.run(`ALTER TABLE units ADD COLUMN pid_identity TEXT`);
 		db.run(`PRAGMA user_version = ${SCHEMA_VERSION}`);
 	})();
 }
@@ -131,6 +136,7 @@ function decodeRow(row: UnitRow, env: Record<string, string> | undefined): Store
 		snapshot: JSON.parse(row.snapshot) as UnitSnapshot,
 		pid: row.pid ?? undefined,
 		pidStartedAt: row.pid_started_at ?? undefined,
+		pidIdentity: row.pid_identity ?? undefined,
 		childFds: row.child_fds === null ? undefined : (JSON.parse(row.child_fds) as StoredChildFds),
 		moduleState: row.module_state === null ? undefined : JSON.parse(row.module_state),
 		outputOffset: row.output_offset,
@@ -225,6 +231,7 @@ export class DaemonStore {
 			$snapshot: JSON.stringify(unit.snapshot),
 			$pid: unit.pid ?? null,
 			$pid_started_at: unit.pidStartedAt ?? null,
+			$pid_identity: unit.pidIdentity ?? null,
 			$child_fds: unit.childFds === undefined ? null : JSON.stringify(unit.childFds),
 			$module_state: unit.moduleState === undefined ? null : JSON.stringify(unit.moduleState),
 			$output_offset: unit.outputOffset,
@@ -241,13 +248,15 @@ export class DaemonStore {
 			this.#db
 				.query(
 					`INSERT INTO units (id, kind, scope, scope_key, key, label, policy, proc, env_hash, snapshot, pid,
-						pid_started_at, child_fds, module_state, output_offset, owner, completion, pending_completions, updated_at)
+						pid_started_at, pid_identity, child_fds, module_state, output_offset, owner, completion, pending_completions,
+						updated_at)
 					VALUES ($id, $kind, $scope, $scope_key, $key, $label, $policy, $proc, $env_hash, $snapshot, $pid,
-						$pid_started_at, $child_fds, $module_state, $output_offset, $owner, $completion, $pending_completions, $updated_at)
+						$pid_started_at, $pid_identity, $child_fds, $module_state, $output_offset, $owner, $completion,
+						$pending_completions, $updated_at)
 					ON CONFLICT(id) DO UPDATE SET kind = excluded.kind, scope = excluded.scope, scope_key = excluded.scope_key,
 						key = excluded.key, label = excluded.label, policy = excluded.policy, proc = excluded.proc,
 						env_hash = excluded.env_hash, snapshot = excluded.snapshot, pid = excluded.pid,
-						pid_started_at = excluded.pid_started_at, child_fds = excluded.child_fds,
+						pid_started_at = excluded.pid_started_at, pid_identity = excluded.pid_identity, child_fds = excluded.child_fds,
 						module_state = excluded.module_state, output_offset = excluded.output_offset, owner = excluded.owner,
 						completion = excluded.completion, pending_completions = excluded.pending_completions,
 						updated_at = excluded.updated_at`,

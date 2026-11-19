@@ -14,6 +14,7 @@ import { IpcConnection, Process, reapChild } from "@oh-my-pi/pi-natives";
 import { type FileLockHandle, logger, TempDir, untilAborted } from "@oh-my-pi/pi-utils";
 import { ToolError } from "@oh-my-pi/pi-tui/tools/tool-errors";
 import { hostHasInheritableConsole, shouldHideKernelWindow } from "../eval/py/spawn-options";
+import { pinIdentity, pinOwnChild, signalNumber } from "../daemon/children";
 import { stageRunnerScript } from "../eval/runner-cache";
 import type { DisasmBackend, WorkerRuntime } from "./backend";
 import { errorMessage, type WorkerState } from "./protocol";
@@ -154,6 +155,8 @@ export class DisasmWorker {
 	/** Worker process id. */
 	readonly pid: number;
 	readonly #startedAt: number | null;
+	/** Fura fork: the only signal authority, pinned at spawn or re-adopted on an exact identity match. */
+	readonly #pinned: Process | undefined;
 	readonly #endpoint: string;
 	readonly #token: string;
 	readonly #logPath: string;
@@ -195,7 +198,7 @@ export class DisasmWorker {
 		backend: DisasmBackend,
 		loc: DatabaseLocation,
 		lock: FileLockHandle,
-		child: { pid: number; startedAt: number | null; exited: Promise<number | null> },
+		child: { pid: number; startedAt: number | null; pinned: Process | undefined; exited: Promise<number | null> },
 		files: WorkerFiles & { token: string; aliasDir?: string },
 	) {
 		this.#backend = backend;
@@ -204,6 +207,7 @@ export class DisasmWorker {
 		this.fat = loc.fat;
 		this.pid = child.pid;
 		this.#startedAt = child.startedAt;
+		this.#pinned = child.pinned;
 		this.#idbPath = loc.openPath;
 		this.#lock = lock;
 		this.#endpoint = files.endpoint;
@@ -235,6 +239,7 @@ export class DisasmWorker {
 		await fs.promises.mkdir(path.dirname(files.endpoint), { recursive: true, mode: 0o700 });
 		await fs.promises.rm(files.endpoint, { force: true });
 		let pid: number;
+		let pinned: Process | undefined;
 		let exited: Promise<number>;
 		const log = fs.openSync(files.logPath, "a");
 		let alias: TempDir | undefined;
@@ -263,6 +268,8 @@ export class DisasmWorker {
 				}),
 			});
 			pid = proc.pid;
+			// Unreaped until the event loop reaps it: pin the worker's identity now.
+			pinned = proc.exitCode === null && proc.signalCode === null ? pinOwnChild(pid) : undefined;
 			exited = proc.exited;
 		} catch (error) {
 			await alias?.remove();
@@ -270,12 +277,12 @@ export class DisasmWorker {
 		} finally {
 			fs.closeSync(log);
 		}
-		const startedAt = Process.fromPid(pid)?.startTime() ?? null;
+		const startedAt = pinned?.startTime() ?? null;
 		return new DisasmWorker(
 			backend,
 			loc,
 			lock,
-			{ pid, startedAt, exited },
+			{ pid, startedAt, pinned, exited },
 			{ ...files, token, aliasDir: alias?.path() },
 		);
 	}
@@ -290,8 +297,9 @@ export class DisasmWorker {
 		state: WorkerState,
 		lock: FileLockHandle,
 	): DisasmWorker | undefined {
-		const proc = Process.fromPid(state.pid);
-		if (!proc || (state.startedAt !== null && proc.startTime() !== state.startedAt)) return undefined;
+		// Fura fork: only the exact recorded identity is re-adopted.
+		const proc = pinIdentity(state.pid, state.identity);
+		if (!proc) return undefined;
 		// Still our child after an in-place re-exec; re-parented to init after a crash.
 		const exited = reapChild(state.pid).then(
 			result => result.exitCode,
@@ -304,7 +312,7 @@ export class DisasmWorker {
 			backend,
 			loc,
 			lock,
-			{ pid: state.pid, startedAt: state.startedAt, exited },
+			{ pid: state.pid, startedAt: state.startedAt, pinned: proc, exited },
 			{ endpoint: state.endpoint, logPath: state.logPath, token: state.token, aliasDir: state.aliasDir },
 		);
 		worker.#idbPath = state.idbPath;
@@ -319,14 +327,13 @@ export class DisasmWorker {
 	 * remove its endpoint and alias dir.
 	 */
 	static async discard(state: WorkerState, options: { kill: boolean }): Promise<void> {
-		const proc = options.kill ? Process.fromPid(state.pid) : null;
-		if (proc && (state.startedAt === null || proc.startTime() === state.startedAt)) {
-			try {
-				if (process.platform === "win32") process.kill(state.pid, "SIGKILL");
-				else process.kill(-state.pid, "SIGKILL");
-			} catch {
-				// Already gone.
-			}
+		// Fura fork: kill only the exact recorded identity; an unverifiable worker is reported, not signalled.
+		const proc = options.kill ? pinIdentity(state.pid, state.identity) : undefined;
+		if (options.kill && !proc) {
+			logger.warn("Disassembler worker identity cannot be verified; not killing it", { pid: state.pid });
+		}
+		if (proc) {
+			proc.killTree(signalNumber("SIGKILL"));
 			// Still our child after an in-place re-exec (reap it); re-parented to init after a crash.
 			await reapChild(state.pid).then(
 				() => undefined,
@@ -409,6 +416,7 @@ export class DisasmWorker {
 		return {
 			pid: this.pid,
 			startedAt: this.#startedAt,
+			...(this.#pinned ? { identity: this.#pinned.identity() } : {}),
 			endpoint: this.#endpoint,
 			token: this.#token,
 			logPath: this.#logPath,
@@ -664,8 +672,12 @@ export class DisasmWorker {
 				if (process.platform === "win32" || this.#backend.interrupt === "frame") {
 					// Windows has no per-process SIGINT (kill terminates); the worker's reader thread handles this frame.
 					await this.#writeFrame(JSON.stringify({ interrupt: id }));
+				} else if (this.#pinned) {
+					this.#pinned.killTree(signalNumber("SIGINT"));
 				} else {
-					process.kill(this.pid, "SIGINT");
+					logger.warn(`${this.#backend.label} worker has no pinned identity; not interrupting it`, {
+						id: this.id,
+					});
 				}
 			} catch {
 				// Already gone: the exit handler rejects the pending response.
@@ -755,16 +767,13 @@ export class DisasmWorker {
 	/** SIGKILL the worker's session and wait for it to exit. */
 	async kill(): Promise<void> {
 		if (!this.#gone) {
-			try {
-				if (process.platform === "win32") process.kill(this.pid, "SIGKILL");
-				else process.kill(-this.pid, "SIGKILL");
-			} catch {
-				try {
-					process.kill(this.pid, "SIGKILL");
-				} catch {
-					// Already gone.
-				}
+			// Fura fork: never a numeric pid or session-group signal.
+			if (!this.#pinned) {
+				throw new ToolError(
+					`${this.#backend.label} worker for ${this.id} has no pinned identity; refusing to kill it`,
+				);
 			}
+			this.#pinned.killTree(signalNumber("SIGKILL"));
 		}
 		await this.#exited;
 	}

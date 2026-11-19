@@ -31,6 +31,7 @@ import {
 import { databaseRef, prepareStoreDir } from "../../disasm/store";
 import { DisasmWorker, type WorkerFiles } from "../../disasm/supervisor";
 import type { DaemonModule, ModuleContext, ModuleTunnel, ModuleUnit } from "../module";
+import { isSameProcess } from "../children";
 import { unitLogDir } from "../paths";
 import type { UnitPolicy } from "../protocol";
 
@@ -476,6 +477,16 @@ export const disasmModule: DaemonModule = {
 		}
 		const worker = DisasmWorker.adopt(DISASM_BACKENDS[backend], loc, snapshot.worker, lock);
 		if (!worker) {
+			const { pid, startedAt } = snapshot.worker;
+			if (isSameProcess(pid, startedAt ?? undefined)) {
+				// Fura fork: still running but its identity cannot be verified. It is neither adopted
+				// nor killed; this daemon keeps the database lock so no second worker opens it.
+				logger.warn(`${DISASM_BACKENDS[backend].label} worker identity cannot be verified; database stays locked`, {
+					id: loc.id,
+					pid,
+				});
+				return undefined;
+			}
 			// The worker exited meanwhile (or its pid was reused): clean up what it left behind.
 			lock.release();
 			await DisasmWorker.discard(snapshot.worker, { kill: false });

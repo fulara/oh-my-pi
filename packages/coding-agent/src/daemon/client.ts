@@ -1151,6 +1151,28 @@ export async function probeDaemon(): Promise<DaemonClient | undefined> {
 	}
 }
 
+/**
+ * Fura fork: {@link probeDaemon} for callers that must tell "no daemon" from "a daemon that did
+ * not answer". Undefined only when no token exists or nothing listens on the endpoint; a daemon
+ * that refuses, times out or is restarting rejects instead.
+ */
+export async function probeRunningDaemon(): Promise<DaemonClient | undefined> {
+	if (!(await readToken())) return undefined;
+	try {
+		(await dial()).destroy();
+	} catch {
+		return undefined;
+	}
+	const client = new DaemonConnection({ spawn: false, upgrade: false, reconnect: false });
+	try {
+		await client.connect();
+		return client;
+	} catch (error) {
+		client.close();
+		throw error;
+	}
+}
+
 /** How long smoke-test cleanup waits for the shut-down daemon to exit before removing its dir. */
 const SMOKE_DAEMON_EXIT_MS = 10_000;
 

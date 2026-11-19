@@ -717,6 +717,12 @@ export declare class PtySession {
   /** Force-kill the active PTY command. */
   kill(): void
   /**
+   * Send `signal` to the PTY command's tree through the identity pinned
+   * when it was spawned or adopted, never by a PID or process-group lookup
+   * (Fura fork). The run keeps going; its exit is reported as usual.
+   */
+  signal(signal: number): void
+  /**
    * Stop reading output without closing the master. Resolves once every
    * chunk read before the pause has been delivered to `onChunk`, including
    * partial UTF-8 held by the decoder (flushed lossily); unread bytes stay in

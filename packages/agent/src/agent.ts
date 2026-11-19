@@ -27,7 +27,6 @@ import { openAIResponsesReplaysNativeHistory } from "@oh-my-pi/pi-ai/providers/o
 import type { HarmonyAuditEvent } from "@oh-my-pi/pi-ai/utils/harmony-leak";
 import { getBundledModel } from "@oh-my-pi/pi-catalog/models";
 import { logger, untilAborted } from "@oh-my-pi/pi-utils";
-import * as snapcompact from "@oh-my-pi/snapcompact";
 import {
 	abortReasonText,
 	agentLoop,
