@@ -115,6 +115,7 @@ export type RpcCommand =
 	| { id?: string; type: "get_tree" }
 	| { id?: string; type: "set_todos"; phases: TodoPhase[] }
 	| { id?: string; type: "set_host_tools"; tools: RpcHostToolDefinition[] }
+	| { id?: string; type: "host_job_settle"; jobId: string; text: string; isError?: boolean }
 	| { id?: string; type: "set_active_tools"; toolNames: string[] }
 	| { id?: string; type: "set_host_uri_schemes"; schemes: RpcHostUriSchemeDefinition[] }
 	| { id?: string; type: "set_subagent_subscription"; level: RpcSubagentSubscriptionLevel }
@@ -619,6 +620,7 @@ export type RpcResponse =
 	  }
 	| { id?: string; type: "response"; command: "set_todos"; success: true; data: { todoPhases: TodoPhase[] } }
 	| { id?: string; type: "response"; command: "set_host_tools"; success: true; data: { toolNames: string[] } }
+	| { id?: string; type: "response"; command: "host_job_settle"; success: true }
 	| { id?: string; type: "response"; command: "set_active_tools"; success: true; data: { toolNames: string[] } }
 	| { id?: string; type: "response"; command: "set_host_uri_schemes"; success: true; data: { schemes: string[] } }
 	| {
@@ -1047,12 +1049,32 @@ export interface RpcHostToolUpdate {
 	partialResult: AgentToolResult<unknown>;
 }
 
+/** Turns a successful host tool result into a background job of the calling agent. */
+export interface RpcHostToolBackground {
+	/** Job id; must not name a job that is already registered. */
+	jobId: string;
+	/** Job label shown in job listings and activity. */
+	label: string;
+}
+
 /** Sent by the host to complete a pending tool call. */
 export interface RpcHostToolResult {
 	type: "host_tool_result";
 	id: string;
 	result: AgentToolResult<unknown>;
 	isError?: boolean;
+	/**
+	 * Registers a `host` background job owned by the calling agent; the call
+	 * resolves with `result` at once and `host_job_settle` delivers the job's
+	 * completion. Ignored when `isError` is true.
+	 */
+	background?: RpcHostToolBackground;
+}
+
+/** Emitted when a host background job was cancelled by the agent or a session abort/shutdown. */
+export interface RpcHostJobCancelFrame {
+	type: "host_job_cancel";
+	jobId: string;
 }
 
 // ============================================================================

@@ -1,0 +1,16 @@
+{
+  "type": "host_tool_result",
+  "id": "host-call-2",
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "Started turn in session Reviewer as background job fura-session-1"
+      }
+    ]
+  },
+  "background": {
+    "jobId": "fura-session-1",
+    "label": "Session Reviewer"
+  }
+}

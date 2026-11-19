@@ -65,6 +65,11 @@
     "file": "command-get-state.json"
   },
   {
+    "name": "command-host-job-settle",
+    "category": "host-tool",
+    "file": "command-host-job-settle.json"
+  },
+  {
     "name": "command-negotiate-protocol",
     "category": "command",
     "file": "command-negotiate-protocol.json"
@@ -195,6 +200,11 @@
     "file": "extension-ui-request-select.json"
   },
   {
+    "name": "host-job-cancel",
+    "category": "host-tool",
+    "file": "host-job-cancel.json"
+  },
+  {
     "name": "host-tool-call",
     "category": "host-tool",
     "file": "host-tool-call.json"
@@ -208,6 +218,11 @@
     "name": "host-tool-result",
     "category": "host-tool",
     "file": "host-tool-result.json"
+  },
+  {
+    "name": "host-tool-result-background",
+    "category": "host-tool",
+    "file": "host-tool-result-background.json"
   },
   {
     "name": "host-tool-update",
@@ -343,6 +358,11 @@
     "name": "response-get-state",
     "category": "response",
     "file": "response-get-state.json"
+  },
+  {
+    "name": "response-host-job-settle",
+    "category": "host-tool",
+    "file": "response-host-job-settle.json"
   },
   {
     "name": "response-negotiate-protocol",

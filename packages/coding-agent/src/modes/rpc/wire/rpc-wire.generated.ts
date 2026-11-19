@@ -1668,12 +1668,28 @@ export interface HostToolUpdate {
 	partialResult: HostToolResultPayload;
 }
 
+/** Background job a successful host tool result starts for the calling agent. */
+export interface HostToolBackground {
+	/** Job id; a call naming an already registered job fails. */
+	jobId: string;
+	/** Job label shown in job listings and activity. */
+	label: string;
+}
+
 /** Completes a pending host tool call; `isError` surfaces the content as a tool error. */
 export interface HostToolResult {
 	type: "host_tool_result";
 	id: string;
 	result: HostToolResultPayload;
 	isError?: boolean;
+	/** Register a `host` background job owned by the calling agent; the call resolves with `result` at once and `host_job_settle` completes the job. Ignored with `isError`. */
+	background?: HostToolBackground;
+}
+
+/** A host background job was cancelled by the agent or a session abort/shutdown; a later `host_job_settle` for it fails. */
+export interface HostJobCancelEvent {
+	type: "host_job_cancel";
+	jobId: string;
 }
 
 export type HostUriOperation = "read" | "write";
@@ -1747,7 +1763,7 @@ export interface HostUriSchemeDefinition {
 }
 
 /** Unsolicited outbound frame (everything except responses and host tool/URI requests), discriminated by `type`. */
-export type RpcNotification = ReadyEvent | PromptResultEvent | SessionSettledEvent | ExtensionError | ExtensionUiRequest | AvailableCommandsUpdateEvent | SubagentLifecycleEvent | SubagentProgressEvent | SubagentEvent | LivePhaseEvent | LiveLevelsEvent | LiveTranscriptEvent | LiveEndEvent | DictationStateEvent | DictationTranscriptEvent | DictationEndEvent | BtwDeltaEvent | BtwRecordEvent | BtwUpdateEvent | CommandOutputEvent | SessionInfoUpdateEvent | ConfigUpdateEvent | RpcFrameErrorEvent | RpcAgentEvent;
+export type RpcNotification = ReadyEvent | PromptResultEvent | SessionSettledEvent | ExtensionError | ExtensionUiRequest | AvailableCommandsUpdateEvent | SubagentLifecycleEvent | SubagentProgressEvent | SubagentEvent | LivePhaseEvent | LiveLevelsEvent | LiveTranscriptEvent | LiveEndEvent | DictationStateEvent | DictationTranscriptEvent | DictationEndEvent | BtwDeltaEvent | BtwRecordEvent | BtwUpdateEvent | CommandOutputEvent | SessionInfoUpdateEvent | ConfigUpdateEvent | RpcFrameErrorEvent | HostJobCancelEvent | RpcAgentEvent;
 
 /** Any frame the server writes to stdout (after reassembling `rpc_chunk` sequences), discriminated by `type`. */
 export type RpcServerFrame = RpcResponse | RpcHostRequest | RpcNotification;
@@ -1941,6 +1957,14 @@ export interface SetHostToolsParams {
 
 export interface SetHostToolsResult {
 	toolNames: string[];
+}
+
+export interface HostJobSettleParams {
+	jobId: string;
+	/** Result delivered to the owning agent; the failure reason when `isError` is true. */
+	text: string;
+	/** Settle the job as failed. */
+	isError?: boolean;
 }
 
 export interface SetHostUriSchemesParams {
@@ -2244,6 +2268,7 @@ export interface RpcWireCommands {
 	set_todos: { params: SetTodosParams; result: SetTodosResult };
 	set_active_tools: { params: SetActiveToolsParams; result: SetActiveToolsResult };
 	set_host_tools: { params: SetHostToolsParams; result: SetHostToolsResult };
+	host_job_settle: { params: HostJobSettleParams; result: undefined };
 	set_host_uri_schemes: { params: SetHostUriSchemesParams; result: SetHostUriSchemesResult };
 	set_subagent_subscription: { params: SetSubagentSubscriptionParams; result: SetSubagentSubscriptionResult };
 	set_event_filter: { params: SetEventFilterParams; result: SetEventFilterResult };

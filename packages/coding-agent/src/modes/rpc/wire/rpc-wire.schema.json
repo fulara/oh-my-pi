@@ -373,6 +373,17 @@
 				"clientOmit": []
 			},
 			{
+				"name": "host_job_settle",
+				"doc": "Complete a running host background job (see `HostToolResult.background`); its text reaches the owning agent as an async result.",
+				"params": "HostJobSettleParams",
+				"result": null,
+				"nullable": false,
+				"unwrap": null,
+				"timeoutMs": null,
+				"completion": null,
+				"clientOmit": []
+			},
+			{
 				"name": "set_host_uri_schemes",
 				"doc": "Replace the host-owned URI schemes.",
 				"params": "SetHostUriSchemesParams",
@@ -6661,6 +6672,24 @@
 			],
 			"description": "Streams partial output of a pending host tool call."
 		},
+		"HostToolBackground": {
+			"type": "object",
+			"properties": {
+				"jobId": {
+					"type": "string",
+					"description": "Job id; a call naming an already registered job fails."
+				},
+				"label": {
+					"type": "string",
+					"description": "Job label shown in job listings and activity."
+				}
+			},
+			"required": [
+				"jobId",
+				"label"
+			],
+			"description": "Background job a successful host tool result starts for the calling agent."
+		},
 		"HostToolResult": {
 			"type": "object",
 			"properties": {
@@ -6675,6 +6704,10 @@
 				},
 				"isError": {
 					"type": "boolean"
+				},
+				"background": {
+					"$ref": "#/$defs/HostToolBackground",
+					"description": "Register a `host` background job owned by the calling agent; the call resolves with `result` at once and `host_job_settle` completes the job. Ignored with `isError`."
 				}
 			},
 			"required": [
@@ -6683,6 +6716,22 @@
 				"result"
 			],
 			"description": "Completes a pending host tool call; `isError` surfaces the content as a tool error."
+		},
+		"HostJobCancelEvent": {
+			"type": "object",
+			"properties": {
+				"type": {
+					"const": "host_job_cancel"
+				},
+				"jobId": {
+					"type": "string"
+				}
+			},
+			"required": [
+				"type",
+				"jobId"
+			],
+			"description": "A host background job was cancelled by the agent or a session abort/shutdown; a later `host_job_settle` for it fails."
 		},
 		"HostUriOperation": {
 			"enum": [
@@ -6979,6 +7028,9 @@
 				},
 				{
 					"$ref": "#/$defs/RpcFrameErrorEvent"
+				},
+				{
+					"$ref": "#/$defs/HostJobCancelEvent"
 				},
 				{
 					"$ref": "#/$defs/RpcAgentEvent"
@@ -7556,6 +7608,26 @@
 			},
 			"required": [
 				"toolNames"
+			]
+		},
+		"HostJobSettleParams": {
+			"type": "object",
+			"properties": {
+				"jobId": {
+					"type": "string"
+				},
+				"text": {
+					"type": "string",
+					"description": "Result delivered to the owning agent; the failure reason when `isError` is true."
+				},
+				"isError": {
+					"type": "boolean",
+					"description": "Settle the job as failed."
+				}
+			},
+			"required": [
+				"jobId",
+				"text"
 			]
 		},
 		"SetHostUriSchemesParams": {

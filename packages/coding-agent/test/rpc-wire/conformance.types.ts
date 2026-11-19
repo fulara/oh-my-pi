@@ -34,6 +34,7 @@ import type {
 	RpcDictationTranscriptFrame,
 	RpcExtensionUIRequest,
 	RpcExtensionUIResponse,
+	RpcHostJobCancelFrame,
 	RpcHostToolCallRequest,
 	RpcHostToolCancelRequest,
 	RpcHostToolDefinition,
@@ -227,6 +228,7 @@ export type Frames = Assert<
 		btwError: Outbound<Extract<RpcBtwUpdateFrame, { state: "error" }>, Wire.BtwErrorEvent>;
 		hostToolCall: Outbound<RpcHostToolCallRequest, Wire.HostToolCallRequest>;
 		hostToolCancel: Outbound<RpcHostToolCancelRequest, Wire.HostToolCancelRequest>;
+		hostJobCancel: Outbound<RpcHostJobCancelFrame, Wire.HostJobCancelEvent>;
 		hostUriRequest: Outbound<RpcHostUriRequest, Wire.HostUriRequest>;
 		hostUriCancel: Outbound<RpcHostUriCancelRequest, Wire.HostUriCancelRequest>;
 		askQuestion: Outbound<RpcAskDialogQuestion, Wire.AskQuestion>;
@@ -236,6 +238,7 @@ export type Frames = Assert<
 		hostUriScheme: Inbound<Wire.HostUriSchemeDefinition, RpcHostUriSchemeDefinition>;
 		hostToolUpdate: Inbound<Wire.HostToolUpdate, RpcHostToolUpdate>;
 		hostToolResult: Inbound<Wire.HostToolResult, RpcHostToolResult>;
+		hostToolBackground: Inbound<Wire.HostToolBackground, NonNullable<RpcHostToolResult["background"]>>;
 		hostToolPayload: Inbound<Wire.HostToolResultPayload, RpcHostToolResult["result"]>;
 		hostUriResult: Inbound<Wire.HostUriResult, RpcHostUriResult>;
 		uiValue: Inbound<Wire.ValueUiResponse, Extract<RpcExtensionUIResponse, { value: unknown }>>;

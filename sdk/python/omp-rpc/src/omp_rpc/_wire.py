@@ -1899,6 +1899,13 @@ class AskAnswer:
 
 
 @dataclass(slots=True, frozen=True, kw_only=True)
+class HostJobCancelEvent:
+    """A host background job was cancelled by the agent or a session abort/shutdown; a later `host_job_settle` for it fails."""
+    type: Literal["host_job_cancel"] = "host_job_cancel"
+    job_id: str
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
 class HostToolDefinition:
     name: str
     description: str
@@ -1989,7 +1996,7 @@ RpcAgentEvent: TypeAlias = AgentStartEvent | AgentEndEvent | TurnStartEvent | Tu
 BtwUpdateEvent: TypeAlias = BtwStartedEvent | BtwStreamingEvent | BtwCompletedEvent | BtwCancelledEvent | BtwErrorEvent
 
 
-RpcNotification: TypeAlias = ReadyEvent | PromptResultEvent | SessionSettledEvent | ExtensionError | ExtensionUiRequest | AvailableCommandsUpdateEvent | SubagentLifecycleEvent | SubagentProgressEvent | SubagentEvent | LivePhaseEvent | LiveLevelsEvent | LiveTranscriptEvent | LiveEndEvent | DictationStateEvent | DictationTranscriptEvent | DictationEndEvent | BtwDeltaEvent | BtwRecordEvent | BtwUpdateEvent | CommandOutputEvent | SessionInfoUpdateEvent | ConfigUpdateEvent | RpcFrameErrorEvent | RpcAgentEvent | UnknownNotification
+RpcNotification: TypeAlias = ReadyEvent | PromptResultEvent | SessionSettledEvent | ExtensionError | ExtensionUiRequest | AvailableCommandsUpdateEvent | SubagentLifecycleEvent | SubagentProgressEvent | SubagentEvent | LivePhaseEvent | LiveLevelsEvent | LiveTranscriptEvent | LiveEndEvent | DictationStateEvent | DictationTranscriptEvent | DictationEndEvent | BtwDeltaEvent | BtwRecordEvent | BtwUpdateEvent | CommandOutputEvent | SessionInfoUpdateEvent | ConfigUpdateEvent | RpcFrameErrorEvent | HostJobCancelEvent | RpcAgentEvent | UnknownNotification
 """Unsolicited outbound frame (everything except responses and host tool/URI requests), discriminated by `type`."""
 
 
@@ -3682,6 +3689,14 @@ def parse_ask_answer(value: object, path: str = "AskAnswer") -> AskAnswer:
     )
 
 
+def parse_host_job_cancel_event(value: object, path: str = "HostJobCancelEvent") -> HostJobCancelEvent:
+    payload = expect_object(value, path)
+    required(payload, "type", cast('Decoder[Literal["host_job_cancel"]]', literal(frozenset({"host_job_cancel"}))), path)
+    return HostJobCancelEvent(
+        job_id=required(payload, "jobId", decode_str, path),
+    )
+
+
 def parse_host_tool_definition(value: object, path: str = "HostToolDefinition") -> HostToolDefinition:
     payload = expect_object(value, path)
     return HostToolDefinition(
@@ -3864,6 +3879,7 @@ _RPC_NOTIFICATION_CASES: Final[dict[str, Decoder[RpcNotification]]] = {
         "session_info_update": parse_session_info_update_event,
         "config_update": parse_config_update_event,
         "rpc_frame_error": parse_rpc_frame_error_event,
+        "host_job_cancel": parse_host_job_cancel_event,
         "agent_start": parse_rpc_agent_event,
         "agent_end": parse_rpc_agent_event,
         "turn_start": parse_rpc_agent_event,
@@ -4106,6 +4122,15 @@ class WireClient:
         params: dict[str, object] = {}
         params["toolNames"] = list(tool_names)
         return required(expect_object(self._command("set_active_tools", params), "set_active_tools"), "toolNames", array(decode_str), "set_active_tools")
+
+    def host_job_settle(self, job_id: str, text: str, *, is_error: bool | None = None) -> None:
+        """Complete a running host background job (see `HostToolResult.background`); its text reaches the owning agent as an async result."""
+        params: dict[str, object] = {}
+        params["jobId"] = job_id
+        params["text"] = text
+        if is_error is not None:
+            params["isError"] = is_error
+        self._command("host_job_settle", params)
 
     def set_subagent_subscription(self, level: SubagentSubscriptionLevel) -> SubagentSubscriptionLevel:
         """Select which subagent frames are forwarded."""
@@ -4528,6 +4553,10 @@ class WireClient:
         """Subscribe to `rpc_frame_error`: An event could not fit within the transport limits and was dropped."""
         return self._listen("rpc_frame_error", listener)
 
+    def on_host_job_cancel(self, listener: Callable[[HostJobCancelEvent], None]) -> Callable[[], None]:
+        """Subscribe to `host_job_cancel`: A host background job was cancelled by the agent or a session abort/shutdown; a later `host_job_settle` for it fails."""
+        return self._listen("host_job_cancel", listener)
+
     def on_agent_start(self, listener: Callable[[AgentStartEvent], None]) -> Callable[[], None]:
         """Subscribe to `agent_start` frames."""
         return self._listen("agent_start", listener)
@@ -4768,6 +4797,7 @@ __all__ = [
     "GoalUpdatedEvent",
     "HandoffResult",
     "HookMessage",
+    "HostJobCancelEvent",
     "HostToolDefinition",
     "HostUriSchemeDefinition",
     "ImageContent",
@@ -4985,6 +5015,7 @@ __all__ = [
     "parse_goal_updated_event",
     "parse_handoff_result",
     "parse_hook_message",
+    "parse_host_job_cancel_event",
     "parse_host_tool_definition",
     "parse_host_uri_scheme_definition",
     "parse_image_content",

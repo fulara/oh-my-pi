@@ -1,0 +1,6 @@
+{
+  "id": "settle-1",
+  "type": "host_job_settle",
+  "jobId": "fura-session-1",
+  "text": "Session Reviewer finished:\n\nNo findings."
+}

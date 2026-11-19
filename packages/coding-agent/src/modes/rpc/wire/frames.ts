@@ -313,9 +313,29 @@ export const frameDefs = {
 		{ type: "'host_tool_update'", id: "string", partialResult: "HostToolResultPayload" },
 		"Streams partial output of a pending host tool call.",
 	),
+	HostToolBackground: doc(
+		{
+			jobId: doc("string", "Job id; a call naming an already registered job fails."),
+			label: doc("string", "Job label shown in job listings and activity."),
+		},
+		"Background job a successful host tool result starts for the calling agent.",
+	),
 	HostToolResult: doc(
-		{ type: "'host_tool_result'", id: "string", result: "HostToolResultPayload", "isError?": "boolean" },
+		{
+			type: "'host_tool_result'",
+			id: "string",
+			result: "HostToolResultPayload",
+			"isError?": "boolean",
+			"background?": doc(
+				"HostToolBackground",
+				"Register a `host` background job owned by the calling agent; the call resolves with `result` at once and `host_job_settle` completes the job. Ignored with `isError`.",
+			),
+		},
 		"Completes a pending host tool call; `isError` surfaces the content as a tool error.",
+	),
+	HostJobCancelEvent: doc(
+		{ type: "'host_job_cancel'", jobId: "string" },
+		"A host background job was cancelled by the agent or a session abort/shutdown; a later `host_job_settle` for it fails.",
 	),
 	HostUriOperation: "'read' | 'write'",
 	HostUriRequest: {

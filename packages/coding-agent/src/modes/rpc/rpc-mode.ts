@@ -83,6 +83,7 @@ import { claimRpcInput, readRpcInputFrames } from "./rpc-input";
 import { pageRpcMessages, RPC_MESSAGES_PAGE_BUSY_ERROR, RpcMessagesPageError } from "./rpc-messages";
 import { RpcBtwController } from "./rpc-btw";
 import { RpcGoalController } from "./rpc-goal";
+import { RpcHostJobs } from "./rpc-host-jobs";
 import { RpcDictationBridge, type RpcDictationControllerFactory } from "./rpc-dictation";
 import { RpcLiveBridge, type RpcLiveSessionFactory } from "./rpc-live";
 import { RpcOutputWriter } from "./rpc-output";
@@ -1791,7 +1792,10 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 	const sessionEvents = new RpcSessionEventForwarder(output);
 
 	const pendingExtensionRequests = new RpcPendingExtensionRequests();
-	const hostToolBridge = new RpcHostToolBridge(output);
+	const hostJobs = new RpcHostJobs(session, output);
+	const hostToolBridge = new RpcHostToolBridge(output, (background, toolCallId) =>
+		hostJobs.start(background, toolCallId),
+	);
 	const hostUriBridge = new RpcHostUriBridge(output);
 	// Live frames go straight to `output`, so `set_event_filter` (session events only) never drops them.
 	const liveBridge = new RpcLiveBridge(session, output, createLiveSession);
@@ -2751,6 +2755,18 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 				const rpcTools = hostToolBridge.setTools(tools);
 				await session.refreshRpcHostTools(rpcTools);
 				return success(id, "set_host_tools", { toolNames: tools.map(tool => tool.name) });
+			}
+
+			case "host_job_settle": {
+				if (typeof command.jobId !== "string" || typeof command.text !== "string") {
+					return error(id, "host_job_settle", "host_job_settle requires string jobId and text");
+				}
+				try {
+					hostJobs.settle(command.jobId, command.text, command.isError === true);
+				} catch (err) {
+					return error(id, "host_job_settle", err instanceof Error ? err.message : String(err));
+				}
+				return success(id, "host_job_settle");
 			}
 
 			case "live_start":

@@ -1,0 +1,6 @@
+{
+  "id": "settle-1",
+  "type": "response",
+  "command": "host_job_settle",
+  "success": true
+}

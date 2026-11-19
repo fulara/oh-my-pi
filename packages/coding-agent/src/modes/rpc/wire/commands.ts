@@ -231,6 +231,15 @@ export const rpcCommands: readonly RpcCommandSpec[] = [
 		unwrap: "toolNames",
 	},
 	{
+		name: "host_job_settle",
+		doc: "Complete a running host background job (see `HostToolResult.background`); its text reaches the owning agent as an async result.",
+		params: {
+			jobId: "string",
+			text: doc("string", "Result delivered to the owning agent; the failure reason when `isError` is true."),
+			"isError?": doc("boolean", "Settle the job as failed."),
+		},
+	},
+	{
 		name: "set_host_uri_schemes",
 		doc: "Replace the host-owned URI schemes.",
 		params: { schemes: "HostUriSchemeDefinition[]" },

@@ -7284,11 +7284,37 @@ func (v HostToolUpdate) MarshalJSON() ([]byte, error) {
 	return encodeObject(plain(v), `"type":"host_tool_update"`, nil)
 }
 
+// Background job a successful host tool result starts for the calling agent.
+type HostToolBackground struct {
+	// Job id; a call naming an already registered job fails.
+	JobID string `json:"jobId"`
+	// Job label shown in job listings and activity.
+	Label string `json:"label"`
+}
+
+func (v *HostToolBackground) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "HostToolBackground", v.decodeFrom)
+}
+
+func (v *HostToolBackground) decodeFrom(raw map[string]json.RawMessage) error {
+	var out HostToolBackground
+	d := fieldDecoder{raw: raw, owner: "HostToolBackground"}
+	d.required("jobId", &out.JobID)
+	d.required("label", &out.Label)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
 // Completes a pending host tool call; `isError` surfaces the content as a tool error.
 type HostToolResult struct {
 	ID      string                `json:"id"`
 	Result  HostToolResultPayload `json:"result"`
 	IsError *bool                 `json:"isError,omitempty"`
+	// Register a `host` background job owned by the calling agent; the call resolves with `result` at once and `host_job_settle` completes the job. Ignored with `isError`.
+	Background *HostToolBackground `json:"background,omitempty"`
 }
 
 func (v *HostToolResult) UnmarshalJSON(data []byte) error {
@@ -7302,6 +7328,7 @@ func (v *HostToolResult) decodeFrom(raw map[string]json.RawMessage) error {
 	d.required("id", &out.ID)
 	d.required("result", &out.Result)
 	d.optional("isError", &out.IsError)
+	d.optional("background", &out.Background)
 	if d.err != nil {
 		return d.err
 	}
@@ -7312,6 +7339,32 @@ func (v *HostToolResult) decodeFrom(raw map[string]json.RawMessage) error {
 func (v HostToolResult) MarshalJSON() ([]byte, error) {
 	type plain HostToolResult
 	return encodeObject(plain(v), `"type":"host_tool_result"`, nil)
+}
+
+// A host background job was cancelled by the agent or a session abort/shutdown; a later `host_job_settle` for it fails.
+type HostJobCancelEvent struct {
+	JobID string `json:"jobId"`
+}
+
+func (v *HostJobCancelEvent) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "HostJobCancelEvent", v.decodeFrom)
+}
+
+func (v *HostJobCancelEvent) decodeFrom(raw map[string]json.RawMessage) error {
+	var out HostJobCancelEvent
+	d := fieldDecoder{raw: raw, owner: "HostJobCancelEvent"}
+	d.constant("type", "host_job_cancel")
+	d.required("jobId", &out.JobID)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
+func (v HostJobCancelEvent) MarshalJSON() ([]byte, error) {
+	type plain HostJobCancelEvent
+	return encodeObject(plain(v), `"type":"host_job_cancel"`, nil)
 }
 
 type HostUriOperation string
@@ -7675,6 +7728,7 @@ func (CommandOutputEvent) isRpcNotification()           {}
 func (SessionInfoUpdateEvent) isRpcNotification()       {}
 func (ConfigUpdateEvent) isRpcNotification()            {}
 func (RpcFrameErrorEvent) isRpcNotification()           {}
+func (HostJobCancelEvent) isRpcNotification()           {}
 func (AgentStartEvent) isRpcNotification()              {}
 func (AgentEndEvent) isRpcNotification()                {}
 func (TurnStartEvent) isRpcNotification()               {}
@@ -7769,6 +7823,8 @@ func (v *RpcNotification) UnmarshalJSON(data []byte) error {
 		value, err = decodeVariant[ConfigUpdateEvent](raw)
 	case "rpc_frame_error":
 		value, err = decodeVariant[RpcFrameErrorEvent](raw)
+	case "host_job_cancel":
+		value, err = decodeVariant[HostJobCancelEvent](raw)
 	case "agent_start":
 		value, err = decodeVariant[AgentStartEvent](raw)
 	case "agent_end":
@@ -7886,6 +7942,7 @@ func (CommandOutputEvent) isRpcServerFrame()           {}
 func (SessionInfoUpdateEvent) isRpcServerFrame()       {}
 func (ConfigUpdateEvent) isRpcServerFrame()            {}
 func (RpcFrameErrorEvent) isRpcServerFrame()           {}
+func (HostJobCancelEvent) isRpcServerFrame()           {}
 func (AgentStartEvent) isRpcServerFrame()              {}
 func (AgentEndEvent) isRpcServerFrame()                {}
 func (TurnStartEvent) isRpcServerFrame()               {}
@@ -7990,6 +8047,8 @@ func (v *RpcServerFrame) UnmarshalJSON(data []byte) error {
 		value, err = decodeVariant[ConfigUpdateEvent](raw)
 	case "rpc_frame_error":
 		value, err = decodeVariant[RpcFrameErrorEvent](raw)
+	case "host_job_cancel":
+		value, err = decodeVariant[HostJobCancelEvent](raw)
 	case "agent_start":
 		value, err = decodeVariant[AgentStartEvent](raw)
 	case "agent_end":
@@ -9140,6 +9199,20 @@ func (c Commands) SetHostTools(ctx context.Context, p SetHostToolsCommand) ([]st
 	var out SetHostToolsResult
 	err := c.call(ctx, "set_host_tools", p, 0, &out)
 	return out.ToolNames, err
+}
+
+// HostJobSettleCommand holds the parameters of "host_job_settle".
+type HostJobSettleCommand struct {
+	JobID string `json:"jobId"`
+	// Result delivered to the owning agent; the failure reason when `isError` is true.
+	Text string `json:"text"`
+	// Settle the job as failed.
+	IsError *bool `json:"isError,omitempty"`
+}
+
+// HostJobSettle sends "host_job_settle": Complete a running host background job (see `HostToolResult.background`); its text reaches the owning agent as an async result.
+func (c Commands) HostJobSettle(ctx context.Context, p HostJobSettleCommand) error {
+	return c.call(ctx, "host_job_settle", p, 0, nil)
 }
 
 // SetHostURISchemesCommand holds the parameters of "set_host_uri_schemes".

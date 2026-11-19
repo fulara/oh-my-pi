@@ -568,7 +568,12 @@ impl Shared {
 			};
 			match outcome {
 				Ok(Ok(output)) => {
-					let result = HostToolResult { id, result: output.into_payload(), is_error: None };
+					let result = HostToolResult {
+						id,
+						result: output.into_payload(),
+						is_error: None,
+						background: None,
+					};
 					// Fails only once closed, which already cancelled this call.
 					let _ = shared.enqueue(&RpcInbound::HostToolResult(result), Some(guard));
 				},
@@ -587,6 +592,7 @@ impl Shared {
 			id,
 			result: text_payload(text, Some(Value::Object(Map::new()))),
 			is_error: Some(true),
+			background: None,
 		};
 		let _ = self.enqueue(&RpcInbound::HostToolResult(result), guard);
 	}

@@ -88,7 +88,7 @@ Clients MUST continue reading stdout after closing stdin. Normal EOF and extensi
 2. `RpcResponse` (`{ type: "response", ... }`)
 3. `AgentSessionEvent` objects (`agent_start`, `message_update`, etc.)
 4. `RpcExtensionUIRequest` (`{ type: "extension_ui_request", ... }`)
-5. Host tool requests/cancellations (`host_tool_call`, `host_tool_cancel`)
+5. Host tool requests/cancellations (`host_tool_call`, `host_tool_cancel`) and host background job cancellations (`host_job_cancel`)
 6. Host URI requests/cancellations (`host_uri_request`, `host_uri_cancel`)
 7. Extension errors (`{ type: "extension_error", extensionPath, event, error }`)
 8. Available-commands updates (`{ type: "available_commands_update", commands }`), emitted at startup and whenever command metadata changes
@@ -177,6 +177,7 @@ activity, text, or aggregate queue counts.
 - `{ id?, type: "get_tree" }`
 - `{ id?, type: "set_todos", phases: TodoPhase[] }`
 - `{ id?, type: "set_host_tools", tools: RpcHostToolDefinition[] }`
+- `{ id?, type: "host_job_settle", jobId: string, text: string, isError?: boolean }`
 - `{ id?, type: "set_host_uri_schemes", schemes: RpcHostUriSchemeDefinition[] }`
 - `{ id?, type: "set_subagent_subscription", level: "off" | "progress" | "events" }`
 - `{ id?, type: "set_event_filter", events: string[] | null, messageUpdates?: "full" | "delta" }`
@@ -1609,6 +1610,53 @@ Completion uses:
 ```
 
 Set top-level `isError: true` on `host_tool_result` to reject the pending host tool call and surface the returned text content as a tool error.
+
+### Host background jobs
+
+A host tool whose work outlives the call (e.g. a turn in another session) can turn its
+successful result into a background job of the calling agent by adding `background`:
+
+```json
+{
+	"type": "host_tool_result",
+	"id": "host_1",
+	"result": {
+		"content": [{ "type": "text", "text": "Started turn in session Reviewer as background job fura-session-1" }]
+	},
+	"background": { "jobId": "fura-session-1", "label": "Session Reviewer" }
+}
+```
+
+RPC mode registers a running job of type `host` with exactly that `jobId`, owned by the agent
+that made the tool call (same ownership as `bash`/`task` background jobs), labelled `label`,
+and resolves the tool call at once with `result`. The job appears in `get_activity`, keeps
+`get_state.hasPendingAsyncWork` true (so `prompt_result.sessionSettled` is false and a
+`session_settled` follows once it ends), and is visible to the agent's own job
+wait/cancel/snapshot tools. A `background` whose `jobId` is empty, padded with whitespace or
+already registered fails the tool call instead (no job starts). `background` is ignored with
+`isError: true`.
+
+The host completes the job with a command:
+
+```json
+{ "id": "settle_1", "type": "host_job_settle", "jobId": "fura-session-1", "text": "Reviewer finished: no findings." }
+```
+
+`text` reaches the owning agent through the normal background-job delivery (an `async-result`
+message) and wakes it when idle, exactly like a finished `bash`/`task` job; `isError: true`
+settles the job as failed with `text` as its error. The response is
+`{ "id": "settle_1", "type": "response", "command": "host_job_settle", "success": true }`; an
+unknown, cancelled or already settled job gets `success: false` with an `error`.
+
+When the job is cancelled — by the agent's job tools or a session abort/switch/shutdown path
+that cancels jobs — RPC mode marks it cancelled and emits:
+
+```json
+{ "type": "host_job_cancel", "jobId": "fura-session-1" }
+```
+
+The host should stop the work; a later `host_job_settle` for that job fails harmlessly. Host
+jobs live in memory like every other background job: a restarted RPC process has none.
 
 ## Live Voice Sub-Protocol
 

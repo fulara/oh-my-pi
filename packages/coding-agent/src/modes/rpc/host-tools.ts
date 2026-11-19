@@ -4,7 +4,9 @@ import { Snowflake } from "@oh-my-pi/pi-utils";
 import { applyToolProxy } from "../../extensibility/tool-proxy";
 import type { Theme } from "@oh-my-pi/pi-tui/theme";
 import { defaultLoadModeForToolName } from "../../tools/essential-tools";
+import { hostToolBackgroundError } from "./rpc-host-jobs";
 import type {
+	RpcHostToolBackground,
 	RpcHostToolCallRequest,
 	RpcHostToolCancelRequest,
 	RpcHostToolDefinition,
@@ -14,7 +16,11 @@ import type {
 
 type RpcHostToolOutput = (frame: RpcHostToolCallRequest | RpcHostToolCancelRequest) => void;
 
+/** Registers the background job a host tool result asks for; throws when it cannot. */
+type RpcHostBackgroundStarter = (background: RpcHostToolBackground, toolCallId: string) => void;
+
 type PendingHostToolCall = {
+	toolCallId: string;
 	resolve: (result: AgentToolResult<unknown>) => void;
 	reject: (error: Error) => void;
 	onUpdate?: AgentToolUpdateCallback<unknown>;
@@ -78,12 +84,14 @@ class RpcHostToolAdapter<TParams extends TSchema = TSchema, TTheme extends Theme
 
 export class RpcHostToolBridge {
 	#output: RpcHostToolOutput;
+	#startBackground: RpcHostBackgroundStarter | undefined;
 	#definitions = new Map<string, RpcHostToolDefinition>();
 	#pendingCalls = new Map<string, PendingHostToolCall>();
 	#closedError: Error | undefined;
 
-	constructor(output: RpcHostToolOutput) {
+	constructor(output: RpcHostToolOutput, startBackground?: RpcHostBackgroundStarter) {
 		this.#output = output;
+		this.#startBackground = startBackground;
 	}
 
 	getToolNames(): string[] {
@@ -109,6 +117,23 @@ export class RpcHostToolBridge {
 				.trim();
 			pending.reject(new Error(text || "Host tool execution failed"));
 			return true;
+		}
+		if (frame.background !== undefined) {
+			const invalid = hostToolBackgroundError(frame.background);
+			if (invalid !== undefined) {
+				pending.reject(new Error(invalid));
+				return true;
+			}
+			if (!this.#startBackground) {
+				pending.reject(new Error("Host background jobs are not supported here"));
+				return true;
+			}
+			try {
+				this.#startBackground(frame.background, pending.toolCallId);
+			} catch (error) {
+				pending.reject(error instanceof Error ? error : new Error(String(error)));
+				return true;
+			}
 		}
 		pending.resolve(frame.result);
 		return true;
@@ -159,6 +184,7 @@ export class RpcHostToolBridge {
 
 		signal?.addEventListener("abort", onAbort, { once: true });
 		this.#pendingCalls.set(id, {
+			toolCallId,
 			resolve: result => {
 				if (settled) return;
 				settled = true;

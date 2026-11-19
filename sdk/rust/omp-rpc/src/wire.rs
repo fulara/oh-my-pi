@@ -5289,6 +5289,16 @@ pub struct HostToolUpdate {
 	pub partial_result: HostToolResultPayload,
 }
 
+/// Background job a successful host tool result starts for the calling agent.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HostToolBackground {
+	/// Job id; a call naming an already registered job fails.
+	#[serde(rename = "jobId")]
+	pub job_id: String,
+	/// Job label shown in job listings and activity.
+	pub label: String,
+}
+
 /// Completes a pending host tool call; `isError` surfaces the content as a tool error.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HostToolResult {
@@ -5296,6 +5306,16 @@ pub struct HostToolResult {
 	pub result: HostToolResultPayload,
 	#[serde(rename = "isError", default, skip_serializing_if = "Option::is_none")]
 	pub is_error: Option<bool>,
+	/// Register a `host` background job owned by the calling agent; the call resolves with `result` at once and `host_job_settle` completes the job. Ignored with `isError`.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub background: Option<HostToolBackground>,
+}
+
+/// A host background job was cancelled by the agent or a session abort/shutdown; a later `host_job_settle` for it fails.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HostJobCancelEvent {
+	#[serde(rename = "jobId")]
+	pub job_id: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -5549,6 +5569,8 @@ pub enum RpcNotification {
 	ConfigUpdate(ConfigUpdateEvent),
 	/// An event could not fit within the transport limits and was dropped.
 	RpcFrameError(RpcFrameErrorEvent),
+	/// A host background job was cancelled by the agent or a session abort/shutdown; a later `host_job_settle` for it fails.
+	HostJobCancel(HostJobCancelEvent),
 	/// A session event, discriminated by `type`; `set_event_filter` selects which are sent.
 	RpcAgentEvent(RpcAgentEvent),
 	/// A frame whose discriminator this binding does not know; the raw JSON is kept.
@@ -5582,6 +5604,7 @@ impl RpcNotification {
 			Some("session_info_update") => |value| serde_json::from_value(value).map(Self::SessionInfoUpdate),
 			Some("config_update") => |value| serde_json::from_value(value).map(Self::ConfigUpdate),
 			Some("rpc_frame_error") => |value| serde_json::from_value(value).map(Self::RpcFrameError),
+			Some("host_job_cancel") => |value| serde_json::from_value(value).map(Self::HostJobCancel),
 			Some("agent_start" | "agent_end" | "turn_start" | "turn_end" | "message_start" | "message_update" | "message_end" | "tool_execution_start" | "tool_execution_update" | "tool_stream_update" | "tool_execution_end" | "auto_compaction_start" | "auto_compaction_end" | "manual_compaction_start" | "manual_compaction_end" | "auto_retry_start" | "auto_retry_end" | "cache_warming_start" | "cache_warming_end" | "retry_fallback_applied" | "retry_fallback_succeeded" | "model_changed" | "session_skills_updated" | "config_warnings_changed" | "advisor_cost_changed" | "advisor_yielded" | "ttsr_triggered" | "todo_reminder" | "todo_auto_clear" | "irc_message" | "notice" | "thinking_level_changed" | "goal_updated" | "queue_update") => |value| serde_json::from_value(value).map(Self::RpcAgentEvent),
 			_ => |value| Ok(Self::Unknown(value)),
 		};
@@ -5615,6 +5638,7 @@ impl Serialize for RpcNotification {
 			Self::SessionInfoUpdate(member) => serialize_tagged(member, &[("type", "session_info_update")], serializer),
 			Self::ConfigUpdate(member) => serialize_tagged(member, &[("type", "config_update")], serializer),
 			Self::RpcFrameError(member) => serialize_tagged(member, &[("type", "rpc_frame_error")], serializer),
+			Self::HostJobCancel(member) => serialize_tagged(member, &[("type", "host_job_cancel")], serializer),
 			Self::RpcAgentEvent(member) => member.serialize(serializer),
 			Self::Unknown(value) => value.serialize(serializer),
 		}
@@ -5646,7 +5670,7 @@ impl RpcServerFrame {
 		let decode: fn(Value) -> Result<Self, serde_json::Error> = match value.get("type").and_then(Value::as_str) {
 			Some("response") => |value| serde_json::from_value(value).map(Self::Response),
 			Some("host_tool_call" | "host_tool_cancel" | "host_uri_request" | "host_uri_cancel") => |value| serde_json::from_value(value).map(Self::RpcHostRequest),
-			Some("ready" | "prompt_result" | "session_settled" | "extension_error" | "extension_ui_request" | "available_commands_update" | "subagent_lifecycle" | "subagent_progress" | "subagent_event" | "live_phase" | "live_levels" | "live_transcript" | "live_end" | "dictation_state" | "dictation_transcript" | "dictation_end" | "btw_delta" | "btw_record" | "btw_update" | "command_output" | "session_info_update" | "config_update" | "rpc_frame_error" | "agent_start" | "agent_end" | "turn_start" | "turn_end" | "message_start" | "message_update" | "message_end" | "tool_execution_start" | "tool_execution_update" | "tool_stream_update" | "tool_execution_end" | "auto_compaction_start" | "auto_compaction_end" | "manual_compaction_start" | "manual_compaction_end" | "auto_retry_start" | "auto_retry_end" | "cache_warming_start" | "cache_warming_end" | "retry_fallback_applied" | "retry_fallback_succeeded" | "model_changed" | "session_skills_updated" | "config_warnings_changed" | "advisor_cost_changed" | "advisor_yielded" | "ttsr_triggered" | "todo_reminder" | "todo_auto_clear" | "irc_message" | "notice" | "thinking_level_changed" | "goal_updated" | "queue_update") => |value| serde_json::from_value(value).map(Self::RpcNotification),
+			Some("ready" | "prompt_result" | "session_settled" | "extension_error" | "extension_ui_request" | "available_commands_update" | "subagent_lifecycle" | "subagent_progress" | "subagent_event" | "live_phase" | "live_levels" | "live_transcript" | "live_end" | "dictation_state" | "dictation_transcript" | "dictation_end" | "btw_delta" | "btw_record" | "btw_update" | "command_output" | "session_info_update" | "config_update" | "rpc_frame_error" | "host_job_cancel" | "agent_start" | "agent_end" | "turn_start" | "turn_end" | "message_start" | "message_update" | "message_end" | "tool_execution_start" | "tool_execution_update" | "tool_stream_update" | "tool_execution_end" | "auto_compaction_start" | "auto_compaction_end" | "manual_compaction_start" | "manual_compaction_end" | "auto_retry_start" | "auto_retry_end" | "cache_warming_start" | "cache_warming_end" | "retry_fallback_applied" | "retry_fallback_succeeded" | "model_changed" | "session_skills_updated" | "config_warnings_changed" | "advisor_cost_changed" | "advisor_yielded" | "ttsr_triggered" | "todo_reminder" | "todo_auto_clear" | "irc_message" | "notice" | "thinking_level_changed" | "goal_updated" | "queue_update") => |value| serde_json::from_value(value).map(Self::RpcNotification),
 			_ => |value| Ok(Self::Unknown(value)),
 		};
 		decode(value)
@@ -5943,6 +5967,17 @@ pub struct SetHostToolsParams {
 pub struct SetHostToolsResult {
 	#[serde(rename = "toolNames")]
 	pub tool_names: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HostJobSettleParams {
+	#[serde(rename = "jobId")]
+	pub job_id: String,
+	/// Result delivered to the owning agent; the failure reason when `isError` is true.
+	pub text: String,
+	/// Settle the job as failed.
+	#[serde(rename = "isError", default, skip_serializing_if = "Option::is_none")]
+	pub is_error: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -7433,6 +7468,29 @@ impl Command for SetHostToolsCommand {
 
 	fn decode(data: Option<Value>) -> Result<Self::Output, serde_json::Error> {
 		serde_json::from_value::<SetHostToolsResult>(data.unwrap_or_else(|| Value::Object(Map::new()))).map(|result| result.tool_names)
+	}
+}
+
+/// Complete a running host background job (see `HostToolResult.background`); its text reaches the owning agent as an async result.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HostJobSettleCommand {
+	#[serde(rename = "jobId")]
+	pub job_id: String,
+	/// Result delivered to the owning agent; the failure reason when `isError` is true.
+	pub text: String,
+	/// Settle the job as failed.
+	#[serde(rename = "isError", default, skip_serializing_if = "Option::is_none")]
+	pub is_error: Option<bool>,
+}
+
+impl Command for HostJobSettleCommand {
+	const NAME: &'static str = "host_job_settle";
+	const TIMEOUT_MS: Option<u64> = None;
+	type Output = ();
+
+	fn decode(data: Option<Value>) -> Result<Self::Output, serde_json::Error> {
+		let _ = data;
+		Ok(())
 	}
 }
 

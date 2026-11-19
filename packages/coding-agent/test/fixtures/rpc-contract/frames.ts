@@ -7,6 +7,7 @@ import type {
 	RpcChunkFrame,
 	RpcCommand,
 	RpcExtensionUIRequest,
+	RpcHostJobCancelFrame,
 	RpcHostToolCallRequest,
 	RpcHostToolCancelRequest,
 	RpcHostToolResult,
@@ -35,6 +36,7 @@ type RpcContractFrame =
 	| RpcHostToolCallRequest
 	| RpcHostToolCancelRequest
 	| RpcHostToolResult
+	| RpcHostJobCancelFrame
 	| RpcHostToolUpdate
 	| RpcHostUriRequest
 	| RpcHostUriCancelRequest
@@ -625,6 +627,43 @@ export const rpcContractFixtures = [
 			},
 			isError: false,
 		} satisfies RpcHostToolResult,
+	},
+	{
+		name: "host-tool-result-background",
+		category: "host-tool",
+		frame: {
+			type: "host_tool_result",
+			id: "host-call-2",
+			result: {
+				content: [{ type: "text", text: "Started turn in session Reviewer as background job fura-session-1" }],
+			},
+			background: { jobId: "fura-session-1", label: "Session Reviewer" },
+		} satisfies RpcHostToolResult,
+	},
+	{
+		name: "command-host-job-settle",
+		category: "host-tool",
+		frame: {
+			id: "settle-1",
+			type: "host_job_settle",
+			jobId: "fura-session-1",
+			text: "Session Reviewer finished:\n\nNo findings.",
+		} satisfies Extract<RpcCommand, { type: "host_job_settle" }>,
+	},
+	{
+		name: "response-host-job-settle",
+		category: "host-tool",
+		frame: {
+			id: "settle-1",
+			type: "response",
+			command: "host_job_settle",
+			success: true,
+		} satisfies Extract<RpcResponse, { command: "host_job_settle"; success: true }>,
+	},
+	{
+		name: "host-job-cancel",
+		category: "host-tool",
+		frame: { type: "host_job_cancel", jobId: "fura-session-1" } satisfies RpcHostJobCancelFrame,
 	},
 	{
 		name: "event-agent-start",

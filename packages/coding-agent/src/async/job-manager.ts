@@ -47,8 +47,11 @@ const DEFAULT_MAX_RUNNING_JOBS = 15;
 /** Abort reason used only when the owning session shuts down the entire manager. */
 export const ASYNC_JOB_MANAGER_SHUTDOWN_REASON = Symbol("AsyncJobManager shutdown");
 
-/** Kind of work a managed job runs; drives job-row badges and delivery labels. */
-export type AsyncJobType = "bash" | "task" | "eval";
+/**
+ * Kind of work a managed job runs; drives job-row badges and delivery labels.
+ * `host`: work an RPC host runs on the agent's behalf and settles with `host_job_settle`.
+ */
+export type AsyncJobType = "bash" | "task" | "eval" | "host";
 
 /** Settled job-body payload: delivery text plus its parsed structured output. */
 export interface AsyncJobRunResult {
