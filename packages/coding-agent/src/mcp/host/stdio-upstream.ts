@@ -561,9 +561,14 @@ export class StdioUpstream implements MCPTransport {
 		} finally {
 			clearTimeout(stepTimer);
 		}
-		if (!exitedOnInput && !(await child.terminate(SHUTDOWN_STEP_MS))) {
-			logger.warn("MCP server child has no pinned process identity; leaving it running", { pid: child.pid });
-			return;
+		if (!exitedOnInput) {
+			if (!child.signalable) {
+				logger.warn("MCP server child has no pinned process identity; leaving it running", { pid: child.pid });
+				return;
+			}
+			if (!(await child.terminate(SHUTDOWN_STEP_MS))) {
+				logger.warn("MCP server child outlived its pinned TERM/KILL", { pid: child.pid });
+			}
 		}
 		await this.#exit.promise;
 	}
