@@ -527,10 +527,11 @@ export class StdioUpstream implements MCPTransport {
 
 	/**
 	 * Shut the child down in the specification's order: close its stdin, wait
-	 * for it to exit, SIGTERM its process group, then SIGKILL. Resolved once
-	 * the child is reaped; descendants a cleanly exited leader left behind are
-	 * swept with one group SIGKILL. In-flight requests fail at once with a
-	 * non-retryable `closed` error. Idempotent.
+	 * for it to exit, SIGTERM its process tree and group, then SIGKILL. Resolved
+	 * once the child is reaped. Fura fork: signals go only through the identity
+	 * pinned at spawn; once the leader is reaped its group is never signalled by
+	 * number, so descendants a cleanly exited leader left behind are not swept.
+	 * In-flight requests fail at once with a non-retryable `closed` error. Idempotent.
 	 */
 	close(): Promise<void> {
 		this.#closing ??= this.#terminate();
@@ -552,21 +553,18 @@ export class StdioUpstream implements MCPTransport {
 			for (const pending of this.#pending.values()) pending.reject(error);
 			child.closeInput();
 		}
-		const terminate = setTimeout(() => child.kill(), SHUTDOWN_STEP_MS);
-		const escalate = setTimeout(() => child.kill("SIGKILL"), 2 * SHUTDOWN_STEP_MS);
+		const step = Promise.withResolvers<void>();
+		const stepTimer = setTimeout(step.resolve, SHUTDOWN_STEP_MS);
+		let exitedOnInput: boolean;
 		try {
-			await this.#exit.promise;
+			exitedOnInput = await Promise.race([this.#exit.promise.then(() => true), step.promise.then(() => false)]);
 		} finally {
-			clearTimeout(terminate);
-			clearTimeout(escalate);
+			clearTimeout(stepTimer);
 		}
-		// A child that was gone before this call may have had its group id reused since.
-		if (!wasRunning || process.platform === "win32") return;
-		try {
-			// The reaped child no longer takes signals through its handle; its group may still hold descendants.
-			process.kill(-child.pid, "SIGKILL");
-		} catch {
-			// Group already empty.
+		if (!exitedOnInput && !(await child.terminate(SHUTDOWN_STEP_MS))) {
+			logger.warn("MCP server child has no pinned process identity; leaving it running", { pid: child.pid });
+			return;
 		}
+		await this.#exit.promise;
 	}
 }
