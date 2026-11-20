@@ -141,7 +141,8 @@ enum ControlMessage {
 		rows: u16,
 	},
 	Kill,
-	/// Fura fork: deliver one signal to the pinned child tree without ending the run.
+	/// Fura fork: deliver one signal to the pinned child tree without ending the
+	/// run.
 	Signal(i32),
 	/// The run's cancel token fired (abort signal or timeout).
 	Cancelled {
